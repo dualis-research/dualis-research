@@ -23,7 +23,7 @@ The house style (skills `daily-content`, `breaking-chart`, `research-note`, `con
 ## Article
 Anatomy of skill `research-note`; title formula of Multibagger Ideas (the claim with its figures).
 - **Length**: 900 to 1400 words.
-- **Title**: a claim with the figures of the ONE measure of the cover chart, never a second measure such as the share price (« 4x Profit for Shareholders, a Price Still Pricing the Preferred »). Subtitle: one line; it becomes the SEO description (https://on.substack.com/p/substack-seo-guide).
+- **Title**: a claim with the figures of the ONE measure of the cover chart, never a second measure such as the share price; the whole Article states no share price and no other measure, and with a frame drawn its title is the picked printed headline (« 4x Profit for Shareholders, a Price Still Pricing the Preferred »). Subtitle: one line on the title's one measure, never a share price or second measure; it becomes the SEO description (https://on.substack.com/p/substack-seo-guide).
 - **Structure** (`##` headings): `## Key takeaways` (3 bullets), `## What the market believes`, `## What changed`, `## Bull vs bear`, `## What would prove us wrong`.
 - **Visual**: see Image below.
 - Do: numbers with date and source; the paywall would sit before « Bull vs bear » (Substack's examples put it before the payoff: https://on.substack.com/p/free-vs-paid).
