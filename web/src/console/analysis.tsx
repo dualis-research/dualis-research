@@ -215,7 +215,7 @@ function KpiRow({ href, name, sub, badge }: { href: string; name: string; sub?: 
 }
 
 /**
- * A. Narrative Drivers (Kevin + Thierry 2026-11-19): the fundamental KPIs the market has shown it trades the stock on
+ * A. Price Drivers (Kevin + Thierry 2026-11-19; named Price Driver since 2026-11-23, « narrative » too abstract): the fundamental KPIs the market has shown it trades the stock on
  * (strong or weak confidence), strongest first; the others are left out. A row opens how it was tested (`kdriver:`).
  */
 export function KpiDrivers({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriver[] }) {
@@ -235,7 +235,7 @@ export function KpiDrivers({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriv
 export function KpiSignals({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriver[] }) {
   const shown = kpis.filter((k) => (k.level === "strong" || k.level === "weak") && (k.signal === "strong" || k.signal === "weak")).sort((a, b) => STRENGTH_RANK[a.signal!] - STRENGTH_RANK[b.signal!] || a.rank - b.rank);
   if (kpis.length === 0) return <p className="text-lg text-kumo-subtle">Not tested yet.</p>;
-  if (shown.length === 0) return <p className="text-lg text-kumo-subtle">No driver is turning now.</p>;
+  if (shown.length === 0) return <p className="text-lg text-kumo-subtle">No price driver is turning now.</p>;
   return (
     <ol className="flex flex-col">
       {shown.map((k) => (
@@ -291,17 +291,17 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
         )}
       </Section>
 
-      <Section title="Narrative drivers">
+      <Section title="Price drivers">
         <KpiDrivers symbol={symbol} kpis={analysis.kpis} />
       </Section>
 
-      <Section title="Driver signals">
+      <Section title="Price drivers turning now">
         <KpiSignals symbol={symbol} kpis={analysis.kpis} />
       </Section>
 
       {analysis.kpis.length > 0 && (
         <Link href={`/tickers/${encodeURIComponent(symbol)}/drivers`} className="inline-flex items-center gap-1 self-start text-sm font-medium text-kumo-link hover:underline">
-          Every KPI tested, release by release <CaretRightIcon size={14} weight="bold" aria-hidden />
+          Every price driver candidate, how it was tested <CaretRightIcon size={14} weight="bold" aria-hidden />
         </Link>
       )}
 
