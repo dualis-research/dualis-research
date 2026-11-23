@@ -492,10 +492,6 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
             <ConfidenceBadge level={k.level === "none" ? "noise" : k.level} />
           </span>
           <p className="text-lg leading-snug text-kumo-strong"><Rich text={k.reason} /></p>
-          <p className="text-sm text-kumo-subtle">
-            ✓ {k.confirmed} · ✗ {k.invalidated} of {k.rows.length} moments tested
-            {k.signal && k.signal !== "none" ? ` · turning now: ${k.signal}${k.direction ? `, ${k.direction}` : ""}` : ""}
-          </p>
         </div>
         {chart({})}
         <Drawers>

@@ -16,6 +16,11 @@ export async function kpiDriver(id: string) {
   return withBold((await getDb().select().from(kpiDrivers).where(eq(kpiDrivers.id, id)))[0] ?? null);
 }
 
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** « 6 months to Mar-25 »: which stretch of time a KPI bar covers (Kevin 2026-11-23: « pas clair sur quelle date »). */
+const periodWords = (type: string, end: string) =>
+  `${type === "year" ? "12 months" : type === "half" ? "6 months" : type === "quarter" ? "3 months" : "Month"} to ${MONTHS[Number(end.slice(5, 7)) - 1]}-${end.slice(2, 4)}`;
+
 /**
  * What the KPI driver panel draws (Kevin 2026-11-23): the KPI's stored series (or its approximation « a / b » from two
  * stored series), 3 years of the share price as traded and with its local market's move taken out (price x
@@ -37,7 +42,7 @@ export async function kpiDriverChart(k: { symbol: string; series: string | null;
   const bottom = ratio ? finest(ratio[2]) : undefined;
   const kpi = top
     ? [...top.points]
-        .map(([date, v]) => ({ date, value: bottom ? (bottom.points.get(date) ? v / bottom.points.get(date)! : NaN) : v }))
+        .map(([date, v]) => ({ date, period: periodWords(top.periodType, date), value: bottom ? (bottom.points.get(date) ? v / bottom.points.get(date)! : NaN) : v }))
         .filter((x) => x.date >= since && Number.isFinite(x.value))
         .sort((a, b) => a.date.localeCompare(b.date))
     : [];
@@ -49,6 +54,11 @@ export async function kpiDriverChart(k: { symbol: string; series: string | null;
   const price = shown.map((x) => ({ date: x.date, raw: x.close, clean: x.close * (base / byDate.get(x.date)!) ** beta }));
   const tested = [...k.rows].filter((r) => r.verdict !== "neutral").sort((a, b) => a.day.localeCompare(b.day));
   const number = new Map(tested.map((r, i) => [`${r.step ?? "B1"}:${r.releaseId}`, i + 1]));
-  const markers = tested.map((r, i) => ({ n: i + 1, date: r.day, verdict: r.verdict as "confirms" | "invalidates" }));
+  // Each moment's measured window: its 5 trading days, from the first close on or after the day to the 5th.
+  const windowEnd = (d: string) => {
+    const i = shown.findIndex((x) => x.date >= d);
+    return i === -1 ? d : shown[Math.min(shown.length - 1, i + 4)].date;
+  };
+  const markers = tested.map((r, i) => ({ n: i + 1, date: r.day, end: windowEnd(r.day), verdict: r.verdict as "confirms" | "invalidates" }));
   return { kpi, unit, currency: top?.currency ?? null, price, beta, indexName: index.name, markers, number };
 }
