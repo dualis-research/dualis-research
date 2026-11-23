@@ -14,11 +14,12 @@ import { seriesCatalog, type StoredSeries } from "../analysis/series";
 import { verifyQuote } from "../filing-documents/read";
 import { stripDashes } from "../thesis/structure";
 import { analysedSymbols } from "../watchlist";
+import { localIndex } from "../../benchmark";
 
 /**
  * KPI Drivers (Kevin + Thierry 2026-11-19, private `docs/meeting-2026-11-19.md`). Per ticker:
  * 1) releases (code): every results report of the last 3 years (`gold.documents`) and the price over the 5 trading
- *    days after it vs the S&P 500 (« the shorter term signals are the pure signals »);
+ *    days after it against its local market index (« the shorter term signals are the pure signals »);
  * 2) candidates (AI, once per set of reports): the fundamental KPIs that move THIS business, read from its business
  *    model and what management writes in the reports, any number of them (0 is an answer), each mapped to a stored
  *    series or approximated from stored figures, else read in the reports' words;
@@ -35,7 +36,7 @@ export const CANDIDATES_QUESTION = "kpi-candidates@v2";
 /** v3 (Kevin 2026-11-19): an invalidation weighs (one caps at weak, two or more = none); a strong turn needs a strong KPI; the reason is a plain 15-word conclusion. */
 /** v4 (Kevin 2026-11-19: « pas de règle de proportion… laisse l'AI décider »): no count rule, the judge weighs every release. */
 /** v5 (Kevin 2026-11-19): two tests per KPI, B1 on every release and news item, B2 on any other filing where the KPI moved. */
-export const TEST_QUESTION = "kpi-test@v5";
+export const TEST_QUESTION = "kpi-test@v6";
 /** Pages of each report a judge reads (the results discussion first) and how much of each page. */
 const PAGES_PER_RELEASE = 2;
 const PAGE_CHARS = 3_500;
@@ -43,7 +44,7 @@ const DAY = 86_400_000;
 
 type Release = KpiRelease & { pages: { page: number; text: string }[] };
 /** A dated moment a KPI may have moved at: a results release (its pages), a news item or another filing (its title). */
-export type KpiEvent = { label: string; kind: "release" | "news" | "filing"; id: string; day: string; title: string; text: string | null; stock: number | null; bench: number | null; reaction: number | null; unusual: number | null; pages: { page: number; text: string }[] };
+export type KpiEvent = { label: string; kind: "release" | "news" | "filing"; id: string; day: string; title: string; text: string | null; stock: number | null; bench: number | null; index: string; beta: number; reaction: number | null; unusual: number | null; pages: { page: number; text: string }[] };
 export type KpiCandidate = { name: string; why: string; series: string | null; approximation: string | null };
 type Test = { level: KpiLevel; reason: string; rows: KpiTestRow[]; signal: KpiLevel | null; signalWhy: string | null; direction: "up" | "down" | null };
 
@@ -56,28 +57,63 @@ export function reactionAfter(bars: { date: string; close: number }[], day: stri
   return bars[i + n - 1].close / bars[i - 1].close - 1;
 }
 
+type Bar = { date: string; close: number };
+
 /**
- * How unusual a 5-day move against the S&P 500 is for this stock: the move over the standard deviation of its own
- * 5-day moves (against the S&P 500) over the year before the day. Null with less than 60 such moves.
+ * The stock's sensitivity to its local market (beta): the least-squares slope of its daily returns on the index's over
+ * the year before `day` (the event-study market model, as in market-reaction). 1 with fewer than 60 shared days.
  */
-export function unusualness(stock: { date: string; close: number }[], bench: { date: string; close: number }[], day: string, reaction: number | null): number | null {
-  if (reaction === null) return null;
-  const b = new Map(bench.map((x) => [x.date, x.close]));
+export function betaBefore(stock: Bar[], index: Bar[], day: string): number {
+  const idx = new Map(index.map((x) => [x.date, x.close]));
   const i = stock.findIndex((x) => x.date >= day);
-  if (i <= 0) return null;
-  const moves: number[] = [];
-  for (let j = Math.max(REACTION_DAYS, i - 250); j < i; j++) {
-    const s0 = stock[j - REACTION_DAYS].close;
-    const s1 = stock[j].close;
-    const b0 = b.get(stock[j - REACTION_DAYS].date);
-    const b1 = b.get(stock[j].date);
-    moves.push(s1 / s0 - 1 - (b0 && b1 ? b1 / b0 - 1 : 0));
+  const end = i === -1 ? stock.length : i;
+  const pairs: [number, number][] = [];
+  for (let j = Math.max(1, end - 250); j < end; j++) {
+    const b0 = idx.get(stock[j - 1].date);
+    const b1 = idx.get(stock[j].date);
+    if (b0 && b1) pairs.push([b1 / b0 - 1, stock[j].close / stock[j - 1].close - 1]);
   }
-  if (moves.length < 60) return null;
-  const mean = moves.reduce((a, x) => a + x, 0) / moves.length;
-  const sd = Math.sqrt(moves.reduce((a, x) => a + (x - mean) ** 2, 0) / moves.length);
-  return sd > 0 ? reaction / sd : null;
+  if (pairs.length < 60) return 1;
+  const mx = pairs.reduce((a, [x]) => a + x, 0) / pairs.length;
+  const my = pairs.reduce((a, [, y]) => a + y, 0) / pairs.length;
+  const cov = pairs.reduce((a, [x, y]) => a + (x - mx) * (y - my), 0);
+  const varx = pairs.reduce((a, [x]) => a + (x - mx) ** 2, 0);
+  return varx > 0 ? cov / varx : 1;
 }
+
+/**
+ * The market's move taken out of a stock's 5-day move: stock - beta x its local index (Kevin 2026-11-23, « débruiter »),
+ * and how unusual that cleaned move is for this stock (over the standard deviation of its own cleaned 5-day moves of
+ * the year before; null with fewer than 60).
+ */
+export function marketView(stock: Bar[], index: Bar[]) {
+  const idx = new Map(index.map((x) => [x.date, x.close]));
+  return (day: string) => {
+    const s = reactionAfter(stock, day);
+    const b = reactionAfter(index, day);
+    const beta = betaBefore(stock, index, day);
+    const reaction = s === null ? null : s - beta * (b ?? 0);
+    let unusual: number | null = null;
+    const i = stock.findIndex((x) => x.date >= day);
+    if (reaction !== null && i > 0) {
+      const moves: number[] = [];
+      for (let j = Math.max(REACTION_DAYS, i - 250); j < i; j++) {
+        const b0 = idx.get(stock[j - REACTION_DAYS].date);
+        const b1 = idx.get(stock[j].date);
+        moves.push(stock[j].close / stock[j - REACTION_DAYS].close - 1 - beta * (b0 && b1 ? b1 / b0 - 1 : 0));
+      }
+      if (moves.length >= 60) {
+        const mean = moves.reduce((a, x) => a + x, 0) / moves.length;
+        const sd = Math.sqrt(moves.reduce((a, x) => a + (x - mean) ** 2, 0) / moves.length);
+        unusual = sd > 0 ? reaction / sd : null;
+      }
+    }
+    return { stock: s, bench: b, beta, reaction, unusual };
+  };
+}
+
+const barsOf = (db: Db, symbol: string) =>
+  db.select({ date: gold.priceBars.date, close: gold.priceBars.close }).from(gold.priceBars).where(eq(gold.priceBars.symbol, symbol)).orderBy(asc(gold.priceBars.date));
 
 /** Every release, news item and other filing of the last 3 years, oldest first, each with its 5-day reaction. */
 export async function eventsOf(db: Db, symbol: string, now = new Date()): Promise<KpiEvent[]> {
@@ -90,15 +126,10 @@ export async function eventsOf(db: Db, symbol: string, now = new Date()): Promis
       .innerJoin(goldNewsItems, eq(goldNewsItems.id, goldNewsLinks.newsItemId))
       .where(and(eq(goldNewsLinks.symbol, symbol), gte(goldNewsLinks.firstSeenAt, since))),
     db.select().from(gold.filings).where(and(eq(gold.filings.symbol, symbol), gte(gold.filings.filedAt, since))),
-    db.select({ date: gold.priceBars.date, close: gold.priceBars.close }).from(gold.priceBars).where(eq(gold.priceBars.symbol, symbol)).orderBy(asc(gold.priceBars.date)),
-    db.select({ date: gold.priceBars.date, close: gold.priceBars.close }).from(gold.priceBars).where(eq(gold.priceBars.symbol, "^GSPC")).orderBy(asc(gold.priceBars.date)),
+    barsOf(db, symbol),
+    barsOf(db, localIndex(symbol).symbol),
   ]);
-  const at = (day: string) => {
-    const s = reactionAfter(stock, day);
-    const b = reactionAfter(bench, day);
-    const reaction = s === null ? null : s - (b ?? 0);
-    return { stock: s, bench: b, reaction, unusual: unusualness(stock, bench, day, reaction) };
-  };
+  const at = marketView(stock, bench);
   const reports = new Set(releases.map((r) => r.id));
   const raw = [
     ...releases.map((r) => ({ kind: "release" as const, id: r.id, day: r.day, title: r.title, text: null, pages: r.pages })),
@@ -107,25 +138,26 @@ export async function eventsOf(db: Db, symbol: string, now = new Date()): Promis
   ].sort((a, b) => a.day.localeCompare(b.day));
   const prefix = { release: "R", news: "N", filing: "F" } as const;
   const n = { release: 0, news: 0, filing: 0 };
-  return raw.map((e) => ({ ...e, label: `${prefix[e.kind]}${++n[e.kind]}`, ...at(e.day) }));
+  const index = localIndex(symbol).name;
+  return raw.map((e) => ({ ...e, label: `${prefix[e.kind]}${++n[e.kind]}`, index, ...at(e.day) }));
 }
 
-/** Every results report of the last 3 years with its 5-day reaction vs the S&P 500 and its best results pages. */
+/** Every results report of the last 3 years with its 5-day reaction against its local market and its best results pages. */
 export async function releasesOf(db: Db, symbol: string, now = new Date()): Promise<Release[]> {
   const since = new Date(now.getTime() - KPI_YEARS * 365.25 * DAY);
   const [docs, stock, bench] = await Promise.all([
     db.select().from(documents).where(and(eq(documents.symbol, symbol), gte(documents.filedAt, since))).orderBy(asc(documents.filedAt)),
-    db.select({ date: gold.priceBars.date, close: gold.priceBars.close }).from(gold.priceBars).where(eq(gold.priceBars.symbol, symbol)).orderBy(asc(gold.priceBars.date)),
-    db.select({ date: gold.priceBars.date, close: gold.priceBars.close }).from(gold.priceBars).where(eq(gold.priceBars.symbol, "^GSPC")).orderBy(asc(gold.priceBars.date)),
+    barsOf(db, symbol),
+    barsOf(db, localIndex(symbol).symbol),
   ]);
   if (docs.length === 0) return [];
+  const at = marketView(stock, bench);
   const pages = await db.select().from(documentPages).where(inArray(documentPages.documentId, docs.map((d) => d.id))).orderBy(asc(documentPages.page));
   return docs.map((d) => {
     const day = d.filedAt.toISOString().slice(0, 10);
-    const s = reactionAfter(stock, day);
-    const b = reactionAfter(bench, day);
+    const { stock: s, bench: b, reaction } = at(day);
     const own = pages.filter((p) => p.documentId === d.id);
-    return { id: d.id, day, title: d.title, stock: s, bench: b, reaction: s === null ? null : s - (b ?? 0), pages: bestPages(own) };
+    return { id: d.id, day, title: d.title, stock: s, bench: b, reaction, pages: bestPages(own) };
   });
 }
 
@@ -180,7 +212,7 @@ async function once<T>(db: Db, complete: Complete, kind: string, subjectId: stri
 }
 
 const eventLine = (e: KpiEvent) =>
-  `${e.label} ${e.day} ${e.kind === "release" ? "results release" : e.kind}: ${e.title}${e.text ? `. ${e.text}` : ""}. Price ${signedPct(e.stock)} over the next ${REACTION_DAYS} trading days, S&P 500 ${signedPct(e.bench)}, so ${signedPct(e.reaction)} against the market${e.unusual === null ? "" : ` (${Math.abs(e.unusual).toFixed(1)} standard deviations of its usual 5-day moves)`}.`;
+  `${e.label} ${e.day} ${e.kind === "release" ? "results release" : e.kind}: ${e.title}${e.text ? `. ${e.text}` : ""}. Price ${signedPct(e.stock)} over the next ${REACTION_DAYS} trading days, ${e.index} ${signedPct(e.bench)}, so ${signedPct(e.reaction)} once the market's move is taken out (beta ${e.beta.toFixed(2)})${e.unusual === null ? "" : ` (${Math.abs(e.unusual).toFixed(1)} standard deviations of its usual 5-day moves)`}.`;
 const eventsText = (es: KpiEvent[]) => es.map((e) => [eventLine(e), ...e.pages.map((p) => `  [${e.label} page ${p.page}]\n${p.text}`)].join("\n")).join("\n\n");
 
 export const CANDIDATES_SYSTEM = [
@@ -195,7 +227,7 @@ export const CANDIDATES_SYSTEM = [
 
 export const TEST_SYSTEM = [
   "You test ONE hypothesis for a small-cap long/short analyst: « this fundamental KPI of the company moves this stock ». Like a scientist, in two tests.",
-  "Every dated moment of 3 years is listed: results releases (R, with the report's pages), news items (N) and the company's other filings (F), each with the price over the 5 trading days after against the S&P 500 and how unusual that move is for this stock.",
+  "Every dated moment of 3 years is listed: results releases (R, with the report's pages), news items (N) and the company's other filings (F), each with the price over the 5 trading days after, the market's move taken out (the stock's own index times its beta), and how unusual that move is for this stock.",
   "B1, on EVERY release and news item: bigMove = did the price move a lot in those 5 days (judge from the move and how unusual it is)? kpiChanged = did THIS KPI change significantly at that moment (from the figures given, the report's words and tables, the news)? verdict: confirms = the KPI changed and the price moved the way that change implies; invalidates = the KPI changed strongly and the price did not react, or moved the other way; neutral = the KPI did not change, or something else clearly moved the price.",
   "B2, the rest of the time: among the other filings (F), every one where THIS KPI moved strongly (a disclosure of a large change in sales or profit, an order, a capacity or customer event...): did the price move with it? Same verdicts. List only those filings.",
   "from / to / change = the KPI values at that moment (with units), null when not shown or when it did not change. why = at most 12 words, the fact. cite = the release label, page and an EXACT quote of the report, only for releases, null otherwise.",
