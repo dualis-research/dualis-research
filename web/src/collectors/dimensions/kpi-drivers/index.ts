@@ -36,7 +36,8 @@ export const CANDIDATES_QUESTION = "kpi-candidates@v2";
 /** v3 (Kevin 2026-11-19): an invalidation weighs (one caps at weak, two or more = none); a strong turn needs a strong KPI; the reason is a plain 15-word conclusion. */
 /** v4 (Kevin 2026-11-19: « pas de règle de proportion… laisse l'AI décider »): no count rule, the judge weighs every release. */
 /** v5 (Kevin 2026-11-19): two tests per KPI, B1 on every release and news item, B2 on any other filing where the KPI moved. */
-export const TEST_QUESTION = "kpi-test@v6";
+/** v7 (Kevin 2026-11-23): the reason says whether the misses are normal or a doubt, never « not every release ». */
+export const TEST_QUESTION = "kpi-test@v7";
 /** Pages of each report a judge reads (the results discussion first) and how much of each page. */
 const PAGES_PER_RELEASE = 2;
 const PAGE_CHARS = 3_500;
@@ -232,7 +233,7 @@ export const TEST_SYSTEM = [
   "B2, the rest of the time: among the other filings (F), every one where THIS KPI moved strongly (a disclosure of a large change in sales or profit, an order, a capacity or customer event...): did the price move with it? Same verdicts. List only those filings.",
   "from / to / change = the KPI values at that moment (with units), null when not shown or when it did not change. why = at most 12 words, the fact. cite = the release label, page and an EXACT quote of the report, only for releases, null otherwise.",
   "level: decide it yourself, as the analyst would, from B1 and B2: never by counting. Weigh each moment: how big the KPI move was, how clear the price reaction was, whether another fact or the market at large explains it, whether the evidence is recent. A small cap's price is noisy: one contrary moment can be noise, a clean, large KPI move the price ignored says much more. strong = the market clearly trades the stock on this KPI; weak = it does sometimes, or the evidence is thin; none = it does not.",
-  "reason = ONE plain sentence, at most 15 words, that a reader landing on the page understands at once: the conclusion about how the stock reacts to this KPI. No dates, no list of figures, no labels.",
+  "reason = ONE plain sentence, at most 15 words, that a reader landing on the page understands at once: the conclusion about how the stock reacts to this KPI, on the moves with the market taken out. When some moments went against it, the same sentence says whether that is normal (another figure moved the price those days) or a real doubt; never a vague exception such as « though not every release ». No dates, no list of figures, no labels.",
   "signal (only when level is strong or weak, else null): does the KPI turn NOW, at the latest moment, by enough to change the story, with the price not reacting yet? strong (only for a strong KPI) / weak / none. signalWhy = one sentence with the figure. direction = up or down, the way the KPI moved last.",
   "No em dash. JSON only, no prose, no code fence:",
   '{"b1": [{"event": "R1" | "N1", "bigMove": boolean, "kpiChanged": boolean, "verdict": "confirms" | "invalidates" | "neutral", "from": string | null, "to": string | null, "change": string | null, "why": string, "cite": {"release": "R1", "page": 12, "quote": "<exact words>"} | null}], "b2": [{"event": "F3", "bigMove": boolean, "verdict": "confirms" | "invalidates" | "neutral", "from": string | null, "to": string | null, "change": string | null, "why": string}], "level": "strong" | "weak" | "none", "reason": string, "signal": "strong" | "weak" | "none" | null, "signalWhy": string | null, "direction": "up" | "down" | null}',

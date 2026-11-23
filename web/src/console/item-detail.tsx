@@ -1,4 +1,4 @@
-import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowSquareOutIcon, ArrowsDownUpIcon, CheckCircleIcon, FunnelIcon, MinusCircleIcon, XCircleIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import { Badge } from "@cloudflare/kumo";
 import Link from "@/console/link";
@@ -7,7 +7,8 @@ import { ArticleBody } from "./article";
 import { MethodsTable, RangeCards, ValuationField } from "./valuation-ui";
 import { confidenceDetail, driverDetail, evidenceDetail, exhibitDetail, fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
 import { ConfidenceBadge } from "./confidence-badge";
-import { kpiDriver } from "./kpi-queries";
+import { kpiDriver, kpiDriverChart } from "./kpi-queries";
+import { KpiDriverChart } from "./kpi-driver-chart";
 import { StrengthBadge } from "./board";
 import { TagBadge } from "./tag-badge";
 import { DriverReason } from "./driver-reason";
@@ -35,15 +36,6 @@ import { Rich } from "./rich";
  */
 
 export type ItemView = { title: string; subtitle?: React.ReactNode; body: React.ReactNode };
-
-/**
- * Retired (SOURCES-ONE-CLICK-1123): no « Source: » line at the bottom of a panel. Renders nothing; kept only because the
- * KPI driver panel (`kpiDriverItem`, rebuilt on another branch) still names it. Delete with that rebuild.
- */
-function SourceNote({ sources }: { sources: string[] }) {
-  void sources;
-  return null;
-}
 
 /** A news verdict's weight: a turn before a continuation before noise, strong before weak. */
 const verdictWeight = (v: { effect: string; strength: string } | undefined) => (!v ? -1 : (v.effect === "reversal" ? 10 : v.effect === "continuation" ? 5 : 0) + (v.strength === "strong" ? 2 : v.strength === "weak" ? 1 : 0));
@@ -444,24 +436,55 @@ async function confidenceItem(symbol: string, id: string): Promise<ItemView | nu
   };
 }
 
-const VERDICT: Record<string, { mark: string; word: string; tone: string }> = {
-  confirms: { mark: "✓", word: "Confirms", tone: "text-dualis-long" },
-  invalidates: { mark: "✗", word: "Invalidates", tone: "text-dualis-short" },
-  neutral: { mark: "–", word: "Neutral", tone: "text-kumo-subtle" },
-};
 
 /**
- * A KPI driver (Kevin + Thierry 2026-11-19): how far it can be trusted in one sentence, then every results release of
- * 3 years: what the KPI did, what the price did over the next 5 trading days, confirms / invalidates, the report's own
- * words one click away. Then whether it turns now.
+ * A KPI driver (Kevin 2026-11-23): the conclusion first, then the proof as a picture before any word (the KPI over the
+ * share price, the market's move taken out, a numbered line per tested moment), then why it is a driver (the moments
+ * the price followed it), why it may not be (the moments it moved and the price did not), the moments nothing moved,
+ * and how the market's noise is taken out. Each moment opens on its own zoomed chart, then the report's words.
  */
 async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | null> {
   const k = await kpiDriver(id);
   if (!k || k.symbol !== symbol) return null;
+  const c = await kpiDriverChart(k);
   const pct = (x: number | null) => (x === null ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
+  const KIND = { release: "Results", news: "News", filing: "Filing" } as const;
+  const shift = (d: string, days: number) => new Date(Date.parse(d) + days * 86_400_000).toISOString().slice(0, 10);
+  const chart = (props: { from?: string; to?: string; height?: number }) => (
+    <KpiDriverChart kpi={c.kpi} unit={c.unit} currency={c.currency} kpiLabel={k.name} price={c.price} indexName={c.indexName} markers={c.markers} {...props} />
+  );
+  const facts = (r: (typeof k.rows)[number]) => (
+    <>
+      <p className="text-base text-kumo-strong">
+        {r.from || r.to ? `${k.name}: ${r.from ? `${r.from} → ` : ""}${r.to ?? "?"}${r.change ? ` (${r.change})` : ""}` : r.kpiChanged ? `${k.name} moved` : `${k.name} did not move`}
+        {` · price ${pct(r.reaction)} in 5 days, market taken out`}
+      </p>
+      {r.why && <p className="text-base leading-relaxed text-kumo-default"><Rich text={r.why} /></p>}
+      {r.cite && (
+        <Link href={itemHref(symbol, docItemId(r.cite.documentId, r.cite.page, r.cite.quote))} scroll={false} className="text-base text-kumo-default underline decoration-dotted underline-offset-4 hover:text-kumo-link">
+          « {r.cite.quote} »
+        </Link>
+      )}
+    </>
+  );
+  const moments = (rows: typeof k.rows) =>
+    [...rows]
+      .sort((a, b) => a.day.localeCompare(b.day))
+      .map((r) => {
+        const n = c.number.get(`${r.step ?? "B1"}:${r.releaseId}`);
+        return (
+          <Drawer key={`${r.step}:${r.releaseId}`} title={`${n ? `${n}. ` : ""}${day(r.day)} · ${KIND[r.kind ?? "release"]}: ${r.title}`}>
+            {chart({ from: shift(r.day, -180), to: shift(r.day, 45), height: 220 })}
+            {facts(r)}
+          </Drawer>
+        );
+      });
+  const pros = k.rows.filter((r) => r.verdict === "confirms");
+  const cons = k.rows.filter((r) => r.verdict === "invalidates");
+  const quiet = k.rows.filter((r) => r.verdict === "neutral");
   return {
     title: k.name,
-    subtitle: <Rich text={k.why} />,
+    subtitle: "Narrative driver",
     body: (
       <>
         <div className="flex flex-col gap-3">
@@ -471,68 +494,33 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
           <p className="text-lg leading-snug text-kumo-strong"><Rich text={k.reason} /></p>
           <p className="text-sm text-kumo-subtle">
             ✓ {k.confirmed} · ✗ {k.invalidated} of {k.rows.length} moments tested
+            {k.signal && k.signal !== "none" ? ` · turning now: ${k.signal}${k.direction ? `, ${k.direction}` : ""}` : ""}
           </p>
         </div>
+        {chart({})}
         <Drawers>
-          {k.signal && (
-            <Drawer icon={<CrosshairIcon size={16} aria-hidden />} title={`Now: ${k.signal === "none" ? "not turning" : `${k.signal} turn${k.direction ? `, ${k.direction}` : ""}`}`}>
-              <p className="text-base leading-relaxed text-kumo-default"><Rich text={k.signalWhy ?? "Nothing moved enough at the latest release."} /></p>
-            </Drawer>
-          )}
-          {(() => {
-            const KIND = { release: "Results release", news: "News", filing: "Filing" } as const;
-            const list = (rows: typeof k.rows, withVerdict: boolean) => (
-              <ul className="flex flex-col">
-                {[...rows].reverse().map((r) => (
-                  <li key={`${r.step}:${r.releaseId}`} className="flex items-start justify-between gap-4 border-b border-kumo-hairline py-2.5 last:border-b-0">
-                    <span className="flex min-w-0 flex-col gap-0.5">
-                      <span className="text-sm text-kumo-subtle tabular">
-                        {day(r.day)} · {KIND[r.kind ?? "release"]} · price {pct(r.reaction)} vs S&amp;P 500{r.bigMove ? ", a big move" : ""}
-                      </span>
-                      <span className="text-sm text-kumo-default">{r.title}</span>
-                      <span className="text-base text-kumo-strong">
-                        {r.from || r.to ? `${k.name}: ${r.from ? `${r.from} → ` : ""}${r.to ?? "?"}${r.change ? ` (${r.change})` : ""}` : r.kpiChanged ? `${k.name} moved` : `${k.name} did not move`}
-                      </span>
-                      {r.why && <span className="text-sm text-kumo-default"><Rich text={r.why} /></span>}
-                      {r.cite && (
-                        <Link href={itemHref(symbol, docItemId(r.cite.documentId, r.cite.page, r.cite.quote))} scroll={false} className="text-sm text-kumo-link hover:underline">
-                          « {r.cite.quote.length > 90 ? `${r.cite.quote.slice(0, 90)}…` : r.cite.quote} » p. {r.cite.page}
-                        </Link>
-                      )}
-                    </span>
-                    {withVerdict && (
-                      <span className={`shrink-0 text-sm font-medium ${VERDICT[r.verdict].tone}`}>
-                        {VERDICT[r.verdict].mark} {VERDICT[r.verdict].word}
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            );
-            const moved = k.rows.filter((r) => r.kpiChanged);
-            const b1 = k.rows.filter((r) => (r.step ?? "B1") === "B1");
-            const b2 = k.rows.filter((r) => r.step === "B2");
-            return (
-              <>
-                <Drawer icon={<TrendUpIcon size={16} aria-hidden />} title={`A. When ${k.name} moved · ${moved.length}`}>
-                  {moved.length ? list(moved, false) : <p className="text-base text-kumo-subtle">It never moved significantly in 3 years.</p>}
-                </Drawer>
-                <Drawer icon={<TableIcon size={16} aria-hidden />} title={`B1. Releases and news · ${b1.length}`}>
-                  {list(b1, true)}
-                </Drawer>
-                <Drawer icon={<FilesIcon size={16} aria-hidden />} title={`B2. The rest of the time · ${b2.length}`}>
-                  {b2.length ? list(b2, true) : <p className="text-base text-kumo-subtle">No other filing moved it.</p>}
-                </Drawer>
-              </>
-            );
-          })()}
-          {(k.series || k.approximation) && (
-            <Drawer icon={<DatabaseIcon size={16} aria-hidden />} title="How it is measured">
-              <p className="text-base text-kumo-default">{k.approximation ? `Not reported: approximated as ${k.approximation}.` : `Reported figure (${k.series}).`}</p>
-            </Drawer>
-          )}
+          <Drawer icon={<CheckCircleIcon size={16} aria-hidden />} title={`Why it drives the stock · ${pros.length}`}>
+            {pros.length ? <Drawers>{moments(pros)}</Drawers> : <p className="text-base text-kumo-subtle">The price never followed it.</p>}
+          </Drawer>
+          <Drawer icon={<XCircleIcon size={16} aria-hidden />} title={`Why it may not · ${cons.length}`}>
+            {cons.length ? <Drawers>{moments(cons)}</Drawers> : <p className="text-base text-kumo-subtle">It never moved without the price following.</p>}
+          </Drawer>
+          <Drawer icon={<MinusCircleIcon size={16} aria-hidden />} title={`Moments with no change · ${quiet.length}`}>
+            <ul className="flex flex-col">
+              {[...quiet].reverse().map((r) => (
+                <li key={`${r.step}:${r.releaseId}`} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
+                  {day(r.day)} · {KIND[r.kind ?? "release"]}: {r.title} · price {pct(r.reaction)}
+                </li>
+              ))}
+            </ul>
+          </Drawer>
+          <Drawer icon={<FunnelIcon size={16} aria-hidden />} title="How the market's noise is taken out">
+            <p className="text-base leading-relaxed text-kumo-default">
+              Each move is the share price over the 5 trading days after the moment, minus {c.beta.toFixed(2)} times the {c.indexName} over the same days. {c.beta.toFixed(2)} is how much this stock usually moves with its market, measured over the year before. The dark line on the chart is the price with that market move taken out.
+            </p>
+            <p className="text-base text-kumo-default">{k.approximation ? `${k.name} is not reported: approximated as ${k.approximation}.` : `${k.name} is a reported figure.`}</p>
+          </Drawer>
         </Drawers>
-        <SourceNote sources={["claude"]} />
       </>
     ),
   };
