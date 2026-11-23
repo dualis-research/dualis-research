@@ -153,7 +153,7 @@ describe("Hong Kong reports", () => {
 
   const filing = (title: string, filedAt: string, url: string) => ({ id: randomUUID(), symbol: "1161.HK", registry: "hkex", filingKey: url, title, filedAt: new Date(filedAt), url, language: "en", sources: ["hkex"] });
 
-  it("reads the latest annual report and the interim report filed after it, reusing what an earlier run read", async () => {
+  it("reads every annual and interim report of 3 years, reusing what an earlier run read", async () => {
     await db.insert(gold.filings).values([
       filing("Annual Report 2025", "2025-12-18", "https://h/ar25.pdf"),
       filing("Interim Report 2025", "2025-05-29", "https://h/ir25.pdf"),
@@ -161,13 +161,13 @@ describe("Hong Kong reports", () => {
       filing("Interim Results Announcement", "2026-05-26", "https://h/ann.pdf"),
     ]);
     const ctx: SourceContext = { env: {}, db, fetch: (async () => { throw new Error("no download: both reads are reused"); }) as unknown as typeof fetch, complete: async () => { throw new Error("no LLM call"); } };
-    expect((await latestReports(ctx, "1161.HK")).map((r) => `${r.kind} ${r.doc.url}`)).toEqual(["annual https://h/ar25.pdf", "interim https://h/ir26.pdf"]);
+    expect((await latestReports(ctx, "1161.HK", new Date("2026-11-23T00:00:00Z"))).map((r) => `${r.kind} ${r.doc.url}`)).toEqual(["annual https://h/ar25.pdf", "interim https://h/ir26.pdf", "interim https://h/ir25.pdf"]);
     const read = (kind: string, url: string) => ({ kind, version: PDF_EXTRACT_VERSION, document: { title: kind, url, filedAt: "x" }, pages: [], extraction: {}, model: "m" });
     const [run] = await db.insert(runs).values({ dimension: "financials", trigger: "test" }).returning({ id: runs.id });
-    await db.insert(fetches).values({ runId: run.id, dimension: "financials", source: "pdf-extract", subject: "1161.HK", request: {}, httpStatus: 200, payload: { version: PDF_EXTRACT_VERSION, documents: [read("annual", "https://h/ar25.pdf"), read("interim", "https://h/ir26.pdf")] } });
+    await db.insert(fetches).values({ runId: run.id, dimension: "financials", source: "pdf-extract", subject: "1161.HK", request: {}, httpStatus: 200, payload: { version: PDF_EXTRACT_VERSION, documents: [read("annual", "https://h/ar25.pdf"), read("interim", "https://h/ir26.pdf"), read("interim", "https://h/ir25.pdf")] } });
     const out = await pdfExtract.fetch("1161.HK", ctx);
     expect(out.error).toBeUndefined();
-    expect((out.request as { reused: string[] }).reused).toEqual(["https://h/ar25.pdf", "https://h/ir26.pdf"]);
+    expect((out.request as { reused: string[] }).reused).toEqual(["https://h/ar25.pdf", "https://h/ir26.pdf", "https://h/ir25.pdf"]);
   });
 
   it("hands every judge of the story the reported figures: half years and revenue by stream", async () => {

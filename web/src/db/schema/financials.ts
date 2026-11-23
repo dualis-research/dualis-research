@@ -23,6 +23,11 @@ export type LineObservation = {
   citation?: { document: string; url: string; page: number; quote?: string } | null;
 };
 
+export type LineDerivation = {
+  formula: string;
+  inputs: { periodType: string; periodEnd: string; line: string; value: number; sources: string[]; citation: LineObservation["citation"] | null }[];
+};
+
 /**
  * One canonical line per (ticker, period, line), every source's observation kept. `sources` = the group of sources
  * whose values agree (within 0.5%), the one gold shows; the others are alternatives. Natural key: the primary key.
@@ -70,6 +75,11 @@ export const goldFinancialLines = gold.table(
     /** Sources that published another value for the same line. */
     alternatives: jsonb("alternatives").$type<{ source: string; value: number }[]>().notNull(),
     citation: jsonb("citation").$type<LineObservation["citation"]>(),
+    /**
+     * A line no document prints but two printed ones give exactly: a second half = the fiscal year minus the first
+     * half (`secondHalves` in derive.ts). Null for every published line. Each input keeps its own citation.
+     */
+    derivation: jsonb("derivation").$type<LineDerivation>(),
     rebuiltAt,
   },
   (t) => [primaryKey({ columns: [t.symbol, t.periodType, t.periodEnd, t.line] }), index("gold_financial_lines_symbol").on(t.symbol)],
@@ -85,7 +95,7 @@ export const financialMetrics = gold.table(
   "financial_metrics",
   {
     symbol: text("symbol").notNull(),
-    periodType: text("period_type").$type<"year" | "quarter">().notNull(),
+    periodType: text("period_type").$type<"year" | "half" | "quarter">().notNull(),
     periodEnd: text("period_end").notNull(),
     metric: text("metric").notNull(),
     value: doublePrecision("value").notNull(),

@@ -1,0 +1,1 @@
+ALTER TABLE "gold"."financial_lines" ADD COLUMN "derivation" jsonb;

@@ -44,7 +44,7 @@ export const moveKey = (moveId: string, candidates: MoveCandidate[]) => `${MOVE_
 export const REPORTED_WITHIN_DAYS = 120;
 const DAY = 86_400_000;
 /** Series a move can be explained by: reported lines and derived metrics, never the price or the consensus. */
-const explains = (s: StoredSeries) => /^(line|hline|qline|metric|qmetric):/.test(s.key);
+const explains = (s: StoredSeries) => /^(line|hline|qline|metric|hmetric|qmetric):/.test(s.key);
 
 /**
  * The figures the market had just received when a move happened: for each period type, the latest period that ended

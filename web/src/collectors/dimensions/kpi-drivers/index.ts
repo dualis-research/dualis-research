@@ -10,7 +10,7 @@ import type { Complete } from "@/llm/complete";
 import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
 import { fmt, fnv } from "../analysis/facts";
-import { seriesCatalog, type StoredSeries } from "../analysis/series";
+import { finestSeries, seriesCatalog, type StoredSeries } from "../analysis/series";
 import { verifyQuote } from "../filing-documents/read";
 import { stripDashes } from "../thesis/structure";
 import { analysedSymbols } from "../watchlist";
@@ -319,7 +319,7 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
   const catalog = await seriesCatalog(db, symbol);
   const [profile] = await db.select().from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol));
   const company = `${symbol}${profile?.name ? ` (${profile.name})` : ""}${profile?.industry ? `, ${profile.industry}` : ""}. ${profile?.description ?? ""}`.trim();
-  const keys = [...catalog.values()].filter((s) => /^(line|hline|qline|metric|qmetric):/.test(s.key)).map((s) => `${s.label} [${s.key}]`);
+  const keys = [...catalog.values()].filter((s) => /^(line|hline|qline|metric|hmetric|qmetric):/.test(s.key)).map((s) => `${s.label} [${s.key}]`);
   const docKey = fnv(events.map((e) => e.id).join(","));
   const latest = releases.slice(-4);
   const candidates = await once(
@@ -335,7 +335,8 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
   );
   const drivers: (KpiCandidate & Test)[] = [];
   for (const k of candidates) {
-    const s = k.series ? catalog.get(k.series) : undefined;
+    // The finest period the company reports (a half-yearly or quarterly twin of a yearly key), as the chart draws it.
+    const s = k.series ? finestSeries(catalog, k.series, new Date(Date.now() - KPI_YEARS * 365.25 * 86_400_000).toISOString().slice(0, 10)) : undefined;
     const figures = releases.map((r) => `${r.label}: ${(s && seriesAt(s, r.day)) ?? "no stored figure: read it in the report"}`).join("\n");
     const test = await once(
       db,

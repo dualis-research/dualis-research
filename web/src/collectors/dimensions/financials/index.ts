@@ -5,7 +5,7 @@ import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import type { Dimension, PromoteResult } from "../../types";
 import { analysedSymbols } from "../watchlist";
-import { deriveMetrics, deriveValuation } from "./derive";
+import { deriveMetrics, deriveValuation, secondHalves } from "./derive";
 import { statementOf, type PeriodType } from "./lines";
 import { lineConsensus } from "./merge";
 import { deriveRevenueStreams } from "./streams";
@@ -116,7 +116,7 @@ type SilverRow = {
 
 async function rebuildGold(db: Db, symbols: string[], silverRows: SilverRow[]): Promise<void> {
   const quotes = new Map((await db.select().from(gold.quotes).where(inArray(gold.quotes.symbol, symbols))).map((q) => [q.symbol, q]));
-  const goldLines = silverRows.map((r) => ({
+  const published = silverRows.map((r) => ({
     symbol: r.symbol,
     periodType: r.periodType,
     periodEnd: r.periodEnd,
@@ -129,7 +129,10 @@ async function rebuildGold(db: Db, symbols: string[], silverRows: SilverRow[]): 
     sources: r.sources,
     alternatives: r.alternatives,
     citation: r.citation ?? null,
+    derivation: null,
   }));
+  // Second halves no document prints (fiscal year - first half): lines too, so streams, metrics and series read them.
+  const goldLines = [...published, ...symbols.flatMap((s) => secondHalves(published.filter((l) => l.symbol === s)))];
   const metricRows: ReturnType<typeof deriveMetrics> = [];
   const valuationRows: ReturnType<typeof deriveValuation>[] = [];
   const streamRows: ReturnType<typeof deriveRevenueStreams> = [];

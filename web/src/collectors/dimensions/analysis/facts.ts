@@ -99,7 +99,7 @@ const OPERATING_QUARTER_KEYS = OPERATING_KEYS.map((k) => `q${k}`);
  */
 const BALANCE_KEYS = ["line:total-debt", "line:cash", "metric:net-debt", "metric:ebitda", "metric:net-debt-to-ebitda", "metric:total-debt-to-ebitda", "line:interest-expense", "metric:interest-cover"];
 const BALANCE_QUARTER_KEYS = BALANCE_KEYS.filter((k) => k !== "metric:ebitda").map((k) => `q${k}`);
-const HALF_LINES = ["hline:revenue", "hline:gross-profit", "hline:operating-income", "hline:net-income"];
+const HALF_LINES = ["hline:revenue", "hline:gross-profit", "hline:operating-income", "hline:net-income", "hmetric:operating-margin", "hmetric:net-margin", "hmetric:revenue-growth"];
 
 const pct = (v: number | null) => (v === null ? null : `${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`);
 const periodName = (r: Pick<GoldRevenueStream, "periodType" | "periodEnd">) => (r.periodType === "year" ? `FY ${r.periodEnd}` : `${r.periodType === "half" ? "6 months" : "3 months"} to ${r.periodEnd}`);
@@ -222,7 +222,7 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
     "",
     "Last quarters:",
     table(catalog, QUARTER_LINES, 6),
-    halves.length ? `\nLast half years:\n${table(catalog, halves, 4)}` : null,
+    halves.length ? `\nLast half years:\n${table(catalog, halves, 6)}` : null,
     operatingText(catalog) ? `\n${operatingText(catalog)}` : null,
     streams.length ? `\n${streamsText(streams)}` : null,
     "",
