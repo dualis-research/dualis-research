@@ -9,7 +9,7 @@ import { testDb } from "@/test/db";
 import { runDimension } from "../../runner";
 import type { SourceContext } from "../../types";
 import { watchlist } from "../watchlist";
-import { dailyEmailDim, MAILER_URL, parseVerdicts } from ".";
+import { dailyEmailDim, MAILER_URL, orderDigest, parseVerdicts } from ".";
 import { renderEmail } from "./render";
 
 const REPO_ROOT = resolve(__dirname, "../../../../..");
@@ -35,7 +35,8 @@ const complete: Complete = async ({ prompt }) => {
     .map((l) => {
       const id = l.split(" |")[0];
       const material = /results|price war/i.test(l);
-      return { id, material, summary: material ? `Summary of ${l.split(" | ").at(-1)}` : null, why: material ? "It moves revenue — a lot." : "Macro." };
+      const importance = material ? (/price war/i.test(l) ? 9 : 5) : null;
+      return { id, material, summary: material ? `Summary of ${l.split(" | ").at(-1)}` : null, why: material ? "It moves revenue — a lot." : "Macro.", importance };
     });
   return { text: JSON.stringify({ items }), model: "fake" };
 };
@@ -110,6 +111,11 @@ describe("daily-email dimension", () => {
     expect(sent[0].html).toContain("https://sec.test/8k");
     expect(sent[0].html).not.toContain("Reuters");
     expect(sent[0].text).not.toContain("Fed holds rates");
+    // Most important first: the industry price war (9) before Monro's results (5), Monro before PAL (5).
+    const lines = sent[0].text.split("\n");
+    const at = (needle: string) => lines.findIndex((l) => l.includes(needle));
+    expect(at("price war")).toBeLessThan(at("Monro third quarter"));
+    expect(at("Monro, Inc.")).toBeLessThan(at("Proficient Auto"));
     expect(sent[0].text).not.toMatch(/[—–]/);
     expect(sent[0].text).toContain("Not investment advice.");
 
@@ -177,9 +183,22 @@ describe("daily-email parsing and words", () => {
     expect(text).toContain("Industry: Rival cuts prices, 10%.");
   });
 
+  it("orders companies by their most important item, then each company's items", () => {
+    const rank = new Map([["A", 0], ["B", 1], ["C", 2]]);
+    const items = [
+      { symbol: "A", importance: 3, n: "a3" },
+      { symbol: "B", importance: 8, n: "b8" },
+      { symbol: "A", importance: 6, n: "a6" },
+      { symbol: "B", importance: 2, n: "b2" },
+      { symbol: "C", importance: null, n: "c0" },
+    ];
+    expect(orderDigest(items, rank).map((i) => i.n)).toEqual(["b8", "b2", "a6", "a3", "c0"]);
+  });
+
   it("refuses an answer that skips an item", () => {
     expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: false, why: "x" }] }), 2)).toThrow("misses i2");
     expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: true }] }), 1)).toThrow("no summary");
+    expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: true, summary: "x" }] }), 1)).toThrow("no importance");
   });
 
   it("one company, a filing line, the disclaimer last", () => {

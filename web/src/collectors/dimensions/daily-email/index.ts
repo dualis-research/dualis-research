@@ -57,7 +57,7 @@ export type Candidate = {
 type Batch = { symbol: string; company: string; about: string | null; items: Candidate[]; told: string[] };
 const planned = new Map<string, Batch>();
 
-export type Verdict = { id: string; material: boolean; summary: string | null; why: string | null };
+export type Verdict = { id: string; material: boolean; summary: string | null; why: string | null; importance: number | null };
 
 const SYSTEM = [
   "You screen the latest news and filings for an equity analyst who follows one listed company among 50. He reads your picks in a two-minute morning email, so the bar is high: pick an item only when it tells him a NEW FACT that can change what this business earns or is worth.",
@@ -65,9 +65,9 @@ const SYSTEM = [
   "Material, on its industry (items marked industry): a new fact from a DIRECT competitor, supplier or customer (their results, guidance, capacity, prices, a big contract) or a regulation, subsidy or ban decided for the company's own market.",
   "Not material: macro news (interest rates, oil, currencies, inflation, war, stock indexes, trade policy in general), share price recaps or technical analysis, opinion pieces, previews, explainers and analyses that add no new fact, stock promotion and listicles, routine filings with no business content (a monthly share count return, a meeting notice), product promotions and sales events, articles about a different company with a similar name, old facts re-told, and any story already in the list or in the already-told list (one story = one item, whichever outlet).",
   `Keep at most ${MAX_PER_COMPANY} material items for this company: the ones that matter most to its business. Every other item is not material.`,
-  "For each item answer: material (true or false); summary = the main idea in ONE very short plain sentence of at most 12 words, subject verb object, with the figure when the item gives one, its 2 or 3 key words (who, the figure, the fact) wrapped in **double asterisks**, e.g. \"**Winbond** wins **2027 auto memory orders** in Europe and Japan.\"; why = for a material item why it matters for this company's business in at most 15 words, else why it is left out in at most 10 words.",
+  "For each item answer: material (true or false); summary = the main idea in ONE very short plain sentence of at most 12 words, subject verb object, with the figure when the item gives one, its 2 or 3 key words (who, the figure, the fact) wrapped in **double asterisks**, e.g. \"**Winbond** wins **2027 auto memory orders** in Europe and Japan.\"; why = for a material item why it matters for this company's business in at most 15 words, else why it is left out in at most 10 words; importance = for a material item, 1 to 10, how much it can change what THIS company earns or is worth (10 = results far off expectations, a profit warning, a takeover; 1 = barely material), null for the others. The email is ordered by it, most important first.",
   "Plain English, never a dash, never a price target, upside or advice.",
-  'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "..."}, ...]} with every id of the list exactly once.',
+  'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "...", "importance": 7}, ...]} with every id of the list exactly once.',
 ].join(" ");
 
 const isoDay = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "undated");
@@ -91,7 +91,11 @@ export function parseVerdicts(text: string, count: number): Verdict[] {
     if (typeof raw?.id !== "string" || typeof raw.material !== "boolean") throw new Error(`daily-email verdict malformed: ${JSON.stringify(raw).slice(0, 200)}`);
     const summary = typeof raw.summary === "string" && raw.summary.trim() ? raw.summary.trim() : null;
     if (raw.material && !summary) throw new Error(`daily-email verdict ${raw.id} is material with no summary`);
-    byId.set(raw.id, { id: raw.id, material: raw.material, summary, why: typeof raw.why === "string" && raw.why.trim() ? raw.why.trim() : null });
+    const importance = raw.material ? raw.importance : null;
+    if (raw.material && !(typeof importance === "number" && Number.isInteger(importance) && importance >= 1 && importance <= 10)) {
+      throw new Error(`daily-email verdict ${raw.id} is material with no importance 1-10: ${JSON.stringify(raw.importance)}`);
+    }
+    byId.set(raw.id, { id: raw.id, material: raw.material, summary, why: typeof raw.why === "string" && raw.why.trim() ? raw.why.trim() : null, importance: importance as number | null });
   }
   const out = Array.from({ length: count }, (_, i) => byId.get(`i${i + 1}`));
   const missing = out.map((v, i) => (v ? null : `i${i + 1}`)).filter(Boolean);
@@ -204,7 +208,27 @@ export function recipientsFor(env: Record<string, string | undefined>, roles: re
   return [...new Set(list.filter((r) => roles.includes(r.role)).map((r) => r.email))];
 }
 
-const KIND_ORDER: Record<Kind, number> = { filing: 0, news: 1, industry: 2 };
+/**
+ * Most important first (Kevin 2026-11-23): inside a company its items by the judge's importance; companies by their
+ * most important item, then the sum of their items, then the watchlist order (portfolio first). A verdict made before
+ * importance existed counts 0.
+ */
+export function orderDigest<T extends { symbol: string; importance?: number | null }>(items: readonly T[], rank: ReadonlyMap<string, number>): T[] {
+  const imp = (i: T) => i.importance ?? 0;
+  const top = new Map<string, number>();
+  const sum = new Map<string, number>();
+  for (const i of items) {
+    top.set(i.symbol, Math.max(top.get(i.symbol) ?? 0, imp(i)));
+    sum.set(i.symbol, (sum.get(i.symbol) ?? 0) + imp(i));
+  }
+  return [...items].sort(
+    (a, b) =>
+      top.get(b.symbol)! - top.get(a.symbol)! ||
+      sum.get(b.symbol)! - sum.get(a.symbol)! ||
+      (rank.get(a.symbol) ?? 0) - (rank.get(b.symbol) ?? 0) ||
+      imp(b) - imp(a),
+  );
+}
 
 /** bronze answers -> silver verdicts (once per item) -> gold digest of the Astana day -> the email (once a day). */
 export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: SourceContext, now = new Date()): Promise<PromoteResult> {
@@ -222,6 +246,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
       material: p.verdicts[i].material,
       summary: p.verdicts[i].summary,
       why: p.verdicts[i].why,
+      importance: p.verdicts[i].importance ?? null,
       model: p.model,
       bronzeId: f.id,
     }));
@@ -245,9 +270,8 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const fresh = (v: { kind: string; at: Date | null; createdAt: Date }) =>
     (v.at ?? v.createdAt).getTime() >= now.getTime() - (v.kind === "filing" ? FILING_WINDOW_MS : NEWS_WINDOW_MS);
   const material = (await db.select().from(dailyItemVerdicts).where(and(eq(dailyItemVerdicts.material, true), gt(dailyItemVerdicts.createdAt, cutoff)))).filter((v) => rank.has(v.symbol) && fresh(v));
-  const items: DigestItem[] = material
-    .sort((a, b) => rank.get(a.symbol)! - rank.get(b.symbol)! || KIND_ORDER[a.kind as Kind] - KIND_ORDER[b.kind as Kind] || (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0))
-    .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "" }));
+  const items: DigestItem[] = orderDigest(material, rank)
+    .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "", importance: v.importance }));
   const email = items.length ? renderEmail(day, items, ASSETS_URL) : null;
   await db
     .insert(goldDailyDigests)

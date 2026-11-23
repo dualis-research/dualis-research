@@ -1,4 +1,4 @@
-import { boolean, index, jsonb, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
 import { gold } from "./gold";
 import { silver } from "./silver";
 
@@ -27,6 +27,8 @@ export const dailyItemVerdicts = silver.table(
     summary: text("summary"),
     /** Why it matters for the business (material) or why it was left out. */
     why: text("why"),
+    /** Material items: 1-10, how much it can change what the company earns or is worth (the email's order). */
+    importance: integer("importance"),
     model: text("model").notNull(),
     bronzeId: uuid("bronze_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -65,6 +67,7 @@ export type DigestItem = {
   at: string | null;
   summary: string;
   why: string;
+  importance?: number | null;
 };
 
 /** One row per Astana day the digest was built: what the email holds (empty = nothing material, no email). */
