@@ -1,0 +1,1 @@
+ALTER TABLE "gold"."kpi_drivers" ADD COLUMN "reversal" jsonb;

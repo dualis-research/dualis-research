@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { driverEvents, kpiDrivers, priceMoves } from "@/db/schema/analysis";
+import { driverEvents, kpiDrivers, priceMoveCauses, priceMoves } from "@/db/schema/analysis";
 import { documentPages, documents } from "@/db/schema/documents";
 import * as gold from "@/db/schema/gold";
 import * as silver from "@/db/schema/silver";
@@ -7,7 +7,7 @@ import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
 import type { StoredSeries } from "./dimensions/analysis/series";
-import { eventRows, kpiPeriods, kpiSource, measureKpi, parseCandidates, parseFormula, promoteKpis } from "./dimensions/kpi-drivers";
+import { driverTests, eventRows, kpiPeriods, kpiSource, measureKpi, parseCandidates, parseFormula, parseReversal, promoteKpis } from "./dimensions/kpi-drivers";
 import { marketReactionSource, promoteMarketReactions } from "./dimensions/market-reaction";
 import { indexesFor, localIndex } from "./benchmark";
 import type { SourceContext } from "./types";
@@ -56,7 +56,7 @@ describe("kpi drivers: steps 4 and 5 are code", () => {
       { period: "2025-09", periodType: "half" as const, value: 0.113, prior: 0.112, change: 0.001, changeKind: "points" as const, significant: false, why: "w", releaseId: `${SYMBOL}|release:B`, releaseDay: "2025-12-15", cite: null },
       { period: "2026-03", periodType: "half" as const, value: 0.2, prior: 0.06, change: 0.14, changeKind: "points" as const, significant: true, why: "w", releaseId: `${SYMBOL}|release:C`, releaseDay: "2026-05-26", cite: null },
     ];
-    const moves = [{ id: "M-down", direction: "down" as const }];
+    const moves = [{ id: "M-down", direction: "down" as const, week: "fundamental" as const }];
     const rows = eventRows([ev("A", "release", "2025-05-28", "M-down"), ev("W", "filing", "2024-05-17", "M-down"), ev("B", "release", "2025-12-15", null), ev("C", "release", "2026-05-26", null), ev("N", "news", "2026-01-02", null)], periods, "up", moves);
     expect(rows.map((r) => [r.sourceId, r.kpiMoved, r.priceMoved, r.result])).toEqual([
       ["A", true, true, "confirms"],
@@ -67,6 +67,22 @@ describe("kpi drivers: steps 4 and 5 are code", () => {
     ]);
     // KPI down => price up: the same down week invalidates it.
     expect(eventRows([ev("A", "release", "2025-05-28", "M-down")], periods, "down", moves)[0].result).toBe("invalidates");
+    // One verdict per week (PROOF-STRUCTURE-1123): a week the market moved, or nobody explained, is never the KPI's move.
+    for (const week of ["market", "unknown"] as const) {
+      const [a] = eventRows([ev("A", "release", "2025-05-28", "M-down")], periods, "up", [{ id: "M-down", direction: "down", week }]);
+      expect(a).toMatchObject({ week, priceMoved: false, result: "invalidates" });
+      expect(driverTests([a], [{ id: "M-down", direction: "down", week }])).toMatchObject({ changes: 1, followed: 0, against: 1, moves: 1, fundamentalMoves: 0, explained: 0, both: 0 });
+    }
+    expect(driverTests(rows, moves)).toMatchObject({ changes: 2, followed: 1, against: 1, moves: 1, fundamentalMoves: 1, explained: 1, explainedMoveIds: ["M-down"], both: 1, bothAgree: 1 });
+  });
+
+  it("reads a reversal: unknown event labels and periods dropped, a strong turn only for a strong driver", () => {
+    const e = { id: "X|news:1", symbol: "X", kind: "news" as const, sourceId: "1", day: "2025-01-14", title: "Lunar New Year bookings full", url: "https://example.com/n", stock: null, benchReturn: null, beta: null, reaction: null, z: null, bench: "Hang Seng", moveId: null, rebuiltAt: new Date() };
+    const text = JSON.stringify({ intrinsic: { state: "continuing", period: "2099-03", why: "Revenue grew 9% again." }, leading: { probability: "high", events: ["L1", "L9"], why: "Bookings full before the holiday." }, strength: "strong", direction: "up", why: "Bookings point to a stronger half." });
+    const weak = parseReversal(text, "weak", new Map([["L1", e]]), new Set(["2025-03"]));
+    expect(weak).toMatchObject({ strength: "weak", direction: "up", intrinsic: { state: "continuing", period: null }, leading: { probability: "high", events: [{ id: "X|news:1", title: "Lunar New Year bookings full" }] } });
+    expect(parseReversal(text, "strong", new Map(), new Set()).strength).toBe("strong");
+    expect(() => parseReversal(JSON.stringify({ intrinsic: { state: "maybe" } }), "weak", new Map(), new Set())).toThrow(/intrinsic/);
   });
 
   it("keeps any number of candidates of three kinds, where each was read; a series or a formula only for a stored KPI", () => {
@@ -131,6 +147,8 @@ describe("kpi drivers end to end on stored steps", () => {
     expect(warning.moveId).not.toBeNull();
     const [move] = await db.select().from(priceMoves);
     expect(move).toMatchObject({ id: warning.moveId, direction: "down", bench: "Hang Seng" });
+    // Step 4 (move-causes) judged that week fundamental.
+    await db.insert(priceMoveCauses).values({ id: move.id, symbol: SYMBOL, kind: "fundamental", fact: "A profit warning.", category: null, cites: [], candidates: 1, confidence: 0.9, metric: null, lasting: "structural", judgmentId: null });
 
     let calls = 0;
     const fake: Complete = async ({ system, prompt }) => {
@@ -173,10 +191,15 @@ describe("kpi drivers end to end on stored steps", () => {
         return { text: JSON.stringify({ periods: [{ period: "P1", moved: true, why: "margin fell 8 points, its largest drop", first: "A1" }] }), model: "fake" };
       }
       if (system.startsWith("You shorten ONE verdict")) return { text: "Thin: the price moved on other facts.", model: "fake" };
-      // Step 6 reads the step-5 table and the two tests only.
-      expect(prompt).toContain("B) 1 unusual price moves: the candidate changed in ");
-      expect(prompt).toMatch(/Filing: Profit Warning\. (KPI|Candidate).*; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: (confirms|other cause)\./);
-      return { text: JSON.stringify({ level: "weak", reason: "Thin evidence.", signal: "strong", signalWhy: "x" }), model: "fake" };
+      if (system.includes("catch the moment it TURNS")) {
+        expect(prompt).toContain("Price Driver (");
+        return { text: JSON.stringify({ intrinsic: { state: "reversing", period: null, why: "Margin fell 8 points." }, leading: { probability: "none", events: [], why: "Nothing recent says more." }, strength: "strong", direction: "down", why: "The margin is turning down." }), model: "fake" };
+      }
+      // The confidence reads the event table and tests A, B and C only.
+      expect(prompt).toContain("B) 1 unusual weeks, 1 judged fundamental: the candidate changed in ");
+      expect(prompt).toContain("C) ");
+      expect(prompt).toMatch(/Filing: Profit Warning\. (KPI|Candidate).*; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), an unusual week judged fundamental\. Result: (confirms|other cause)\./);
+      return { text: JSON.stringify({ level: "weak", reason: "Thin evidence." }), model: "fake" };
     };
     const kctx: SourceContext = { env: { CLAUDE_OAUTH_TOKEN: "x" }, fetch, db, complete: fake };
     const out = await kpiSource.fetch(SYMBOL, kctx);
@@ -187,8 +210,11 @@ describe("kpi drivers end to end on stored steps", () => {
     expect(ks.map((k) => [k.name, k.kind, k.expected, k.level, k.signal])).toEqual([["Service margin", "kpi", "up", "weak", "weak"], ["Store count", "kpi", "up", "weak", "weak"], ["Beauty licence rules", "policy", "up", "weak", "weak"]]);
     expect(ks.map((k) => k.id)).toEqual([`${SYMBOL}:kpi:service-margin`, `${SYMBOL}:kpi:store-count`, `${SYMBOL}:kpi:beauty-licence-rules`]);
     expect(ks[0].foundIn).toEqual([warning.id]);
-    // Tests A and B, counted by code: the margin drop came with the one move, the store count never changed.
-    expect(ks[0].tests).toMatchObject({ changes: 1, followed: 1, against: 0, moves: 1, explained: 1 });
+    // Tests A, B and C, counted by code: the margin drop came with the one move, the store count never changed.
+    expect(ks[0].tests).toMatchObject({ changes: 1, followed: 1, against: 0, moves: 1, fundamentalMoves: 1, explained: 1, both: 1, bothAgree: 1 });
+    // Section 3: a weak driver's strong turn reads weak, its bottom line is the « turning now » signal.
+    expect(ks[0].reversal).toMatchObject({ strength: "weak", direction: "down", intrinsic: { state: "reversing" } });
+    expect(ks[0]).toMatchObject({ signalWhy: "The margin is turning down.", direction: "down" });
     expect(ks[1].tests).toMatchObject({ changes: 0, moves: 1, explained: 0 });
     // A policy changes at the events the AI names (an unknown label dropped), crossed with the price like a KPI.
     expect(pw(ks[2])).toMatchObject({ kpiMoved: true, changeUp: false, priceMoved: true, result: "confirms", kpiWhy: "rules tightened" });
@@ -208,7 +234,7 @@ describe("kpi drivers end to end on stored steps", () => {
     const before = calls;
     await kpiSource.fetch(SYMBOL, kctx);
     expect(calls).toBe(before);
-    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["candidate-changes", "event-announces", "kpi-candidates", "kpi-moves", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-reason", "kpi-verdict", "kpi-verdict", "kpi-verdict"]);
+    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["candidate-changes", "event-announces", "kpi-candidates", "kpi-moves", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-reason", "kpi-reversal", "kpi-reversal", "kpi-reversal", "kpi-verdict", "kpi-verdict", "kpi-verdict"]);
   });
 
   it("measures each stock against its OWN market's index", () => {

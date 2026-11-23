@@ -8,11 +8,7 @@ import { ArticleBody } from "./article";
 import { type BoardRow, boardRowOf, priceVsFairValue } from "./board-queries";
 import { CallBadge, TickerTag } from "./board";
 import { Drawer, Drawers } from "./drawer";
-import { ConfidenceBadge } from "./confidence-badge";
-import { kpiDriversOf } from "./kpi-queries";
-import { DriversFound } from "./drivers-found";
-import type { GoldKpiDriver } from "@/db/schema/analysis";
-import { Badge } from "@cloudflare/kumo";
+import { ProofSections } from "./proof";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "./kumo";
 import { RowLink } from "./row-link";
 import { signalWordsOf } from "./signal-history";
@@ -39,7 +35,7 @@ export { itemHref };
 export const parseThesis = (v: string | undefined): ThesisSide | null => (v === "long" || v === "short" ? v : null);
 
 export async function analysisData(symbol: string, thesis: ThesisSide | null = null, page = false) {
-  const [row, data, consensus, objects, chart, valuation, moves, kpis] = await Promise.all([
+  const [row, data, consensus, objects, chart, valuation, moves] = await Promise.all([
     boardRowOf(symbol),
     getTicker(symbol),
     consensusOf(symbol),
@@ -48,10 +44,9 @@ export async function analysisData(symbol: string, thesis: ThesisSide | null = n
     getValuation(symbol),
     // The significant moves' markers sit on the Analysis page's chart only (the Signals panel stays light).
     page ? priceMoveMarkers(symbol) : [],
-    kpiDriversOf(symbol),
   ]);
   if (!row || !data) return null;
-  return { row, data, consensus, objects, chart, valuation, moves, kpis };
+  return { row, data, consensus, objects, chart, valuation, moves };
 }
 type Analysis = NonNullable<Awaited<ReturnType<typeof analysisData>>>;
 
@@ -193,68 +188,6 @@ export function EvidenceRows({ symbol, rows, driverId, side }: { symbol: string;
 
 export { PRICED_WORD };
 
-const LEVEL_RANK = { strong: 0, weak: 1, none: 2 } as const;
-const STRENGTH_RANK = { strong: 0, weak: 1, none: 2 } as const;
-
-/** One row: the KPI on the left, one badge on the right, a caret. */
-function KpiRow({ href, name, sub, badge }: { href: string; name: string; sub?: string | null; badge: React.ReactNode }) {
-  return (
-    <li>
-      <Link href={href} scroll={false} className="-mx-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-lg px-3 py-3 transition-colors hover:bg-kumo-tint">
-        <span className="flex min-w-0 flex-col gap-1">
-          <span className="text-lg font-semibold text-kumo-strong">{name}</span>
-          {sub && <span className="text-sm text-kumo-subtle"><Rich text={sub} /></span>}
-        </span>
-        <span className="flex items-center gap-2">
-          {badge}
-          <CaretRightIcon size={16} weight="bold" aria-hidden className="text-kumo-subtle" />
-        </span>
-      </Link>
-    </li>
-  );
-}
-
-/**
- * A. Price Drivers (Kevin + Thierry 2026-11-19; named Price Driver since 2026-11-23, « narrative » too abstract): the fundamental KPIs the market has shown it trades the stock on
- * (strong or weak confidence), strongest first; the others are left out. A row opens how it was tested (`kdriver:`).
- */
-export function KpiDrivers({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriver[] }) {
-  const shown = kpis.filter((k) => k.level === "strong" || k.level === "weak").sort((a, b) => LEVEL_RANK[a.level!] - LEVEL_RANK[b.level!] || a.rank - b.rank);
-  if (kpis.length === 0) return <p className="text-lg text-kumo-subtle">Not tested yet.</p>;
-  if (shown.length === 0) return <p className="text-lg text-kumo-subtle">–</p>;
-  return (
-    <ol className="flex flex-col">
-      {shown.map((k) => (
-        <KpiRow key={k.id} href={itemHref(symbol, `kdriver:${k.id}`)} name={k.name} badge={<ConfidenceBadge level={k.level === "none" ? "noise" : k.level} />} />
-      ))}
-    </ol>
-  );
-}
-
-/** B. Driver Signals: among A, the KPIs turning NOW at the latest release (strong or weak). */
-export function KpiSignals({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriver[] }) {
-  const shown = kpis.filter((k) => (k.level === "strong" || k.level === "weak") && (k.signal === "strong" || k.signal === "weak")).sort((a, b) => STRENGTH_RANK[a.signal!] - STRENGTH_RANK[b.signal!] || a.rank - b.rank);
-  if (kpis.length === 0) return <p className="text-lg text-kumo-subtle">Not tested yet.</p>;
-  if (shown.length === 0) return <p className="text-lg text-kumo-subtle">No price driver is turning now.</p>;
-  return (
-    <ol className="flex flex-col">
-      {shown.map((k) => (
-        <KpiRow
-          key={k.id}
-          href={itemHref(symbol, `kdriver:${k.id}`)}
-          name={k.name}
-          sub={k.signalWhy}
-          badge={
-            <Badge appearance="dot" variant={k.signal === "strong" ? "success" : "warning"}>
-              {`${k.signal === "strong" ? "Strong" : "Weak"} turn${k.direction ? ` · ${k.direction === "up" ? "up" : "down"}` : ""}`}
-            </Badge>
-          }
-        />
-      ))}
-    </ol>
-  );
-}
-
 /**
  * One story on screen (Kevin 2026-11-09, « WTF IS THAT » on the two-thesis tabs): the thesis that signals, else the only
  * one, else the long. The competition between two theses stays in the backend.
@@ -291,21 +224,8 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
         )}
       </Section>
 
-      <Section title="Price drivers">
-        <KpiDrivers symbol={symbol} kpis={analysis.kpis} />
-      </Section>
-
-      <Section title="Price drivers turning now">
-        <KpiSignals symbol={symbol} kpis={analysis.kpis} />
-      </Section>
-
-      {analysis.kpis.length > 0 && (
-        <Link href={`/tickers/${encodeURIComponent(symbol)}/drivers`} className="inline-flex items-center gap-1 self-start text-sm font-medium text-kumo-link hover:underline">
-          Every price driver candidate, how it was tested <CaretRightIcon size={14} weight="bold" aria-hidden />
-        </Link>
-      )}
-
-      {variant === "page" && <DriversFound symbol={symbol} />}
+      {/* The proof of the Price Drivers, closed (PROOF-STRUCTURE-1123): candidates, confidence, reversals. */}
+      <ProofSections symbol={symbol} />
 
       {variant === "page" && (
         <Drawers>

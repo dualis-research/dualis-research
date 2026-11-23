@@ -1,10 +1,11 @@
-import type { GoldKpiDriver, GoldPriceMove, GoldPriceMoveCause } from "@/db/schema/analysis";
+import { weekVerdict, type GoldPriceMove, type GoldPriceMoveCause, type MoveCite, type WeekVerdict } from "@/db/schema/analysis";
 
 /**
  * MOVE-ARROWS-1123 (Thierry, meeting 2026-11-23: « a chart with arrows pointing at each thing, telling me: this is
- * what happened here »): one arrow per unusual price move of step 2, numbered in date order, with the few words of
- * what happened. Read from what is stored, never a new AI call: the Price Driver Candidates that changed in the move
- * (`tests.explainedMoveIds`) and the move's cause (`gold.price_move_causes.fact`); « No known cause » when neither.
+ * what happened here »): one arrow per unusual week (step 1), numbered in date order, with step 4's ONE verdict on it
+ * (fundamental / market / unknown, from `gold.price_move_causes`) and its fact; the events that explain it (step 3) are
+ * the cause's cites. Read from what is stored, never a new AI call. No candidate words here (PROOF-STRUCTURE-1123: « Rent
+ * changed » beside « the news does not explain it » read as two verdicts on one week).
  */
 export type MoveArrow = {
   n: number;
@@ -15,41 +16,36 @@ export type MoveArrow = {
   /** The move once its market is taken out (ratio). */
   abnormal: number;
   bench: string;
-  /** Price Driver Candidates that changed in this move, by name. */
-  candidates: string[];
-  /** What happened, one sentence, or null when nothing is known. */
+  /** Step 4's verdict on the week. */
+  week: WeekVerdict;
+  /** What happened, one sentence, or null when no item explains it. */
   fact: string | null;
+  /** Step 3: the items the verdict rests on. */
+  cites: MoveCite[];
 };
 
-export const NO_KNOWN_CAUSE = "No known cause";
+export const WEEK_WORD: Record<WeekVerdict, string> = { fundamental: "Fundamental", market: "Market", unknown: "Unknown" };
+/** Step 4's verdict on a week as a badge: one verdict per week, the same on every surface. */
+export const WEEK_BADGE = { fundamental: "primary", market: "neutral", unknown: "outline" } as const;
+export const NO_ITEM_EXPLAINS = "No news or filing explains it";
 
 export function moveArrows(
   moves: Pick<GoldPriceMove, "id" | "startDay" | "endDay" | "direction" | "abnormal" | "bench">[],
-  causes: Pick<GoldPriceMoveCause, "id" | "fact">[],
-  kpis: Pick<GoldKpiDriver, "name" | "tests">[],
+  causes: Pick<GoldPriceMoveCause, "id" | "kind" | "fact" | "cites">[],
 ): MoveArrow[] {
-  const fact = new Map(causes.map((c) => [c.id, c.fact?.trim() || null]));
+  const cause = new Map(causes.map((c) => [c.id, c]));
   return [...moves]
     .sort((a, b) => a.startDay.localeCompare(b.startDay) || a.id.localeCompare(b.id))
-    .map((m, i) => ({
-      n: i + 1,
-      id: m.id,
-      startDay: m.startDay,
-      endDay: m.endDay,
-      direction: m.direction,
-      abnormal: m.abnormal,
-      bench: m.bench,
-      candidates: kpis.filter((k) => k.tests?.explainedMoveIds.includes(m.id)).map((k) => k.name),
-      fact: fact.get(m.id) ?? null,
-    }));
+    .map((m, i) => {
+      const c = cause.get(m.id);
+      const week = weekVerdict(c?.kind);
+      return { n: i + 1, id: m.id, startDay: m.startDay, endDay: m.endDay, direction: m.direction, abnormal: m.abnormal, bench: m.bench, week, fact: week === "unknown" ? null : c?.fact?.trim() || null, cites: c?.cites ?? [] };
+    });
 }
 
-/** The words beside an arrow's number: the candidates that changed, then what happened; « No known cause » when neither. */
-export function arrowWords(a: Pick<MoveArrow, "candidates" | "fact">): string {
-  // A few words (Thierry: « what happened here »): two candidates by name, the rest counted.
-  const named = a.candidates.length > 2 ? `${a.candidates.slice(0, 2).join(", ")} and ${a.candidates.length - 2} more` : a.candidates.join(" and ");
-  const parts = [a.candidates.length ? `${named} changed` : null, a.fact].filter((x): x is string => !!x);
-  return parts.length ? parts.join(". ") : NO_KNOWN_CAUSE;
+/** The words beside an arrow's verdict: what happened, or that nothing explains it. */
+export function arrowWords(a: Pick<MoveArrow, "fact">): string {
+  return a.fact ?? NO_ITEM_EXPLAINS;
 }
 
 /**

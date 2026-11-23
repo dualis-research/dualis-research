@@ -1,12 +1,14 @@
 import { cache } from "react";
-import { and, asc, eq, gte } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { driverEvents, kpiDrivers, priceMoves, type GoldKpiDriver } from "@/db/schema/analysis";
+import { driverEvents, kpiDrivers, priceMoveCauses, priceMoves } from "@/db/schema/analysis";
+import { goldNewsLinks } from "@/db/schema/news";
 import { priceBars } from "@/db/schema/gold";
 import { localIndex } from "@/collectors/benchmark";
-import { KPI_YEARS, periodWords } from "@/collectors/dimensions/kpi-drivers";
+import { KPI_YEARS } from "@/collectors/dimensions/kpi-drivers";
 import { moveWindows } from "@/collectors/dimensions/market-reaction/moves";
 import { withBold } from "./emphasis";
+import { moveArrows } from "./move-arrows";
 
 /** A ticker's KPI drivers (Kevin + Thierry 2026-11-19), rank order. */
 export const kpiDriversOf = cache(async (symbol: string) => withBold(await getDb().select().from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)).orderBy(asc(kpiDrivers.rank))));
@@ -43,29 +45,23 @@ export const cleanPrice = cache(async (symbol: string) => {
   return { price, beta, indexName: index.name, windowEnd };
 });
 
-/** Steps 1 to 3 for the Analysis page: every event, every significant move of 3 years, the candidate KPIs. */
-export const driverFindings = cache(async (symbol: string) => {
+/**
+ * The proof structure of a ticker (PROOF-STRUCTURE-1123): every event of 3 years (industry news marked), every unusual
+ * week with its ONE verdict and the items it rests on, the candidates with their tests and reversals, the price chart.
+ */
+export const proofData = cache(async (symbol: string) => {
   const db = getDb();
   const since = sinceDay();
-  const [events, moves, kpis, chart] = await Promise.all([
+  const [events, moves, causes, kpis, chart, industry] = await Promise.all([
     db.select().from(driverEvents).where(eq(driverEvents.symbol, symbol)).orderBy(asc(driverEvents.day), asc(driverEvents.id)),
     db.select().from(priceMoves).where(and(eq(priceMoves.symbol, symbol), gte(priceMoves.endDay, since))).orderBy(asc(priceMoves.startDay)),
+    db.select().from(priceMoveCauses).where(eq(priceMoveCauses.symbol, symbol)),
     kpiDriversOf(symbol),
     cleanPrice(symbol),
+    db.select({ id: goldNewsLinks.newsItemId }).from(goldNewsLinks).where(and(eq(goldNewsLinks.symbol, symbol), sql`'industry' = any(${goldNewsLinks.matchKinds})`, sql`not ('name' = any(${goldNewsLinks.matchKinds}))`, sql`not ('alias' = any(${goldNewsLinks.matchKinds}))`, sql`not ('symbol' = any(${goldNewsLinks.matchKinds}))`)),
   ]);
-  return { events, moves, kpis, chart };
+  const from = chart.price[0]?.date ?? events[0]?.day ?? since;
+  const weeks = moves.filter((m) => m.startDay >= from);
+  return { events, arrows: moveArrows(weeks, causes), kpis, chart, industryNews: new Set(industry.map((x) => String(x.id))) };
 });
-
-/**
- * What the KPI driver panel draws: the KPI per period (step 4) over the share price (step 2's view), and a numbered
- * line per event that moved something (step 5), in date order: the same numbers as the rows under the chart.
- */
-export async function kpiDriverChart(k: Pick<GoldKpiDriver, "symbol" | "periods" | "rows" | "measure">) {
-  const c = await cleanPrice(k.symbol);
-  const kpi = k.periods.map((p) => ({ date: `${p.period}-28`, period: periodWords(p.periodType, p.period), value: p.value }));
-  const moved = k.rows.filter((r) => r.result !== "nothing").sort((a, b) => a.day.localeCompare(b.day) || a.eventId.localeCompare(b.eventId));
-  const number = new Map(moved.map((r, i) => [r.eventId, i + 1]));
-  const verdict = (r: (typeof moved)[number]) => (r.result === "confirms" ? "confirms" : r.result === "invalidates" ? "invalidates" : "neutral") as "confirms" | "invalidates" | "neutral";
-  const markers = moved.map((r, i) => ({ n: i + 1, date: r.day, end: c.windowEnd(r.day), verdict: verdict(r) }));
-  return { ...c, kpi, unit: k.measure?.unit ?? ("ratio" as const), currency: k.measure?.currency ?? null, markers, number };
-}
+export type ProofData = Awaited<ReturnType<typeof proofData>>;
