@@ -11,6 +11,7 @@ import { coverPhotos } from "./dimensions/cover-photos";
 import { contentReplies } from "./dimensions/content-replies";
 import { contentVoices } from "./dimensions/content-voices";
 import { news } from "./dimensions/news";
+import { newsHistory } from "./dimensions/news/history";
 import { onedrive } from "./dimensions/onedrive";
 import { onedriveFilings } from "./dimensions/onedrive-filings";
 import { earnings } from "./dimensions/earnings";
@@ -69,11 +70,12 @@ import type { Dimension } from "./types";
  * once would race the account's rotating token, so `all`, `core` and `growth` never include it.
  * One signal engine since 2026-11-09: the legacy catalysts / thesis-confidence chain is gone; the WhatsApp alert is the Signal Change.
  * Signal alerts right after signals: a Signal Change that makes the signal better goes to Kevin and Thierry with its picture.
+ * News history (NEWS-HISTORY-1123) after news, in its own stage: 3 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
  * Daily email (DAILY-EMAIL-1123) runs only when named, last: the 02:00 UTC slot names it right after news and filings
  * (every watchlist ticker); it judges each new item once and sends the morning email. A merge never runs it.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, driverConfidenceDim, kpiDriversDim, analysis, narrativeSinceDim, evidenceDim, narrativeStateDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, driverConfidenceDim, kpiDriversDim, analysis, narrativeSinceDim, evidenceDim, narrativeStateDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts): the daily schedule only. A deploy's
@@ -95,6 +97,8 @@ export const STAGES: readonly (readonly string[])[] = [
   ["portfolio", "company-profile"],
   ["news", "onedrive", "price", "filings", "earnings"],
   ["intraday-price"],
+  // Three years of Google News, one month x one term at a time, read once (NEWS-HISTORY-1123): alone, never beside the daily news (one Google rate limit).
+  ["news-history"],
   ["thesis", "onedrive-filings", "filing-documents", "consensus"],
   ["financials"],
   ["peers"],
