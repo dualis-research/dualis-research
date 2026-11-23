@@ -19,6 +19,10 @@ on:
         description: "One ticker only (COLLECT_ONLY), for a test run; empty = every ticker"
         default: ""
         required: false
+      email_mode:
+        description: "daily-email: test = send to Kevin only (never Thierry), empty = the scheduled email"
+        default: ""
+        required: false
 
 concurrency:
   group: collect
@@ -52,6 +56,9 @@ jobs:
       ONEDRIVE_TOKEN_KEY: ${{ secrets.ONEDRIVE_TOKEN_KEY }}
       COLLECT_TRIGGER: ${{ github.event.inputs.trigger || 'manual' }}
       COLLECT_ONLY: ${{ github.event.inputs.only || '' }}
+      MAIL_TOKEN: ${{ secrets.MAIL_TOKEN }}
+      MAIL_RECIPIENTS: ${{ secrets.MAIL_RECIPIENTS }}
+      DAILY_EMAIL_MODE: ${{ github.event.inputs.email_mode || '' }}
     steps:
       - name: Database secret is set
         working-directory: .
