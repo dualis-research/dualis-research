@@ -12,7 +12,7 @@ import type { SourceContext } from "./types";
 /** Narrative Driver Temporal Confidence (Kevin 2026-11-19): does the market keep trading the stock on this reason? */
 
 const SYMBOL = "101160.KQ";
-const move = (day: string, ret: number) => ({ id: `${SYMBOL}:${day}`, symbol: SYMBOL, startDay: day, endDay: day, days: 1, currency: "KRW", closeBefore: 100, closeEnd: 100 * (1 + ret), returnPct: ret, benchReturn: 0, abnormal: ret, z: ret * 30, beta: 1, direction: ret > 0 ? ("up" as const) : ("down" as const) });
+const move = (day: string, ret: number) => ({ id: `${SYMBOL}:${day}`, symbol: SYMBOL, startDay: day, endDay: day, lastStart: day, bench: "KOSPI", days: 1, currency: "KRW", closeBefore: 100, closeEnd: 100 * (1 + ret), returnPct: ret, benchReturn: 0, abnormal: ret, z: ret * 30, beta: 1, direction: ret > 0 ? ("up" as const) : ("down" as const) });
 const cause = (day: string, kind: "fundamental" | "macro", fact: string) => ({
   id: `${SYMBOL}:${day}`,
   symbol: SYMBOL,

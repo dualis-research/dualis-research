@@ -576,10 +576,10 @@ export const marketReactions = gold.table(
 export type GoldMarketReaction = typeof marketReactions.$inferSelect;
 
 /**
- * Significant price moves (Thierry 2026-11-17: « if the market cared at that moment, that's a driver that matters »):
- * every day the stock moved beyond two standard deviations of its own abnormal returns vs the S&P 500 (event-study
- * convention), consecutive same-sign days merged. Code only (`market-reaction/moves.ts`), rebuilt from
- * gold.price_bars each run. id = `<symbol>:<start date>`.
+ * Step 2 of the drivers, « When the stock moved » (DRIVERS-SIX-STEPS-1123): every stretch where the stock's 5-trading-day
+ * move, its LOCAL market's move taken out (beta x local index), was at least twice its usual 5-day move (|z| >= 2,
+ * event-study convention), consecutive windows of one sign merged. The ONE definition of a significant move
+ * (`market-reaction/moves.ts`), rebuilt from gold.price_bars each run. id = `<symbol>:<start date>`.
  */
 export const priceMoves = gold.table(
   "price_moves",
@@ -588,22 +588,60 @@ export const priceMoves = gold.table(
     symbol: text("symbol").notNull(),
     startDay: text("start_day").notNull(),
     endDay: text("end_day").notNull(),
+    /** First day of its last significant window: an event whose own window starts in [start_day, last_start] sits in it. */
+    lastStart: text("last_start").notNull(),
     days: integer("days").notNull(),
     currency: text("currency"),
     closeBefore: doublePrecision("close_before").notNull(),
     closeEnd: doublePrecision("close_end").notNull(),
-    /** Ratios: the stock's return, the S&P 500's over the same span, the cumulative abnormal return. */
+    /** Ratios: the stock's return, its local index's over the same span, the move once the market is taken out. z = its most unusual 5-day window over the usual one. */
     returnPct: doublePrecision("return_pct").notNull(),
     benchReturn: doublePrecision("bench_return"),
     abnormal: doublePrecision("abnormal").notNull(),
     z: doublePrecision("z").notNull(),
     beta: doublePrecision("beta").notNull(),
     direction: text("direction").$type<"up" | "down">().notNull(),
+    /** The local index's name (« Hang Seng »). */
+    bench: text("bench").notNull(),
     rebuiltAt,
   },
   (t) => [index("gold_price_moves_symbol").on(t.symbol, t.startDay)],
 );
 export type GoldPriceMove = typeof priceMoves.$inferSelect;
+
+export const DRIVER_EVENT_KINDS = ["release", "news", "filing"] as const;
+export type DriverEventKind = (typeof DRIVER_EVENT_KINDS)[number];
+/**
+ * Step 1 of the drivers, « Events » (DRIVERS-SIX-STEPS-1123): every results release, news item and filing of 3 years
+ * for a ticker, no judgment, each with its OWN 5-trading-day move once its local market is taken out (the same window
+ * as step 2) and the significant move it sits in, if any. Code only (`market-reaction`), rebuilt each run.
+ * id = `<symbol>|<kind>:<source id>` (a release = a gold.documents id, a filing = gold.filings, news = gold.news_items).
+ */
+export const driverEvents = gold.table(
+  "driver_events",
+  {
+    id: text("id").primaryKey(),
+    symbol: text("symbol").notNull(),
+    kind: text("kind").$type<DriverEventKind>().notNull(),
+    sourceId: text("source_id").notNull(),
+    day: text("day").notNull(),
+    title: text("title").notNull(),
+    /** Where it opens: the publisher's or registry's link (null for a release, which opens its pages in the console). */
+    url: text("url"),
+    /** Its 5 trading days: the stock's return, its local index's, beta, the move with the market taken out, how unusual (z). */
+    stock: doublePrecision("stock"),
+    benchReturn: doublePrecision("bench_return"),
+    beta: doublePrecision("beta"),
+    reaction: doublePrecision("reaction"),
+    z: doublePrecision("z"),
+    bench: text("bench").notNull(),
+    /** The significant move (gold.price_moves) it sits in, else null. */
+    moveId: text("move_id"),
+    rebuiltAt,
+  },
+  (t) => [index("gold_driver_events_symbol").on(t.symbol, t.day)],
+);
+export type GoldDriverEvent = typeof driverEvents.$inferSelect;
 
 /** What caused a move: the business (fundamental), the market at large (macro), trading itself (technical), or not found. */
 export const MOVE_CAUSE_KINDS = ["fundamental", "macro", "technical", "unknown"] as const;
@@ -686,43 +724,68 @@ export const driverConfidence = gold.table(
 );
 export type GoldDriverConfidence = typeof driverConfidence.$inferSelect;
 
-/** A results release a KPI driver is tested on: the company's report and what the price did in the 5 trading days after. */
-export type KpiRelease = { id: string; day: string; title: string; reaction: number | null; stock: number | null; bench: number | null };
-/** One release judged against one KPI (Thierry 2026-11-19: a hypothesis, invalidated when the KPI moved strongly and the price did not). */
-export const KPI_VERDICTS = ["confirms", "invalidates", "neutral"] as const;
-export type KpiVerdict = (typeof KPI_VERDICTS)[number];
-/**
- * One moment judged against one KPI (Kevin 2026-11-19). step B1 = a results release or a news item: did the price move a
- * lot in the 5 trading days after, and did the KPI change then? step B2 = any other company filing where the KPI moved
- * strongly: did the price follow? A (the KPI's moves) = every row with `kpiChanged`.
- */
-export type KpiTestRow = {
-  releaseId: string;
-  day: string;
-  title: string;
-  step?: "B1" | "B2";
-  kind?: "release" | "news" | "filing";
-  /** 5-day return against the S&P 500, and how unusual it is for this stock (that move in standard deviations of its own 5-day moves over the year before). */
-  reaction: number | null;
-  unusual?: number | null;
-  bigMove?: boolean;
-  kpiChanged?: boolean;
-  from: string | null;
-  to: string | null;
-  change: string | null;
-  verdict: KpiVerdict;
-  why: string;
-  cite: DocCitation | null;
-};
 export const KPI_LEVELS = ["strong", "weak", "none"] as const;
 export type KpiLevel = (typeof KPI_LEVELS)[number];
 
+/** How a KPI is measured (step 3 -> 4): a stored series, a formula of stored series, or its value read in each report. */
+export type KpiMeasure = { source: "series" | "formula" | "reports"; /** How it reads on screen: « Operating margin, half years ». */ label: string; periodType: "year" | "half" | "quarter"; unit: "currency" | "ratio" | "multiple" | "per-share" | "count"; currency: string | null; providers: string[] };
 /**
- * KPI Drivers (Kevin + Thierry 2026-11-19, private `docs/meeting-2026-11-19.md`): a driver is a fundamental KPI the
- * market trades the stock on. The AI lists the candidate KPIs from the business model and what management writes in
- * its reports (any number, approximations of unreported ones included), then tests each one on every results release
- * of 3 years: confirms / invalidates / neutral, with the 5-trading-day price reaction, then how far it can be trusted
- * (strong / weak / none) and whether it turns NOW (signal). id = `<symbol>:kpi:<n>`.
+ * Step 4, « When the KPI moved »: one row per period at the finest period reported, its change on the same period a
+ * year earlier (points for a ratio, % for an amount) and how many times its usual change that is (the median of the
+ * series' other changes; >= 2 = significant). `releaseId` = the release that first reported it (step 1 id).
+ */
+export type KpiPeriod = {
+  period: string;
+  periodType: "year" | "half" | "quarter";
+  value: number;
+  prior: number | null;
+  change: number | null;
+  changeKind: "points" | "relative";
+  ratio: number | null;
+  significant: boolean;
+  releaseId: string | null;
+  releaseDay: string | null;
+  /** The report page it was read on, when read in the reports (else the stored series' providers say where). */
+  cite: DocCitation | null;
+};
+export const KPI_RESULTS = ["confirms", "invalidates", "other-cause", "nothing"] as const;
+export type KpiResult = (typeof KPI_RESULTS)[number];
+/**
+ * Step 5, « Event by event » (code): one row per step-1 event. KPI moved = the release first reporting a period whose
+ * change was significant (null = not measured at that moment: not a release, or no new period); price moved = the
+ * event sits in a step-2 move. confirms = both, the way the expected direction says; invalidates = the KPI moved, the
+ * price did not or went the other way; other-cause = the price moved, the KPI did not (never counted against it).
+ */
+export type KpiEventRow = {
+  eventId: string;
+  day: string;
+  kind: DriverEventKind;
+  title: string;
+  /** Where it opens (step 1): a release = its gold.documents id; news and filings = their link. */
+  sourceId: string;
+  url: string | null;
+  /** The period the release first reported, the KPI before (a year earlier) and after, its change and how unusual. */
+  period: string | null;
+  from: number | null;
+  to: number | null;
+  change: number | null;
+  ratio: number | null;
+  kpiMoved: boolean | null;
+  /** The event's own 5 trading days (stock as traded, with the market taken out, z) and the move it sits in. */
+  stock: number | null;
+  reaction: number | null;
+  z: number | null;
+  moveId: string | null;
+  priceMoved: boolean;
+  result: KpiResult;
+  cite: DocCitation | null;
+};
+
+/**
+ * KPI Drivers (Kevin + Thierry 2026-11-19; six steps DRIVERS-SIX-STEPS-1123): a driver is a fundamental KPI the market
+ * trades the stock on. Step 3 (AI) lists the candidates with their expected direction and how each is measured; step 4
+ * (code) its moves (`periods`); step 5 (code) every event (`rows`); step 6 (AI, from step 5 only) the verdict
+ * (strong / weak / none + reason) and whether it turns NOW (signal). id = `<symbol>:kpi:<n>`.
  */
 export const kpiDrivers = gold.table(
   "kpi_drivers",
@@ -733,14 +796,18 @@ export const kpiDrivers = gold.table(
     name: text("name").notNull(),
     /** Why this KPI moves this business, in one sentence. */
     why: text("why").notNull(),
-    /** A stored series key it reads (`qmetric:operating-margin`), else null: read in the reports' words. */
+    /** KPI up => price `up` or `down` (step 3). */
+    expected: text("expected").$type<"up" | "down">().notNull(),
+    /** A stored series key it reads (`hmetric:operating-margin`), else null. */
     series: text("series"),
-    /** How it is approximated when the company does not report it (« revenue / PP&E »), else null. */
+    /** A formula of stored series keys (« line:revenue / line:ppe ») when no series holds it, else null. */
     approximation: text("approximation"),
+    measure: jsonb("measure").$type<KpiMeasure | null>(),
+    periods: jsonb("periods").$type<KpiPeriod[]>().notNull().default([]),
     level: text("level").$type<KpiLevel>(),
     /** ONE sentence: why this KPI can be trusted, or not. */
     reason: text("reason"),
-    rows: jsonb("rows").$type<KpiTestRow[]>().notNull().default([]),
+    rows: jsonb("rows").$type<KpiEventRow[]>().notNull().default([]),
     confirmed: integer("confirmed").notNull().default(0),
     invalidated: integer("invalidated").notNull().default(0),
     /** Does it turn NOW (the latest release): strong / weak / none, and why. Null for a KPI not trusted. */

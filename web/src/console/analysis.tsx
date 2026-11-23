@@ -10,6 +10,7 @@ import { CallBadge, TickerTag } from "./board";
 import { Drawer, Drawers } from "./drawer";
 import { ConfidenceBadge } from "./confidence-badge";
 import { kpiDriversOf } from "./kpi-queries";
+import { DriversFound } from "./drivers-found";
 import type { GoldKpiDriver } from "@/db/schema/analysis";
 import { Badge } from "@cloudflare/kumo";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "./kumo";
@@ -303,6 +304,8 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
           Every KPI tested, release by release <CaretRightIcon size={14} weight="bold" aria-hidden />
         </Link>
       )}
+
+      {variant === "page" && <DriversFound symbol={symbol} />}
 
       {variant === "page" && (
         <Drawers>

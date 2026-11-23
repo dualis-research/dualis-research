@@ -6,7 +6,7 @@ import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
-import { findMoves, MOVE_Z } from "./dimensions/market-reaction/moves";
+import { findMoves, moveOf, moveWindows, MOVE_Z, windowOf } from "./dimensions/market-reaction/moves";
 import { batchSubject, fundamentalMovesOf, moveCausesSource, movesWithCauses, parseBatch, rebuildMoveCauses } from "./dimensions/move-causes";
 import type { SourceContext } from "./types";
 
@@ -26,33 +26,42 @@ function series(dates: string[], ret: (i: number) => number): { date: string; cl
   });
 }
 
-describe("significant price moves", () => {
+describe("significant price moves: one definition, 5 trading days against the local index", () => {
   const dates = days(300);
   const JUMP = 280;
 
-  it("finds a +15% day against a flat S&P 500", () => {
+  it("finds a +15% day against a flat index as one move, the 5-day windows that hold it merged", () => {
     const bench = series(dates, () => 0);
     const stock = series(dates, (i) => (i === JUMP ? 0.15 : wobble(i)));
-    const moves = findMoves("TEST", stock, bench);
+    const moves = findMoves("TEST", stock, bench, "Hang Seng");
     expect(moves).toHaveLength(1);
-    expect(moves[0]).toMatchObject({ id: `TEST:${dates[JUMP]}`, startDay: dates[JUMP], endDay: dates[JUMP], days: 1, direction: "up" });
+    // Every 5-day window holding the jump is significant: from the window starting 4 days before it to the one starting on it.
+    expect(moves[0]).toMatchObject({ id: `TEST:${dates[JUMP - 4]}`, startDay: dates[JUMP - 4], lastStart: dates[JUMP], endDay: dates[JUMP + 4], days: 9, direction: "up", bench: "Hang Seng" });
     expect(moves[0].z).toBeGreaterThanOrEqual(MOVE_Z);
-    expect(moves[0].returnPct).toBeCloseTo(0.15, 2);
+    expect(moves[0].abnormal).toBeGreaterThan(0.12);
   });
 
-  it("finds nothing when the stock only follows a market-wide drop", () => {
+  it("finds nothing when the stock only follows its market", () => {
     const market = (i: number) => (i === JUMP ? -0.1 : wobble(i));
-    const moves = findMoves("TEST", series(dates, market), series(dates, market));
-    expect(moves).toHaveLength(0);
+    expect(findMoves("TEST", series(dates, market), series(dates, market), "Hang Seng")).toHaveLength(0);
   });
 
-  it("merges consecutive same-sign significant days into one move", () => {
+  it("ties an event to the move its own 5-day window sits in, never one outside it", () => {
     const bench = series(dates, () => 0);
-    const stock = series(dates, (i) => (i === JUMP || i === JUMP + 1 ? -0.12 : wobble(i)));
-    const moves = findMoves("TEST", stock, bench);
+    const stock = series(dates, (i) => (i === JUMP ? -0.12 : wobble(i)));
+    const windows = moveWindows(stock, bench);
+    const moves = findMoves("TEST", stock, bench, "Hang Seng", windows);
     expect(moves).toHaveLength(1);
-    expect(moves[0]).toMatchObject({ startDay: dates[JUMP], endDay: dates[JUMP + 1], days: 2, direction: "down" });
-    expect(moves[0].returnPct).toBeCloseTo(0.88 * 0.88 - 1, 3);
+    expect(moves[0].direction).toBe("down");
+    expect(moveOf(moves, windowOf(windows, dates[JUMP]))).toBe(moves[0].id);
+    expect(moveOf(moves, windowOf(windows, dates[JUMP - 2]))).toBe(moves[0].id);
+    expect(moveOf(moves, windowOf(windows, dates[JUMP + 1]))).toBeNull();
+    expect(moveOf(moves, windowOf(windows, dates[200]))).toBeNull();
+    // The event's own window: the close before its day to the 5th close.
+    const w = windowOf(windows, dates[JUMP])!;
+    expect(w.first).toBe(dates[JUMP]);
+    expect(w.end).toBe(dates[JUMP + 4]);
+    expect(Math.abs(w.z!)).toBeGreaterThanOrEqual(MOVE_Z);
   });
 });
 
@@ -61,7 +70,7 @@ describe("move causes", () => {
   let close: () => Promise<void>;
   let calls: string[];
   const SYMBOL = "TEST";
-  const move = (start: string, end = start) => ({ id: `${SYMBOL}:${start}`, symbol: SYMBOL, startDay: start, endDay: end, days: 1, currency: "USD", closeBefore: 10, closeEnd: 11.5, returnPct: 0.15, benchReturn: 0.001, abnormal: 0.149, z: 6, beta: 1, direction: "up" as const });
+  const move = (start: string, end = start) => ({ id: `${SYMBOL}:${start}`, symbol: SYMBOL, startDay: start, endDay: end, lastStart: start, bench: "S&P 500", days: 1, currency: "USD", closeBefore: 10, closeEnd: 11.5, returnPct: 0.15, benchReturn: 0.001, abnormal: 0.149, z: 6, beta: 1, direction: "up" as const });
 
   const fake: Complete = async ({ prompt }) => {
     calls.push(prompt);

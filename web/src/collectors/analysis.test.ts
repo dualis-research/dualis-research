@@ -299,6 +299,8 @@ describe("Too old (Kevin 2026-11-06)", () => {
   it("news from before the month the current story took hold are Too old: never judged, never under a driver, never a signal", async () => {
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
     await db.insert(gold.priceBars).values([{ symbol: SYMBOL, date: new Date(Date.now() - 100 * 86_400_000).toISOString().slice(0, 10), open: 40000, high: 40000, low: 40000, close: 40000, volume: 1, sources: ["naver"], alternatives: [] }, { symbol: SYMBOL, date: new Date().toISOString().slice(0, 10), open: 30000, high: 30000, low: 30000, close: 30000, volume: 1, sources: ["naver"], alternatives: [] }]);
+    // Its local index (KOSDAQ): the significant moves are measured against it.
+    await db.insert(gold.priceBars).values([100, 0].map((d) => ({ symbol: "^KQ11", date: new Date(Date.now() - d * 86_400_000).toISOString().slice(0, 10), close: 800, sources: ["yahoo"], alternatives: [] })) as never);
     calls = [];
     await runDimension(db, narrativeSinceDim, { trigger: "test", ctx: ctx() });
     expect(calls).toEqual(["since"]);

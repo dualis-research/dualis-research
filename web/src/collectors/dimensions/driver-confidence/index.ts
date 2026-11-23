@@ -77,7 +77,7 @@ export function confidencePrompt(symbol: string, side: ThesisSide, narrative: st
   const lines = shown.map((m) => {
     const c = m.cause!;
     const metric = c.metric ? ` Figure: ${c.metric.label} ${c.metric.from ? `${c.metric.from} to ` : ""}${c.metric.to}${c.metric.change ? ` (${c.metric.change})` : ""}, period ended ${c.metric.period}${c.lasting && c.lasting !== "n-a" ? `, ${c.lasting}` : ""}.` : "";
-    return `${label.get(m.id)} ${m.startDay}: stock ${signedPct(m.returnPct)} (${Math.abs(m.z).toFixed(1)} standard deviations). ${c.category ?? "Uncategorised"}: ${c.fact ?? "no fact written"}.${metric}`;
+    return `${label.get(m.id)} ${m.startDay}: stock ${signedPct(m.returnPct)} (${Math.abs(m.z).toFixed(1)}x its usual 5-day move). ${c.category ?? "Uncategorised"}: ${c.fact ?? "no fact written"}.${metric}`;
   });
   const tested = new Map(drivers.map((d) => [d.id, testedMoves(d, moves)]));
   const blocks = drivers.map((d, i) => {
@@ -92,7 +92,7 @@ export function confidencePrompt(symbol: string, side: ThesisSide, narrative: st
   const prompt = [
     `${symbol}, ${SIDE[side].label.toLowerCase()}: ${SIDE[side].story}. The narrative: ${narrative}`,
     "",
-    `Business moves of the last years (beyond 2 standard deviations of the stock's own daily moves once the S&P 500 is taken out, caused by a fact about this company), oldest first:`,
+    `Business moves of the last years (at least twice the stock's usual 5-day move once its own market is taken out, caused by a fact about this company), oldest first:`,
     lines.length ? lines.join("\n") : "none.",
     `Left out: ${others.length} moves the market at large or trading caused, or with no cause found.`,
     "",

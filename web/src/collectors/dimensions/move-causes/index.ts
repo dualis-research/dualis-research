@@ -136,7 +136,7 @@ async function pendingSubjects(db: Db): Promise<string[]> {
 }
 
 export const MOVE_SYSTEM = [
-  "You are an equity research analyst. A stock moved far beyond its normal daily volatility versus the S&P 500.",
+  "You are an equity research analyst. A stock moved at least twice its usual 5-day move, once its own market's move (its local index times its beta) is taken out.",
   "Your job: say what made the market care at that moment, from the news items and filings dated around the move.",
   "The point of the exercise: the moves caused by facts about THIS business (results, guidance, orders and backlog, margins, a contract, management, capital, a deal) show what the market watches on the company; the moves caused by the market at large say nothing about it.",
   "kind: fundamental = a fact about this company's business or capital caused it; macro = the market, rates, a war, a commodity price, a policy or sector-wide news moved it, not a fact of the company; technical = trading itself (index inclusion or removal, a share placement priced at a discount, a lock-up, a short squeeze) with no business fact; unknown = none of the items explains the move.",
@@ -173,7 +173,7 @@ export function batchPrompt(symbol: string, name: string | null, moves: GoldPric
       return id;
     });
     return [
-      `M${i + 1}: ${span}: the stock ${pct(m.returnPct)}, S&P 500 ${pct(m.benchReturn)}, abnormal ${pct(m.abnormal)} (${Math.abs(m.z).toFixed(1)} standard deviations).`,
+      `M${i + 1}: ${span}: the stock ${pct(m.returnPct)}, ${m.bench} ${pct(m.benchReturn)}, beyond the market ${pct(m.abnormal)} (${Math.abs(m.z).toFixed(1)}x its usual 5-day move).`,
       "Items dated around it:",
       ...lines,
       `Figures just reported: ${reported.length ? reported.join("; ") : "none collected for that time"}.`,
