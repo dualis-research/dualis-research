@@ -41,7 +41,7 @@ async function seedLines(line: string, periodType: "year" | "half" | "quarter", 
 }
 
 async function seedMoves() {
-  const move = (day: string, z: number, kind: "fundamental" | "macro", fact: string) => ({ m: { id: `${SYMBOL}:${day}`, symbol: SYMBOL, startDay: day, endDay: day, days: 1, currency: "JPY", closeBefore: 1000, closeEnd: 1200, returnPct: 0.2, benchReturn: 0.01, abnormal: 0.19, z, beta: 1, direction: "up" as const }, c: { id: `${SYMBOL}:${day}`, symbol: SYMBOL, kind, fact, category: kind === "fundamental" ? ("Business economics" as const) : null, cites: [], candidates: 1, confidence: 0.8, judgmentId: null } });
+  const move = (day: string, z: number, kind: "fundamental" | "macro", fact: string) => ({ m: { id: `${SYMBOL}:${day}`, symbol: SYMBOL, startDay: day, endDay: day, lastStart: day, bench: "Nikkei 225", days: 1, currency: "JPY", closeBefore: 1000, closeEnd: 1200, returnPct: 0.2, benchReturn: 0.01, abnormal: 0.19, z, beta: 1, direction: "up" as const }, c: { id: `${SYMBOL}:${day}`, symbol: SYMBOL, kind, fact, category: kind === "fundamental" ? ("Business economics" as const) : null, cites: [], candidates: 1, confidence: 0.8, judgmentId: null } });
   const rows = [move("2026-06-01", 5.1, "fundamental", "First-half orders doubled on two multi-year contracts."), move("2026-03-10", 3, "macro", "The Nikkei fell on rate fears.")];
   await db.insert(priceMoves).values(rows.map((r) => r.m));
   await db.insert(priceMoveCauses).values(rows.map((r) => r.c));
@@ -53,7 +53,7 @@ describe("drivers rest on the moves the market made on the business (INFLECTION-
     const m = await movesText(db, SYMBOL, new Date("2026-11-17T00:00:00Z"));
     expect(m.text).toContain("[move 2026-06-01]");
     expect(m.text).toContain("First-half orders doubled");
-    expect(m.text).not.toContain("Nikkei");
+    expect(m.text).not.toContain("rate fears");
     expect(m.text).toContain("Also 1 significant move caused by the market at large or by trading");
     expect([...m.ids]).toEqual([`${SYMBOL}:2026-06-01`]);
     // The game is explained, and leverage is read against earnings, never the market cap.

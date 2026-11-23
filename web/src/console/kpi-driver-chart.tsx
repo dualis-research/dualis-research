@@ -19,6 +19,8 @@ export type PricePoint = { date: string; raw: number; clean: number };
 /** A tested moment drawn as a numbered vertical line: green when the price followed the KPI, red when it did not. */
 export type KpiMarker = { n: number; date: string; end: string; verdict: "confirms" | "invalidates" | "neutral" };
 
+const LEGEND: Record<KpiMarker["verdict"], string> = { confirms: "Price followed the KPI", invalidates: "KPI moved, price did not", neutral: "Price moved, KPI did not" };
+
 /**
  * The proof a KPI drives the stock, before any word (Kevin 2026-11-23: « un visuel convainc mieux que du texte »):
  * the KPI as columns on top, the share price under it, pale as traded and dark once its market's move is taken out,
@@ -35,6 +37,7 @@ export function KpiDriverChart({
   from,
   to,
   height = 300,
+  legend = LEGEND,
 }: {
   kpi: KpiPoint[];
   unit: ExhibitUnit;
@@ -46,6 +49,8 @@ export function KpiDriverChart({
   from?: string;
   to?: string;
   height?: number;
+  /** What each marker colour means, under the chart (the drivers' steps reuse this chart for the price's weeks). */
+  legend?: Record<KpiMarker["verdict"], string>;
 }) {
   const dark = usePageDark();
   const ink = dark ? INK.dark : INK.light;
@@ -74,7 +79,8 @@ export function KpiDriverChart({
     data: groups.map((g) => ({
       xAxis: g.date,
       lineStyle: { color: colour(g.verdicts), type: "solid", width: 1.5 },
-      label: grid === 0 ? { show: true, formatter: g.ns.filter((n) => n > 0).join(", "), position: "end", color: colour(g.verdicts), fontFamily: FONT, fontSize: 11, fontWeight: 600 } : { show: false },
+      // The numbers print on the price's grid (the last one drawn), never over the KPI columns' own labels (toronto-v10 2026-11-23).
+      label: grid === labelGrid ? { show: true, formatter: g.ns.filter((n) => n > 0).join(", "), position: "end", color: colour(g.verdicts), fontFamily: FONT, fontSize: 11, fontWeight: 600 } : { show: false },
     })),
   });
   // The 5 trading days measured after each moment, shaded on the price (Kevin 2026-11-23: « quelle time window »).
@@ -83,6 +89,7 @@ export function KpiDriverChart({
     data: groups.map((g) => [{ xAxis: g.date, itemStyle: { color: colour(g.verdicts), opacity: 0.14 } }, { xAxis: g.end }]),
   };
   const hasKpi = k.length > 0;
+  const labelGrid = hasKpi ? 1 : 0;
   // Each bar says which stretch of time it covers and its value, when there are few enough to read.
   const barLabel = k.length <= 10 ? { show: true, position: "top", fontFamily: FONT, fontSize: 10, color: ink.muted, formatter: (x: { data: [string, number, string] }) => `${formatUnit(x.data[1], unit, currency)}\n${x.data[2]}` } : { show: false };
   const options = {
@@ -135,11 +142,11 @@ export function KpiDriverChart({
         <Chart echarts={echarts} options={options as never} height={height} isDarkMode={dark} />
       </FitWidth>
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-kumo-default">
-        {m.some((x) => x.verdict === "confirms") && key(bar(tone.confirms), "Price followed the KPI")}
-        {m.some((x) => x.verdict === "invalidates") && key(bar(tone.invalidates), "KPI moved, price did not")}
-        {m.some((x) => x.verdict === "neutral") && key(bar(tone.neutral), "Nothing moved")}
+        {m.some((x) => x.verdict === "confirms") && key(bar(tone.confirms), legend.confirms)}
+        {m.some((x) => x.verdict === "invalidates") && key(bar(tone.invalidates), legend.invalidates)}
+        {m.some((x) => x.verdict === "neutral") && key(bar(tone.neutral), legend.neutral)}
         {groups.some((g) => g.verdicts.size > 1) && key(bar(ink.muted), "Moments days apart, mixed")}
-        {m.length > 0 && key(bar(ink.muted, 10, 10, 0.25), "5 trading days measured")}
+        {m.length > 0 && key(bar(ink.muted, 10, 10, 0.25), "Trading days measured")}
         {key(bar(ink.muted, 2, 14, 0.5), "Share price")}
         {key(bar(ink.navy, 2, 14), `Share price, ${indexName} taken out`)}
       </ul>

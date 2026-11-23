@@ -46,11 +46,11 @@ export async function movesText(db: Db, symbol: string, now = new Date()): Promi
   const lines = business.map(({ price_moves: m, price_move_causes: c }) => {
     const span = m.startDay === m.endDay ? m.startDay : `${m.startDay} to ${m.endDay}`;
     const figure = c.metric ? ` Figure behind it: ${c.metric.label} ${c.metric.from ? `${c.metric.from} to ` : ""}${c.metric.to}${c.metric.change ? ` (${c.metric.change})` : ""}, period ended ${c.metric.period}${c.lasting && c.lasting !== "n-a" ? `, ${c.lasting}` : ""}.` : "";
-    return `- [move ${m.startDay}] ${span}: stock ${signedPct(m.returnPct)}, S&P 500 ${signedPct(m.benchReturn)} (${Math.abs(m.z).toFixed(1)} standard deviations). ${c.category ?? "Uncategorised"}: ${c.fact ?? "no fact written"}${figure}`;
+    return `- [move ${m.startDay}] ${span}: stock ${signedPct(m.returnPct)}, ${m.bench} ${signedPct(m.benchReturn)} (${Math.abs(m.z).toFixed(1)}x its usual 5-day move). ${c.category ?? "Uncategorised"}: ${c.fact ?? "no fact written"}${figure}`;
   });
   return {
     text: [
-      `Significant price moves of the last ${MOVE_YEARS} years (beyond 2 standard deviations of the stock's own daily moves once the S&P 500 is taken out), the ones a fact about THIS business caused, newest first:`,
+      `Significant price moves of the last ${MOVE_YEARS} years (at least twice the stock's usual 5-day move once its own market is taken out), the ones a fact about THIS business caused, newest first:`,
       lines.length ? lines.join("\n") : "none: no significant move had a business cause.",
       `Also ${others} significant move${others === 1 ? "" : "s"} caused by the market at large or by trading, and ${unknown} with no cause found: they say nothing about what the market watches on this company.`,
     ].join("\n"),

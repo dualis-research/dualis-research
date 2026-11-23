@@ -1,18 +1,21 @@
 import type { Bar } from "./compute";
 
 /**
- * Significant price moves (Thierry 2026-11-17: « if the market cared at that moment, that's a driver that matters »).
- * Pure code, the console bundle may import it.
+ * When the stock moved (DRIVERS-SIX-STEPS-1123, Kevin 2026-11-23): the ONE definition of a significant price move in
+ * the repo, read by the KPI drivers, the move causes, the narrative drivers and the Analysis page alike. Pure code,
+ * the console bundle may import it.
  *
  * Event-study convention (MacKinlay 1997, "Event Studies in Economics and Finance", Journal of Economic Literature
- * 35(1); Brown & Warner 1985): the abnormal return of a day = the stock's return minus what the market explains
- * (beta x the S&P 500's return, beta from an OLS regression over the trailing year, 1 when it cannot be estimated),
- * standardised by the standard deviation of the trailing year's abnormal returns. A day is significant when
- * |z| >= 2, i.e. beyond two standard deviations of its own normal volatility. Consecutive significant days of the
- * same sign are one move (a results day often runs over two or three sessions).
+ * 35(1); Brown & Warner 1985), on 5 trading days: a window's move = the stock's return from the close before its first
+ * day to the close of its 5th day, minus beta x its OWN market's index over the same days (the local index, Hang Seng
+ * for a Hong Kong stock; beta = the OLS slope of its daily returns on the index's over the trailing year, clamped to
+ * [0, 2], 1 when it cannot be estimated). z = that move over the standard deviation of the stock's own cleaned 5-day
+ * moves of the trailing year. |z| >= 2 = at least twice its usual 5-day move: significant. Consecutive significant
+ * windows of the same sign are one move (« the week of »), from the first window's first day to the last one's 5th.
  */
 
-/** Trading days in the trailing window (one year), and the fewest needed before a z-score means anything. */
+/** Trading days a window spans, the trailing window (one year), and the fewest moves needed before a z means anything. */
+export const MOVE_DAYS = 5;
 export const MOVE_WINDOW_DAYS = 250;
 export const MOVE_MIN_DAYS = 60;
 /** |z| at or above this = significant. */
@@ -22,25 +25,41 @@ export type PriceMove = {
   /** `<symbol>:<start date>`. */
   id: string;
   symbol: string;
+  /** First trading day of the first significant window, 5th day of the last one. */
   startDay: string;
   endDay: string;
+  /** First day of the last significant window: an event whose own window starts in [startDay, lastStart] sits in this move. */
+  lastStart: string;
   /** Trading days in the move. */
   days: number;
   /** Close before the move started, close at its end (stored units). */
   closeBefore: number;
   closeEnd: number;
-  /** The stock's return over the move, the S&P 500's over the same span, and the cumulative abnormal return (ratios). */
+  /** The stock's return over the move, its local index's over the same span, and the move once the market is taken out (ratios). */
   returnPct: number;
   benchReturn: number | null;
   abnormal: number;
-  /** Cumulative abnormal return / (trailing standard deviation x sqrt(days)). */
+  /** The most unusual window of the move: its cleaned 5-day move over the stock's usual one (|z| = « 2.4x its usual move »). */
   z: number;
   beta: number;
   direction: "up" | "down";
+  /** The local index's name (« Hang Seng »). */
+  bench: string;
 };
 
-/** One day's reading (exported for tests). */
-export type DayReturn = { day: string; prevClose: number; close: number; ret: number; bench: number | null; abnormal: number; z: number | null; beta: number };
+/** One 5-trading-day window, keyed on its first day (exported for tests and the events). */
+export type MoveWindow = {
+  /** Index of the window's first day in the stock's bars. */
+  i: number;
+  first: string;
+  end: string;
+  /** The stock's return, the index's, beta, the move once the market is taken out, and its z (null with too little history). */
+  stock: number;
+  bench: number | null;
+  beta: number;
+  reaction: number;
+  z: number | null;
+};
 
 /** Last benchmark close on or before each stock day (holidays differ across markets). */
 function benchOnOrBefore(bench: Bar[]): (day: string) => number | null {
@@ -65,7 +84,7 @@ function sd(xs: number[]): number {
   return Math.sqrt(xs.reduce((s, x) => s + (x - m) ** 2, 0) / Math.max(1, xs.length - 1));
 }
 
-/** OLS slope of y on x; null when x has no variance. Clamped to [0, 2]: a regression on noisy small caps can swing wildly. */
+/** OLS slope of y on x; null when x has no variance or too few days. Clamped to [0, 2]: a regression on noisy small caps can swing wildly. */
 function betaOf(ys: number[], xs: number[]): number | null {
   if (xs.length < MOVE_MIN_DAYS) return null;
   const mx = mean(xs);
@@ -80,73 +99,108 @@ function betaOf(ys: number[], xs: number[]): number | null {
   return Math.min(2, Math.max(0, cov / vx));
 }
 
-/** Every trading day's abnormal return and z-score, oldest first. Bars sorted oldest first, one unit per series. */
-export function dailyAbnormal(bars: Bar[], bench: Bar[]): DayReturn[] {
-  const benchAt = benchOnOrBefore(bench);
-  const raw: { day: string; prevClose: number; close: number; ret: number; bench: number | null }[] = [];
-  for (let i = 1; i < bars.length; i++) {
-    const p = bars[i - 1];
-    const b = bars[i];
-    if (!(p.close > 0) || !(b.close > 0)) continue;
-    const b0 = benchAt(p.date);
-    const b1 = benchAt(b.date);
-    raw.push({ day: b.date, prevClose: p.close, close: b.close, ret: b.close / p.close - 1, bench: b0 && b1 ? b1 / b0 - 1 : null });
-  }
-  const out: DayReturn[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const past = raw.slice(Math.max(0, i - MOVE_WINDOW_DAYS), i);
-    const paired = past.filter((d) => d.bench !== null);
-    const beta = betaOf(paired.map((d) => d.ret), paired.map((d) => d.bench as number)) ?? 1;
-    const ab = (d: (typeof raw)[number]) => d.ret - beta * (d.bench ?? 0);
-    const pastAb = past.map(ab);
-    const s = pastAb.length >= MOVE_MIN_DAYS ? sd(pastAb) : null;
-    const abnormal = ab(raw[i]);
-    out.push({ ...raw[i], abnormal, beta, z: s && s > 0 ? abnormal / s : null });
+/**
+ * Every 5-trading-day window of a stock, oldest first, each against its local index: the window starting on day i runs
+ * from the close of day i-1 to the close of day i+4. Bars sorted oldest first, positive closes, one unit per series.
+ */
+export function moveWindows(bars: Bar[], bench: Bar[]): MoveWindow[] {
+  const at = benchOnOrBefore(bench);
+  const b = bars.map((x) => at(x.date));
+  const ret = bars.map((x, i) => (i > 0 && bars[i - 1].close > 0 ? x.close / bars[i - 1].close - 1 : null));
+  const bret = bars.map((_, i) => (i > 0 && b[i] && b[i - 1] ? b[i]! / b[i - 1]! - 1 : null));
+  const span = (from: number, to: number) => ({ stock: bars[to].close / bars[from].close - 1, bench: b[to] && b[from] ? b[to]! / b[from]! - 1 : null });
+  const out: MoveWindow[] = [];
+  for (let i = 1; i + MOVE_DAYS - 1 < bars.length; i++) {
+    const ys: number[] = [];
+    const xs: number[] = [];
+    for (let j = Math.max(1, i - MOVE_WINDOW_DAYS); j < i; j++) {
+      if (ret[j] !== null && bret[j] !== null) {
+        ys.push(ret[j]!);
+        xs.push(bret[j]!);
+      }
+    }
+    const beta = betaOf(ys, xs) ?? 1;
+    const clean = (from: number, to: number) => {
+      const s = span(from, to);
+      return s.stock - beta * (s.bench ?? 0);
+    };
+    // The stock's usual 5-day move: every window that ENDED before this one starts, over the trailing year.
+    const past: number[] = [];
+    for (let j = Math.max(1, i - MOVE_WINDOW_DAYS); j + MOVE_DAYS - 1 < i; j++) past.push(clean(j - 1, j + MOVE_DAYS - 1));
+    const s = span(i - 1, i + MOVE_DAYS - 1);
+    const reaction = s.stock - beta * (s.bench ?? 0);
+    const unit = past.length >= MOVE_MIN_DAYS ? sd(past) : 0;
+    out.push({ i, first: bars[i].date, end: bars[i + MOVE_DAYS - 1].date, stock: s.stock, bench: s.bench, beta, reaction, z: unit > 0 ? reaction / unit : null });
   }
   return out;
 }
 
-/** The significant moves of a stock, oldest first: |z| >= 2 days, consecutive same-sign days merged into one move. */
-export function findMoves(symbol: string, bars: Bar[], bench: Bar[]): PriceMove[] {
-  const days = dailyAbnormal(bars, bench);
-  const benchAt = benchOnOrBefore(bench);
+/** The window an event on `day` is measured on: the first one starting on or after that day (null when none is complete yet). */
+export function windowOf(windows: MoveWindow[], day: string): MoveWindow | null {
+  let lo = 0;
+  let hi = windows.length - 1;
+  let out: MoveWindow | null = null;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    if (windows[mid].first >= day) {
+      out = windows[mid];
+      hi = mid - 1;
+    } else lo = mid + 1;
+  }
+  return out;
+}
+
+const significant = (w: MoveWindow) => w.z !== null && Math.abs(w.z) >= MOVE_Z;
+
+/** The significant moves of a stock, oldest first: consecutive same-sign significant windows merged into one move. */
+export function findMoves(symbol: string, bars: Bar[], bench: Bar[], benchName: string, windows = moveWindows(bars, bench)): PriceMove[] {
+  const at = benchOnOrBefore(bench);
   const moves: PriceMove[] = [];
-  let run: DayReturn[] = [];
+  let run: MoveWindow[] = [];
   const close = () => {
     if (run.length === 0) return;
     const first = run[0];
     const last = run[run.length - 1];
-    const abnormal = run.reduce((s, d) => s + d.abnormal, 0);
-    // The run's own volatility unit: its first day's z gives the trailing standard deviation back.
-    const unit = first.z ? first.abnormal / first.z : 0;
-    const prevDay = days[days.indexOf(first) - 1]?.day ?? null;
-    const b0 = prevDay ? benchAt(prevDay) : null;
-    const b1 = benchAt(last.day);
+    const peak = run.reduce((a, w) => (Math.abs(w.z!) > Math.abs(a.z!) ? w : a));
+    const before = bars[first.i - 1];
+    const endBar = bars[last.i + MOVE_DAYS - 1];
+    const b0 = at(before.date);
+    const b1 = at(endBar.date);
+    const returnPct = endBar.close / before.close - 1;
+    const benchReturn = b0 && b1 ? b1 / b0 - 1 : null;
     moves.push({
-      id: `${symbol}:${first.day}`,
+      id: `${symbol}:${first.first}`,
       symbol,
-      startDay: first.day,
-      endDay: last.day,
-      days: run.length,
-      closeBefore: first.prevClose,
-      closeEnd: last.close,
-      returnPct: last.close / first.prevClose - 1,
-      benchReturn: b0 && b1 ? b1 / b0 - 1 : null,
-      abnormal,
-      z: unit > 0 ? abnormal / (unit * Math.sqrt(run.length)) : (first.z ?? 0),
+      startDay: first.first,
+      endDay: last.end,
+      lastStart: last.first,
+      days: last.i + MOVE_DAYS - first.i,
+      closeBefore: before.close,
+      closeEnd: endBar.close,
+      returnPct,
+      benchReturn,
+      abnormal: returnPct - first.beta * (benchReturn ?? 0),
+      z: peak.z!,
       beta: first.beta,
-      direction: abnormal >= 0 ? "up" : "down",
+      direction: peak.reaction >= 0 ? "up" : "down",
+      bench: benchName,
     });
     run = [];
   };
-  for (const d of days) {
-    const significant = d.z !== null && Math.abs(d.z) >= MOVE_Z;
-    if (significant && run.length > 0 && Math.sign(d.abnormal) === Math.sign(run[0].abnormal)) run.push(d);
+  for (const w of windows) {
+    const prev = run.at(-1);
+    if (significant(w) && prev && w.i === prev.i + 1 && Math.sign(w.reaction) === Math.sign(prev.reaction)) run.push(w);
     else {
       close();
-      if (significant) run.push(d);
+      if (significant(w)) run.push(w);
     }
   }
   close();
   return moves;
+}
+
+/** The move an event sits in: its own window starts inside one (so its own 5-day move is significant, same sign), else null. */
+export function moveOf(moves: Pick<PriceMove, "id" | "startDay" | "lastStart">[], w: MoveWindow | null): string | null {
+  if (!w) return null;
+  return moves.find((m) => w.first >= m.startDay && w.first <= m.lastStart)?.id ?? null;
 }
