@@ -120,7 +120,7 @@ export async function DriversFound({ symbol }: { symbol: string }) {
   const to = chart.price.at(-1)?.date ?? events.at(-1)?.day ?? "";
   const weeks = moves.filter((m) => m.startDay >= from);
   return (
-    <Section title="How the drivers were found">
+    <Section title="How the price drivers were found">
       <div className="flex flex-col gap-12">
         <Step n={1} title={`Events · ${events.length}`}>
           <EventsTimeline events={events.map((e) => ({ day: e.day, kind: e.kind, title: decodeEntities(e.title), moved: e.moveId !== null }))} from={from} to={to} />
@@ -148,7 +148,7 @@ export async function DriversFound({ symbol }: { symbol: string }) {
             </Drawer>
           </Drawers>
         </Step>
-        <Step n={3} title={`Candidate KPIs · ${kpis.length}`}>
+        <Step n={3} title={`Price driver candidates · ${kpis.length}`}>
           {kpis.length ? (
             <CandidateList symbol={symbol} kpis={kpis} />
           ) : (

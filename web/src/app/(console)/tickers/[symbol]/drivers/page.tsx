@@ -9,7 +9,7 @@ import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } f
 import { RowLink } from "@/console/row-link";
 import { Section } from "@/console/signal";
 
-export const metadata = { title: "Drivers" };
+export const metadata = { title: "Price drivers" };
 
 /**
  * Every KPI the AI found for a ticker, untrusted ones included (Kevin + Thierry 2026-11-19): the KPI, how far it can be
@@ -22,7 +22,7 @@ export default async function DriversPage({ params, searchParams }: { params: Pr
   const base = `/tickers/${encodeURIComponent(symbol)}/drivers`;
   return (
     <div className="flex max-w-4xl flex-col pt-6">
-      <Section title="Narrative drivers">
+      <Section title="Price driver candidates">
         {kpis.length === 0 ? (
           <p className="text-lg text-kumo-subtle">Not tested yet.</p>
         ) : (
@@ -30,7 +30,7 @@ export default async function DriversPage({ params, searchParams }: { params: Pr
             <KTable>
               <KTableHeader>
                 <KTableRow>
-                  <KTableHead className="pl-4">KPI</KTableHead>
+                  <KTableHead className="pl-4">Candidate</KTableHead>
                   <KTableHead>Confidence</KTableHead>
                   <KTableHead>Tests</KTableHead>
                   <KTableHead>Now</KTableHead>

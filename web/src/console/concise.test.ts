@@ -19,7 +19,7 @@ describe("a claim's drawer title is its first sentence, whole", () => {
   });
 });
 
-describe("Narrative Drivers (A) and Driver Signals (B) in the panel, read from the KPI drivers", () => {
+describe("Price Drivers (A) and the ones turning now (B) in the panel, read from the KPI drivers", () => {
   const kpi = (rank: number, name: string, level: "strong" | "weak" | "none", signal: "strong" | "weak" | "none" | null) =>
     ({ id: `X:kpi:${rank}`, rank, name, level, signal, signalWhy: `${name} moved`, direction: "up", confirmed: 2, rows: [{}, {}, {}] }) as never;
   const kpis = [kpi(1, "Cash returned to holders", "none", null), kpi(2, "Operating margin", "weak", "weak"), kpi(3, "Order intake", "strong", "none")];
@@ -46,6 +46,6 @@ describe("Narrative Drivers (A) and Driver Signals (B) in the panel, read from t
     const { KpiDrivers, KpiSignals } = await import("@/console/analysis");
     expect(renderToStaticMarkup(createElement(KpiDrivers, { symbol: "X", kpis: [] }))).toContain("Not tested yet.");
     expect(renderToStaticMarkup(createElement(KpiDrivers, { symbol: "X", kpis: [kpis[0]] }))).toContain("–");
-    expect(renderToStaticMarkup(createElement(KpiSignals, { symbol: "X", kpis: [kpis[2]] }))).toContain("No driver is turning now.");
+    expect(renderToStaticMarkup(createElement(KpiSignals, { symbol: "X", kpis: [kpis[2]] }))).toContain("No price driver is turning now.");
   });
 });

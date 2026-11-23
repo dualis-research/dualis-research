@@ -18,7 +18,7 @@ const KIND_WORD: Record<IdeaSourceRef["kind"], string> = {
   signal: "Signal",
   change: "Signal change",
   evidence: "Evidence",
-  driver: "Narrative driver",
+  driver: "Price driver",
   "fair-value": "Fair value",
   report: "Research report",
 };

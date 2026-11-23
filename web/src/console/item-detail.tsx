@@ -474,7 +474,8 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
   const yes = (b: boolean | null, words: string) => (b === null ? <span className="text-kumo-subtle">–</span> : b ? <span className="text-kumo-strong">{words}</span> : <span className="text-kumo-subtle">No</span>);
   return {
     title: k.name,
-    subtitle: "Narrative driver",
+    // A trusted one is a Price Driver, the rest stay candidates (Kevin 2026-11-23).
+    subtitle: k.level === "strong" || k.level === "weak" ? "Price driver" : "Price driver candidate",
     body: (
       <>
         <div className="flex flex-col gap-3">
