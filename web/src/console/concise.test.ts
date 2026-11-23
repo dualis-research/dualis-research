@@ -30,7 +30,8 @@ describe("Price Drivers (A) and the ones turning now (B) in the panel, read from
     expect(html).not.toContain("Cash returned to holders");
     expect(html.indexOf("Order intake")).toBeLessThan(html.indexOf("Operating margin"));
     expect(html).toContain("Strong confidence");
-    expect(html).toContain("Confirmed 2 times");
+    // Kevin 2026-11-23: the « Confirmed N times, invalidated M » line under each driver says nothing useful.
+    expect(html).not.toContain("Confirmed");
     expect(html).toContain(encodeURIComponent("kdriver:X:kpi:3"));
   });
 
