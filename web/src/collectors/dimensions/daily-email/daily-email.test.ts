@@ -17,7 +17,7 @@ const RECIPIENTS = JSON.stringify([
   { email: "kevin@example.test", role: "test" },
   { email: "thierry@example.test", role: "client" },
 ]);
-const MARK = "https://mark.test/m.png";
+const MARK = "https://assets.test";
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
 
 type Sent = { to: string[]; subject: string; text: string; html: string };
@@ -104,7 +104,8 @@ describe("daily-email dimension", () => {
     expect(sent[0].to).toEqual(["kevin@example.test", "thierry@example.test"]);
     expect(sent[0].subject).toMatch(/^Your watchlist, \w{3} \d+$/);
     expect(sent[0].html).toContain('src="https://mailer.dualisresearch.com/mark-white.png"');
-    expect(sent[0].html).toContain("🏭");
+    expect(sent[0].html).toContain('src="https://mailer.dualisresearch.com/icons/industry.png"');
+    expect(sent[0].html).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
     expect(sent[0].html).toContain('src="https://logos.test/MNRO.png"');
     expect(sent[0].html).toContain("https://sec.test/8k");
     expect(sent[0].text).not.toContain("Fed holds rates");
@@ -172,7 +173,7 @@ describe("daily-email parsing and words", () => {
       { symbol: "X", company: "X Co", kind: "industry", title: "t", url: null, publisher: null, at: null, summary: "**Rival** cuts prices — **10%**.", why: "" },
     ], MARK);
     expect(html).toContain("<strong>Rival</strong> cuts prices, <strong>10%</strong>.");
-    expect(text).toContain("🏭 Rival cuts prices, 10%.");
+    expect(text).toContain("Industry: Rival cuts prices, 10%.");
   });
 
   it("refuses an answer that skips an item", () => {
@@ -186,6 +187,6 @@ describe("daily-email parsing and words", () => {
     ], MARK);
     expect(subject).toBe("Your watchlist, Nov 24");
     expect(text.split("\n").at(-1)).toMatch(/^Not investment advice\./);
-    expect(text).toContain("📄 Half-year revenue rose 9%. https://hkex.test/a.pdf");
+    expect(text).toContain("Filing: Half-year revenue rose 9%. https://hkex.test/a.pdf");
   });
 });
