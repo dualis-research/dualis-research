@@ -1,3 +1,4 @@
+import type { Market } from "@/collectors/dimensions/watchlist/parse";
 import { positionReturn } from "@/content/signal-words";
 import type { Bar, Line } from "./portfolio-series";
 
@@ -54,10 +55,11 @@ export type Position = {
 export const DEFAULT_WEAK_WEIGHT = 0.5;
 
 /** When each market's daily close prints, in UTC (regular session end; November = standard time in Europe and the US). */
-const CLOSE_UTC: Record<string, string> = { US: "21:00", CA: "21:00", JP: "06:30", KR: "06:30", HK: "08:00", AU: "05:00", UK: "16:30", EU: "16:30" };
+// Every market the watchlist knows (a test checks): a VN ticker that once signalled failed the whole signals stage (2026-11-23).
+const CLOSE_UTC: Record<Market, string> = { US: "21:00", CA: "21:00", JP: "06:30", KR: "06:30", HK: "08:00", AU: "05:00", UK: "16:30", EU: "16:30", IL: "15:25", TW: "05:30", VN: "07:45" };
 
 const closeTime = (date: string, market: string) => {
-  const hhmm = CLOSE_UTC[market];
+  const hhmm = CLOSE_UTC[market as Market];
   if (!hhmm) throw new Error(`live test: no close time for market ${market}`);
   return new Date(`${date}T${hhmm}:00Z`);
 };
