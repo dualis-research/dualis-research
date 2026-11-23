@@ -67,27 +67,27 @@ export function renderEmail(day: string, items: readonly DigestItem[], assets: s
   const header = band(
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
 <td style="vertical-align:middle;"><img src="${esc(markUrl)}" width="22" height="22" alt="" style="display:inline-block;vertical-align:middle;border:0;">
-<span style="display:inline-block;vertical-align:middle;margin-left:10px;font-family:${FONT};font-size:12px;letter-spacing:0.22em;color:#ffffff;font-weight:600;">DUALIS RESEARCH</span></td>
-<td align="right" style="vertical-align:middle;font-family:${FONT};font-size:12px;color:${ON_DARK};">${esc(shortDay(day))}</td>
+<span style="display:inline-block;vertical-align:middle;margin-left:8px;font-family:${FONT};font-size:11px;letter-spacing:0.14em;color:#ffffff;font-weight:600;white-space:nowrap;">DUALIS RESEARCH</span></td>
+<td align="right" style="vertical-align:middle;font-family:${FONT};font-size:11px;color:${ON_DARK};white-space:nowrap;padding-left:8px;">${esc(shortDay(day))}</td>
 </tr></table>`,
-    "12px 24px",
+    "12px 16px",
   );
 
-  const body = `<tr><td style="padding:24px 24px 8px;font-family:${FONT};color:${INK};">
+  const body = `<tr><td style="padding:22px 16px 8px;font-family:${FONT};color:${INK};overflow-wrap:anywhere;word-break:break-word;">
 <h1 style="font-size:19px;line-height:1.3;margin:0 0 6px;font-weight:600;">Your watchlist</h1>
-<p style="font-size:11px;color:${MUTED};opacity:0.8;margin:0 0 4px;">${used.map((k) => `${icon(k, 14)}&nbsp;<span style="vertical-align:middle;">${KIND_LABEL[k]}</span>`).join("&nbsp;&nbsp;&nbsp;&nbsp;")}</p>
+<p style="font-size:11px;color:${MUTED};opacity:0.8;margin:0 0 4px;">${used.map((k) => `<span style="display:inline-block;white-space:nowrap;margin:0 14px 4px 0;">${icon(k, 14)}&nbsp;<span style="vertical-align:middle;">${KIND_LABEL[k]}</span></span>`).join(" ")}</p>
 ${groups
   .map(
     (g) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 10px;"><tr>${
       g.logo
         ? `<td style="vertical-align:middle;padding-right:12px;"><img src="${esc(g.logo)}" width="36" height="36" alt="" style="display:block;width:36px;height:36px;border-radius:8px;border:1px solid #e6e4ef;background:#ffffff;object-fit:contain;"></td>`
         : ""
-    }<td style="vertical-align:middle;font-size:16px;font-weight:600;color:${INK};">${esc(g.company)} <span style="color:${MUTED};font-weight:400;font-size:13px;">${esc(g.symbol)}</span></td></tr></table>
+    }<td style="vertical-align:middle;font-size:16px;font-weight:600;color:${INK};overflow-wrap:anywhere;word-break:break-word;">${esc(g.company)} <span style="color:${MUTED};font-weight:400;font-size:13px;">${esc(g.symbol)}</span></td></tr></table>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
 ${g.items
   .map(
     (i) => `<tr><td style="width:26px;vertical-align:top;padding:3px 0 8px;">${icon(i.kind, 17)}</td>
-<td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 8px;">${boldHtml(i.summary)}${
+<td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 8px;overflow-wrap:anywhere;word-break:break-word;">${boldHtml(i.summary)}${
       // Only the arrow links the source (Kevin 2026-11-23: no outlet name, « on s'en fout »).
       i.url ? `&nbsp;<a href="${esc(i.url)}" title="Open the source" style="color:${INDIGO};text-decoration:none;font-weight:600;">&#8599;</a>` : ""
     }</td></tr>`,
@@ -99,13 +99,15 @@ ${g.items
 </td></tr>`;
 
   const footer = band(
-    `<img src="${esc(markUrl)}" width="14" height="14" alt="" style="display:inline-block;vertical-align:middle;border:0;">
-<span style="display:inline-block;vertical-align:middle;margin-left:8px;font-family:${FONT};font-size:11px;line-height:1.5;color:${ON_DARK};">${esc(FOOTER)}</span>`,
-    "12px 24px",
+    `<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>
+<td style="width:22px;vertical-align:top;padding-top:2px;"><img src="${esc(markUrl)}" width="14" height="14" alt="" style="display:block;border:0;"></td>
+<td style="vertical-align:top;font-family:${FONT};font-size:11px;line-height:1.5;color:${ON_DARK};">${esc(FOOTER)}</td>
+</tr></table>`,
+    "12px 16px",
   );
 
-  const html = `<!doctype html><html><body style="margin:0;padding:24px 12px;background:#f4f3f8;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background:#ffffff;border-collapse:collapse;">
+  const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;padding:0;background:#f4f3f8;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;max-width:640px;margin:0 auto;background:#ffffff;border-collapse:collapse;table-layout:fixed;">
 ${header}
 ${body}
 ${footer}
