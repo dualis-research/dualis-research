@@ -56,6 +56,8 @@ export const dailyEmailSends = silver.table("daily_email_sends", {
 export type DigestItem = {
   symbol: string;
   company: string;
+  /** The company's logo URL (gold.company_profiles), shown beside its name. */
+  logo?: string | null;
   kind: "news" | "industry" | "filing";
   title: string;
   url: string | null;

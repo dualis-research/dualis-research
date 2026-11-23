@@ -10,7 +10,6 @@ import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, PromoteResult, Source, SourceContext } from "../../types";
 import { renderEmail } from "./render";
 
-const nodeImport = (href: string): Promise<unknown> => import(/* webpackIgnore: true */ href);
 
 /**
  * The morning email (DAILY-EMAIL-1123, Thierry 2026-11-23, a separate product from the signal: « in case it misses
@@ -26,11 +25,17 @@ export const JUDGE_SOURCE = "claude";
 /** Who gets the email (MAIL_RECIPIENTS secret: [{email, role}]): Kevin (test) AND Thierry (client), Kevin 2026-11-23. */
 export const RECIPIENT_ROLES: readonly string[] = ["test", "client"];
 export const MAILER_URL = "https://mailer.dualisresearch.com/send";
-/** News published (or first seen, undated) in the last 48 h; filings filed in the last 3 days (registries date some by day). */
-const NEWS_WINDOW_MS = 48 * 3_600_000;
-const FILING_WINDOW_MS = 3 * 86_400_000;
-/** A digest never reaches further back than this, even when no email went out for days. */
-const DIGEST_MAX_MS = 3 * 86_400_000;
+/**
+ * The last 24 hours only (Kevin 2026-11-23: « The news should be only last 24h »): news published (or first seen,
+ * undated) in the last 24 h; filings filed in the last 48 h, since several registries date a filing by day only
+ * (midnight), so yesterday's filing reads up to 48 h old.
+ */
+export const NEWS_WINDOW_MS = 24 * 3_600_000;
+export const FILING_WINDOW_MS = 48 * 3_600_000;
+/** What was told in the last days, handed to the judge so a story is never told twice. */
+const TOLD_MS = 3 * 86_400_000;
+/** The white knot the email shows, served by the mailer Worker (Gmail did not render it attached by cid). */
+export const MARK_URL = "https://mailer.dualisresearch.com/mark-white.png";
 /** Items per Claude call: a ticker's whole day in one call, so one story told by ten outlets is told once. */
 export const BATCH = 150;
 /** At most this many items per company in one email (in the prompt: the model keeps the most important ones). */
@@ -126,7 +131,7 @@ export const dailyEmailDim: Dimension = {
 /** Active tickers with their company name and what they do; portfolio first, then by symbol. */
 async function watched(db: Db) {
   const rows = await db
-    .select({ symbol: silver.tickers.symbol, inPortfolio: silver.tickers.inPortfolio, name: companyProfiles.name, about: companyProfiles.description })
+    .select({ symbol: silver.tickers.symbol, inPortfolio: silver.tickers.inPortfolio, name: companyProfiles.name, about: companyProfiles.description, logo: companyProfiles.logoUrl })
     .from(silver.tickers)
     .leftJoin(companyProfiles, eq(companyProfiles.symbol, silver.tickers.symbol))
     .where(sql`${silver.tickers.active}`);
@@ -149,10 +154,10 @@ export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()
     db
       .select({ symbol: dailyItemVerdicts.symbol, kind: dailyItemVerdicts.kind, itemId: dailyItemVerdicts.itemId, material: dailyItemVerdicts.material, summary: dailyItemVerdicts.summary, createdAt: dailyItemVerdicts.createdAt })
       .from(dailyItemVerdicts)
-      .where(gte(dailyItemVerdicts.createdAt, new Date(now.getTime() - 4 * FILING_WINDOW_MS))),
+      .where(gte(dailyItemVerdicts.createdAt, new Date(now.getTime() - 2 * TOLD_MS))),
   ]);
   const done = new Set(judged.map((j) => `${j.symbol}|${j.kind}|${j.itemId}`));
-  const toldSince = now.getTime() - DIGEST_MAX_MS;
+  const toldSince = now.getTime() - TOLD_MS;
   const told = new Map<string, string[]>();
   for (const j of judged) if (j.material && j.summary && j.createdAt.getTime() >= toldSince) told.set(j.symbol, [...(told.get(j.symbol) ?? []), j.summary]);
   const per = new Map<string, Candidate[]>();
@@ -227,19 +232,23 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const tickers = await watched(db);
   const rank = new Map(tickers.map((t, i) => [t.symbol, i]));
   const company = new Map(tickers.map((t) => [t.symbol, t.name ?? t.symbol]));
+  const logoOf = new Map(tickers.map((t) => [t.symbol, t.logo ?? null]));
   const [lastFull] = await db
     .select({ sentAt: dailyEmailSends.sentAt })
     .from(dailyEmailSends)
     .where(and(eq(dailyEmailSends.mode, "full"), inArray(dailyEmailSends.status, ["sent", "partial"])))
     .orderBy(desc(dailyEmailSends.sentAt))
     .limit(1);
-  const floor = now.getTime() - DIGEST_MAX_MS;
+  // The last 24 h (filings 48 h, dated by day) and never an item a sent email already carried.
+  const floor = now.getTime() - FILING_WINDOW_MS;
   const cutoff = new Date(Math.max(floor, lastFull?.sentAt.getTime() ?? floor));
-  const material = (await db.select().from(dailyItemVerdicts).where(and(eq(dailyItemVerdicts.material, true), gt(dailyItemVerdicts.createdAt, cutoff)))).filter((v) => rank.has(v.symbol));
+  const fresh = (v: { kind: string; at: Date | null; createdAt: Date }) =>
+    (v.at ?? v.createdAt).getTime() >= now.getTime() - (v.kind === "filing" ? FILING_WINDOW_MS : NEWS_WINDOW_MS);
+  const material = (await db.select().from(dailyItemVerdicts).where(and(eq(dailyItemVerdicts.material, true), gt(dailyItemVerdicts.createdAt, cutoff)))).filter((v) => rank.has(v.symbol) && fresh(v));
   const items: DigestItem[] = material
     .sort((a, b) => rank.get(a.symbol)! - rank.get(b.symbol)! || KIND_ORDER[a.kind as Kind] - KIND_ORDER[b.kind as Kind] || (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0))
-    .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "" }));
-  const email = items.length ? renderEmail(day, items, LOGO_CID) : null;
+    .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "" }));
+  const email = items.length ? renderEmail(day, items, MARK_URL) : null;
   await db
     .insert(goldDailyDigests)
     .values({ day, items, subject: email?.subject ?? null, text: email?.text ?? null, html: email?.html ?? null, builtAt: now })
@@ -247,13 +256,6 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
 
   await sendDigest(db, day, items, email, ctx);
   return { silverRowsBySource: { [JUDGE_SOURCE]: written } };
-}
-
-const LOGO_CID = "dualis-mark";
-/** The logo PNG (base64), drawn by resvg: loaded by URL so the console bundle never sees it. */
-async function logo(): Promise<string> {
-  const { logoPng } = (await nodeImport(new URL("./logo.ts", import.meta.url).href)) as typeof import("./logo");
-  return logoPng();
 }
 
 /**
@@ -290,7 +292,7 @@ async function sendDigest(db: Db, day: string, items: DigestItem[], email: Retur
     const res = await ctx.fetch(MAILER_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.env.MAIL_TOKEN}`, "Content-Type": "application/json", "User-Agent": "dualis-collector" },
-      body: JSON.stringify({ to, ...email, inline: [{ cid: LOGO_CID, mime: "image/png", name: "dualis.png", data: await logo() }] }),
+      body: JSON.stringify({ to, ...email }),
     });
     const body = await res.text();
     response = { status: res.status, body: (() => { try { return JSON.parse(body); } catch { return body.slice(0, 2000); } })() };
