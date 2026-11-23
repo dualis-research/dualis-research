@@ -9,6 +9,9 @@ import { confidenceDetail, driverDetail, evidenceDetail, exhibitDetail, fairValu
 import { ConfidenceBadge } from "./confidence-badge";
 import { kpiDriver, kpiDriverChart } from "./kpi-queries";
 import { KpiDriverChart } from "./kpi-driver-chart";
+import { MomentCard } from "./moment-card";
+import { decodeEntities } from "@/collectors/dimensions/content-posts/parse";
+import { COLOR } from "@/design/tokens";
 import { StrengthBadge } from "./board";
 import { TagBadge } from "./tag-badge";
 import { DriverReason } from "./driver-reason";
@@ -450,15 +453,12 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
   const pct = (x: number | null) => (x === null ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
   const KIND = { release: "Results", news: "News", filing: "Filing" } as const;
   const shift = (d: string, days: number) => new Date(Date.parse(d) + days * 86_400_000).toISOString().slice(0, 10);
-  const chart = (props: { from?: string; to?: string; height?: number }) => (
-    <KpiDriverChart kpi={c.kpi} unit={c.unit} currency={c.currency} kpiLabel={k.name} price={c.price} indexName={c.indexName} markers={c.markers} {...props} />
+  type Marks = typeof c.markers | typeof c.quiet;
+  const chart = (props: { from?: string; to?: string; height?: number; markers?: Marks; noKpi?: boolean }) => (
+    <KpiDriverChart kpi={props.noKpi ? [] : c.kpi} unit={c.unit} currency={c.currency} kpiLabel={k.name} price={c.price} indexName={c.indexName} markers={props.markers ?? c.markers} from={props.from} to={props.to} height={props.height} />
   );
   const facts = (r: (typeof k.rows)[number]) => (
     <>
-      <p className="text-base text-kumo-strong">
-        {r.from || r.to ? `${k.name}: ${r.from ? `${r.from} → ` : ""}${r.to ?? "?"}${r.change ? ` (${r.change})` : ""}` : r.kpiChanged ? `${k.name} moved` : `${k.name} did not move`}
-        {` · price ${pct(r.reaction)} in 5 days, market taken out`}
-      </p>
       {r.why && <p className="text-base leading-relaxed text-kumo-default"><Rich text={r.why} /></p>}
       {r.cite && (
         <Link href={itemHref(symbol, docItemId(r.cite.documentId, r.cite.page, r.cite.quote))} scroll={false} className="text-base text-kumo-default underline decoration-dotted underline-offset-4 hover:text-kumo-link">
@@ -473,8 +473,21 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
       .map((r) => {
         const n = c.number.get(`${r.step ?? "B1"}:${r.releaseId}`);
         return (
-          <Drawer key={`${r.step}:${r.releaseId}`} title={`${n ? `${n}. ` : ""}${day(r.day)} · ${KIND[r.kind ?? "release"]}: ${r.title}`}>
-            {chart({ from: shift(r.day, -180), to: shift(r.day, 45), height: 220 })}
+          <Drawer key={`${r.step}:${r.releaseId}`} title={`${n ? `${n}. ` : ""}${day(r.day)} · ${KIND[r.kind ?? "release"]}: ${decodeEntities(r.title)}`}>
+            <MomentCard
+              kpiName={k.name}
+              from={r.from}
+              to={r.to}
+              change={r.change}
+              stock={c.stockMove.get(r.day) ?? null}
+              beyond={r.reaction}
+              indexName={c.indexName}
+              verdict={r.verdict}
+              navy={COLOR["brand-chart"].light}
+              green={COLOR.long.light}
+              red={COLOR.short.light}
+              grey="#9aa1ab"
+            />
             {facts(r)}
           </Drawer>
         );
@@ -496,21 +509,37 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
         {chart({})}
         <Drawers>
           <Drawer icon={<CheckCircleIcon size={16} aria-hidden />} title={`Why it drives the stock · ${pros.length}`}>
-            {pros.length ? <Drawers>{moments(pros)}</Drawers> : <p className="text-base text-kumo-subtle">The price never followed it.</p>}
+            {pros.length ? (
+              <>
+                {chart({ markers: c.markers.filter((x) => x.verdict === "confirms"), height: 260 })}
+                <Drawers>{moments(pros)}</Drawers>
+              </>
+            ) : (
+              <p className="text-base text-kumo-subtle">The price never followed it.</p>
+            )}
           </Drawer>
           <Drawer icon={<XCircleIcon size={16} aria-hidden />} title={`Why it may not · ${cons.length}`}>
-            {cons.length ? <Drawers>{moments(cons)}</Drawers> : <p className="text-base text-kumo-subtle">It never moved without the price following.</p>}
+            {cons.length ? (
+              <>
+                {chart({ markers: c.markers.filter((x) => x.verdict === "invalidates"), height: 260 })}
+                <Drawers>{moments(cons)}</Drawers>
+              </>
+            ) : (
+              <p className="text-base text-kumo-subtle">It never moved without the price following.</p>
+            )}
           </Drawer>
           <Drawer icon={<MinusCircleIcon size={16} aria-hidden />} title={`Moments with no change · ${quiet.length}`}>
+            {quiet.length > 0 && chart({ markers: c.quiet, height: 260 })}
             <ul className="flex flex-col">
               {[...quiet].reverse().map((r) => (
                 <li key={`${r.step}:${r.releaseId}`} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
-                  {day(r.day)} · {KIND[r.kind ?? "release"]}: {r.title} · price {pct(r.reaction)}
+                  {day(r.day)} · {KIND[r.kind ?? "release"]}: {decodeEntities(r.title)} · price {pct(r.reaction)} beyond the market
                 </li>
               ))}
             </ul>
           </Drawer>
           <Drawer icon={<FunnelIcon size={16} aria-hidden />} title="How the market's noise is taken out">
+            {chart({ markers: [], noKpi: true, height: 200 })}
             <p className="text-base leading-relaxed text-kumo-default">
               Each move is the share price over the 5 trading days after the moment, minus {c.beta.toFixed(2)} times the {c.indexName} over the same days. {c.beta.toFixed(2)} is how much this stock usually moves with its market, measured over the year before. The dark line on the chart is the price with that market move taken out.
             </p>
