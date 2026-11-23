@@ -21,13 +21,13 @@ CareCloud reported Q3 profit attributable to common shareholders of $4.7M, four 
 
 ## Article
 - **Length**: 1000 to 1500 words, counted before sending: each of the 5 sections at least 240 words.
-- **Title**: descriptive, ONE measure only, plain words (« CareCloud: Q3 Profit for Shareholders Rose Fourfold »); never a price gap plus a one-day fall in one title. Subtitle: the view in one line.
-- **Structure** (`##` headings): `## Summary` (3 bullets: view, catalyst, risk), `## Background`, `## The evidence` (reported figures, each with both values), `## Risks`; no valuation section, never a fair value, price target, share price or share-price move (a rise or fall the picture omits fails). The 3 signal lines (line 2 = a printed picture headline when a frame is drawn; the title and Summary lead with that figure) are told as flowing sentences inside these sections, never pasted as a block of lines and never above the Summary.
+- **Title**: descriptive, ONE measure only, plain words (« CareCloud: Q3 Profit for Shareholders Rose Fourfold »); never a price gap plus a one-day fall in one title; with a frame drawn the title is the printed headline alone, a range or lone value kept alone, with no earlier value. Subtitle: the view in one line.
+- **Structure** (`##` headings): `## Summary` (3 bullets: view, catalyst, risk), `## Background`, `## The evidence` (reported figures, each with both values), `## Risks`; no valuation section, never a fair value, price target, share price or share-price move; with a frame drawn, state only figures and facts the picture prints (no dividends, no % change, no date, no news site, no cash or side-line facts) and never mention « the material we hold »; leave out the rest. The 3 signal lines (line 2 = a printed picture headline when a frame is drawn; the title and Summary lead with that figure) are told as flowing sentences inside these sections, never pasted as a block of lines and never above the Summary.
 - **Visual**: see Image below. The cover's note prints the title's number.
 - Do: every figure with its period and source, in plain words (operating profit, « a year earlier »), every change (a %, « a third », « doubled ») with both values (« $7.5M, up 21% from $6.2M »), never EBITDA, enterprise value, discounted cash flow, micro-cap or « year over year »; count beliefs once (never « four beliefs » then « two of the four »).
 - Don't: emoji, hype, an unsourced figure, a sentence about our own method (« we rate », « the three lines of the signal », « our analysis marks »).
 
 ## Image
 - **style**: `breaking`, ONE chart; a BUY or SELL post (Note or Article) follows content-matrix « The picture » (the chart of the line-2 figure, `from` = the compared period).
-- **note**: the fact with its number, no adjective.
+- **note**: the point's value with its unit; a margin or % prints its two values only (« 3.9% → -15.3% »), never a % change after them.
 - **chartLabel**: the exact measure, unit and period.

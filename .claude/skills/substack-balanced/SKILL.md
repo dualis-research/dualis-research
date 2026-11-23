@@ -27,7 +27,7 @@ Anatomy of skill `research-note`; title formula of Multibagger Ideas (the claim 
 - **Structure** (`##` headings): `## Key takeaways` (3 bullets), `## What the market believes`, `## What changed`, `## Bull vs bear`, `## What would prove us wrong`.
 - **Visual**: see Image below.
 - Do: numbers with date and source; the paywall would sit before « Bull vs bear » (Substack's examples put it before the payoff: https://on.substack.com/p/free-vs-paid).
-- Don't: a topic title (« CareCloud update »), a guessed figure: write what we would need to know, a valuation method name (« enterprise value to operating profit », « price to earnings »), a fair value or a price target.
+- Don't: a topic title (« CareCloud update »), a sentence on our own read or signal strength (« a weak inflection »), a guessed figure: write what we would need to know, a valuation method name (« enterprise value to operating profit », « price to earnings »), a fair value or a price target.
 
 ## Image
 - **style**: ALWAYS `breaking` (skill `breaking-chart`) with ONE chart of the text's lead number: news card when a news item is listed, else the big title (any other style prints the chartLabel as the heading, a label with no claim). A BUY or SELL post follows content-matrix « The picture » (the chart of the line-2 figure, `from` = the compared period).

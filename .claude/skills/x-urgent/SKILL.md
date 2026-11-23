@@ -27,12 +27,12 @@ The « BREAKING » style of the biggest finance accounts: a headline, a cashtag,
 - **Subtitle**: one line of urgency on the title's measure.
 - **Structure** (`##` headings): `## The number`, `## Why nobody saw it`, `## What happens next`, `## The risk`.
 - **Visual**: see Image below.
-- Do: one bold line per section with its figure and unit ($, %); only reported figures of the cover's measure, no closing share price, no forecast, no claim about what the market does.
+- Do: one bold line per section with its figure and unit ($, %); only figures the cover prints or the inputs list, each comparison checked against its values (a range is above a year only if its low end is), no closing share price, no claim about what the market does or who follows the stock.
 - Don't: drop the risk section; fake scarcity (« last chance »); any word from the plain-words list of content-matrix, e.g. free cash flow, net debt, dilute (say cash left after investments, borrowings minus cash, more shares sold); any word on the signal's strength or our reading (« Our reading is a weak one »).
 
 ## Image
 - **style**: `breaking` (news card when a news item is listed, else the big title).
 - **title**: the alarm with its shock number, one word in CAPS allowed (« Profit QUADRUPLED in a year »).
 - **newsLine**: when a news item is listed, the fact that triggered the post, with its number.
-- **note**: the shock number itself, on the point that shows it; the box sits in the empty half of the chart and never covers the line or a bar.
+- **note**: the shock number itself (a rate: its two values only, no % change), on the point that shows it; the box sits in the empty half of the chart and never covers the line or a bar.
 - **chart**: the series where the move is biggest, of the SAME measure as the shock number (a revenue text gets the quarterly revenue chart, never `price`); a BUY or SELL post: the chart of its line-2 figure, `from` = the compared period (content-matrix « The picture »). The note and priceSays never contradict the text.

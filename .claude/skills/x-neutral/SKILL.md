@@ -24,7 +24,7 @@ CareCloud ($CCLD) reported Q3 profit attributable to common shareholders of $4.7
 - **Length**: 600 to 1000 words.
 - **Title**: descriptive, the company and the finding (« CareCloud: Q3 Profit for Common Shareholders Rose Fourfold »).
 - **Subtitle**: the view in one line.
-- **Structure** (`##` headings): `## Summary` (3 bullets: view, catalyst, risk), `## Background`, `## The evidence` (the reported figures, each with both values), `## Risks`. No valuation section: never a fair value or price target.
+- **Structure** (`##` headings): `## Summary` (3 bullets: view, catalyst, risk), `## Background`, `## The evidence` (the reported figures, each with both values), `## Risks`. No valuation section, no signal rating (BUY, SELL or its strength), and no figure the cover picture does not print.
 - **Visual**: see Image below.
 - Do: one figure per sentence with its period.
 - Don't: emoji, hype, an unsourced figure, or jargon in the body: say « new shares sold » (never dilution), « cash left after investments » (never free cash flow), « the profit multiple » (never price to earnings or enterprise value to operating profit), « operating profit » (never operating profit before depreciation), « average price of the last 200 days ».
