@@ -235,10 +235,8 @@ export function ConfidenceBody({ symbol, k, arrows }: { symbol: string; k: GoldK
   const explained = new Set(t?.explainedMoveIds ?? []);
   return (
     <div className="flex flex-col gap-4">
+      {/* The level itself sits in the drawer's title (never twice). */}
       <div className="flex flex-col gap-2">
-        <span>
-          <ConfidenceBadge level={!k.level || k.level === "none" ? "noise" : k.level} />
-        </span>
         {k.reason && <p className="text-lg leading-snug text-kumo-strong"><Rich text={k.reason} /></p>}
         <p className="text-sm text-kumo-subtle">{`${CANDIDATE_KIND_WORD[k.kind]} · ${measuredWord(k)} · when it goes up, the price should go ${k.expected}`}</p>
       </div>
@@ -333,12 +331,7 @@ export function ReversalBody({ symbol, k }: { symbol: string; k: GoldKpiDriver }
   if (!r) return <p className="text-base text-kumo-subtle">Not assessed yet.</p>;
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <span>
-          <ReversalBadge k={k} />
-        </span>
-        <p className="text-lg leading-snug text-kumo-strong"><Rich text={r.why} /></p>
-      </div>
+      <p className="text-lg leading-snug text-kumo-strong"><Rich text={r.why} /></p>
       <Drawers>
         <Drawer icon={<GaugeIcon size={16} aria-hidden />} title={<Title name="On its latest value" conclusion={STATE_WORD[r.intrinsic.state]} />}>
           <PeriodStrip k={k} />

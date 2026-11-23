@@ -73,7 +73,9 @@ describe("the proof structure of a stock's Price Drivers", async () => {
 
   it("a candidate's confidence: the level on top, then tests A, B and C, a change in a market week never counted as followed", () => {
     const one = renderToStaticMarkup(createElement(ConfidenceBody, { symbol: S, k: kpis[0], arrows }));
-    expect(one.indexOf("Noise")).toBeLessThan(one.indexOf("A · Each big change"));
+    expect(one.indexOf("Commercial rent levels reason.")).toBeLessThan(one.indexOf("A · Each big change"));
+    // The level sits in the drawer title only, never twice.
+    expect(one).not.toContain("Noise");
     expect(one).toContain("0 of 1");
     expect(one).toContain("in 0 of 1 fundamental week");
     expect(one).toContain("Did not follow");
