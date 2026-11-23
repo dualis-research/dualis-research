@@ -36,6 +36,9 @@ export const CANDIDATES_QUESTION = "kpi-candidates@v3";
 export const READ_QUESTION = "kpi-read@v1";
 /** Step 6: the verdict from the step-5 table only (the AI decides, never a count rule: Kevin 2026-11-19). */
 export const VERDICT_QUESTION = "kpi-verdict@v1";
+/** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). */
+export const REASON_QUESTION = "kpi-reason@v1";
+export const REASON_SYSTEM = "Rewrite this sentence in AT MOST 15 words, plain English, same meaning: how the stock reacts to this KPI, and whether the misses are normal or a doubt. No dates, no figures, no em dash. Answer with the sentence only.";
 /** Pages of each report the AI reads (the results discussion first) and how much of each page. */
 const PAGES_PER_RELEASE = 2;
 const PAGE_CHARS = 3_500;
@@ -266,6 +269,22 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
       VERDICT_SYSTEM,
       [`KPI: ${k.name}. When it goes up, the share price should go ${k.expected}.`, "", `Every event of the last ${KPI_YEARS} years, oldest first:`, table].join("\n"),
       parseVerdict,
+    );
+    // The judge writes ~25 words against a 15-word ask (2026-11-23): a second call shortens the finished sentence.
+    verdict.reason = await once(
+      db,
+      complete,
+      "kpi-reason",
+      `${symbol}:${k.name}`,
+      `${REASON_QUESTION}:${fnv(verdict.reason)}`,
+      `${REASON_QUESTION}: the verdict on « ${k.name} » in 15 words`,
+      REASON_SYSTEM,
+      verdict.reason,
+      (text) => {
+        const t = stripDashes(text.trim().replace(/^["«\s]+|["»\s]+$/g, ""));
+        if (!t) throw new Error("kpi-drivers: empty short reason");
+        return t;
+      },
     );
     const last = [...periods].reverse().find((p) => p.change !== null);
     drivers.push({ ...k, ...verdict, measure: measured?.measure ?? null, periods, rows, direction: last ? (last.change! >= 0 ? "up" : "down") : null });
