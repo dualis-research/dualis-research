@@ -108,6 +108,7 @@ describe("daily-email dimension", () => {
     expect(sent[0].html).not.toMatch(/[\u{1F300}-\u{1FAFF}]/u);
     expect(sent[0].html).toContain('src="https://logos.test/MNRO.png"');
     expect(sent[0].html).toContain("https://sec.test/8k");
+    expect(sent[0].html).not.toContain("Reuters");
     expect(sent[0].text).not.toContain("Fed holds rates");
     expect(sent[0].text).not.toMatch(/[—–]/);
     expect(sent[0].text).toContain("Not investment advice.");

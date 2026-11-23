@@ -88,7 +88,8 @@ ${g.items
   .map(
     (i) => `<tr><td style="width:26px;vertical-align:top;padding:3px 0 8px;">${icon(i.kind, 17)}</td>
 <td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 8px;">${boldHtml(i.summary)}${
-      i.url ? ` <a href="${esc(i.url)}" style="color:${INDIGO};font-size:13px;text-decoration:none;white-space:nowrap;">${esc(i.publisher ?? "Source")}&nbsp;&#8599;</a>` : ""
+      // Only the arrow links the source (Kevin 2026-11-23: no outlet name, « on s'en fout »).
+      i.url ? `&nbsp;<a href="${esc(i.url)}" title="Open the source" style="color:${INDIGO};text-decoration:none;font-weight:600;">&#8599;</a>` : ""
     }</td></tr>`,
   )
   .join("\n")}
