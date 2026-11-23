@@ -10,6 +10,8 @@ import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, PromoteResult, Source, SourceContext } from "../../types";
 import { renderEmail } from "./render";
 
+const nodeImport = (href: string): Promise<unknown> => import(/* webpackIgnore: true */ href);
+
 /**
  * The morning email (DAILY-EMAIL-1123, Thierry 2026-11-23, a separate product from the signal: « in case it misses
  * something. If nothing important happened, you leave it out »). Per ACTIVE watchlist ticker (not only the analysis
@@ -58,7 +60,7 @@ const SYSTEM = [
   "Material, on its industry (items marked industry): a new fact from a DIRECT competitor, supplier or customer (their results, guidance, capacity, prices, a big contract) or a regulation, subsidy or ban decided for the company's own market.",
   "Not material: macro news (interest rates, oil, currencies, inflation, war, stock indexes, trade policy in general), share price recaps or technical analysis, opinion pieces, previews, explainers and analyses that add no new fact, stock promotion and listicles, routine filings with no business content (a monthly share count return, a meeting notice), product promotions and sales events, articles about a different company with a similar name, old facts re-told, and any story already in the list or in the already-told list (one story = one item, whichever outlet).",
   `Keep at most ${MAX_PER_COMPANY} material items for this company: the ones that matter most to its business. Every other item is not material.`,
-  "For each item answer: material (true or false); summary = what happened, ONE plain sentence of at most 25 words with the figure when the item gives one; why = for a material item why it matters for this company's business in at most 20 words, else why it is left out in at most 10 words.",
+  "For each item answer: material (true or false); summary = the main idea in ONE very short plain sentence of at most 12 words, subject verb object, with the figure when the item gives one, its 2 or 3 key words (who, the figure, the fact) wrapped in **double asterisks**, e.g. \"**Winbond** wins **2027 auto memory orders** in Europe and Japan.\"; why = for a material item why it matters for this company's business in at most 15 words, else why it is left out in at most 10 words.",
   "Plain English, never a dash, never a price target, upside or advice.",
   'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "..."}, ...]} with every id of the list exactly once.',
 ].join(" ");
@@ -237,7 +239,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const items: DigestItem[] = material
     .sort((a, b) => rank.get(a.symbol)! - rank.get(b.symbol)! || KIND_ORDER[a.kind as Kind] - KIND_ORDER[b.kind as Kind] || (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0))
     .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "" }));
-  const email = items.length ? renderEmail(day, items) : null;
+  const email = items.length ? renderEmail(day, items, LOGO_CID) : null;
   await db
     .insert(goldDailyDigests)
     .values({ day, items, subject: email?.subject ?? null, text: email?.text ?? null, html: email?.html ?? null, builtAt: now })
@@ -245,6 +247,13 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
 
   await sendDigest(db, day, items, email, ctx);
   return { silverRowsBySource: { [JUDGE_SOURCE]: written } };
+}
+
+const LOGO_CID = "dualis-mark";
+/** The logo PNG (base64), drawn by resvg: loaded by URL so the console bundle never sees it. */
+async function logo(): Promise<string> {
+  const { logoPng } = (await nodeImport(new URL("./logo.ts", import.meta.url).href)) as typeof import("./logo");
+  return logoPng();
 }
 
 /**
@@ -281,7 +290,7 @@ async function sendDigest(db: Db, day: string, items: DigestItem[], email: Retur
     const res = await ctx.fetch(MAILER_URL, {
       method: "POST",
       headers: { Authorization: `Bearer ${ctx.env.MAIL_TOKEN}`, "Content-Type": "application/json", "User-Agent": "dualis-collector" },
-      body: JSON.stringify({ to, ...email }),
+      body: JSON.stringify({ to, ...email, inline: [{ cid: LOGO_CID, mime: "image/png", name: "dualis.png", data: await logo() }] }),
     });
     const body = await res.text();
     response = { status: res.status, body: (() => { try { return JSON.parse(body); } catch { return body.slice(0, 2000); } })() };
