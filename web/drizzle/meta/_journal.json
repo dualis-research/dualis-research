@@ -435,6 +435,13 @@
       "when": 1795440451343,
       "tag": "0061_price-driver-candidates",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1795441297503,
+      "tag": "0062_daily-email",
+      "breakpoints": true
     }
   ]
 }

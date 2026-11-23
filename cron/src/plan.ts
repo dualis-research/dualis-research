@@ -7,7 +7,9 @@ export const SCHEDULE: Record<string, string> = {
   // Twice a day (Kevin 2026-11-16: every watchlist ticker analysed, fewer runs to save the Claude subscription).
   "15 5 * * *": "all", // 05:15 UTC, Asia closed, before the European open: everything
   "15 13 * * *": "core", // 13:15 UTC, before the US open: the analysis chain only
-  "0 2 * * *": "growth-outreach,substack-network,growth-brief", // 07:00 Astana: fresh count, then the 08:00 Growth brief
+  // 07:00 Astana: fresh count, then the 08:00 Growth brief; the watchlist's news and filings, then the morning email
+  // (DAILY-EMAIL-1123, sent when the run ends, ~07:30-08:00 Astana).
+  "0 2 * * *": "growth-outreach,substack-network,growth-brief,news,filings,daily-email",
 };
 
 /**

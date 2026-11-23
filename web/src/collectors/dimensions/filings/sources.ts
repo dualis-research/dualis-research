@@ -1,6 +1,6 @@
 import { and, desc, eq, gte, isNull } from "drizzle-orm";
 import { fetches } from "@/db/schema/bronze";
-import { filings } from "@/db/schema/silver";
+import { filings, tickers } from "@/db/schema/silver";
 import type { FetchOutcome, Source, SourceContext } from "../../types";
 import { getJson, isUsSymbol } from "../../http";
 import { BROWSER_HEADERS, SEC_HEADERS, companiesHouseNumber, dartCorpCode, daysAgo, isMarket, isoDate, memo, tickerBase } from "../../markets";
@@ -34,6 +34,21 @@ const at = (local: string, offset: string) => new Date(`${local.trim().replace("
  */
 export const FILINGS_HISTORY_YEARS = 5;
 export const historyStart = (now = new Date()) => daysAgo(Math.round(FILINGS_HISTORY_YEARS * 365.25), now);
+/**
+ * A watched ticker outside the analysis scope is read 14 days back only (DAILY-EMAIL-1123): the morning email needs
+ * each watchlist ticker's new filings, never its 5 years, which only the analysis reads.
+ */
+export const WATCH_HISTORY_DAYS = 14;
+/** Since when one ticker's registry is read: 5 years in the analysis scope (or with no database: tests), else 14 days. */
+export async function sinceFor(ctx: SourceContext, symbol: string): Promise<Date> {
+  if (!ctx.db) return historyStart();
+  const db = ctx.db;
+  const analysed = await memo(ctx, "filings:analysed", async () => {
+    const rows = await db.select({ symbol: tickers.symbol }).from(tickers).where(eq(tickers.analysed, true));
+    return new Set(rows.map((r) => r.symbol));
+  });
+  return analysed.has(symbol) ? historyStart() : daysAgo(WATCH_HISTORY_DAYS);
+}
 const compact = (d: Date) => isoDate(d).replace(/-/g, "");
 /** Pages a paginated registry is read for, per ticker and run (100 filings each): a bound, said in the answer. */
 export const MAX_HISTORY_PAGES = 15;
@@ -54,7 +69,7 @@ export const secEdgar: FilingSource = {
     const cik = ciks.get(symbol.toUpperCase().replace(".", "-"));
     if (!cik) return { request: { symbol }, httpStatus: null, error: "Not an SEC filer (ticker absent from SEC's company_tickers.json)" };
     const url = `https://data.sec.gov/submissions/CIK${cik}.json`;
-    const since = isoDate(historyStart());
+    const since = isoDate(await sinceFor(ctx, symbol));
     const out = await getJson(ctx, url, { url, cik, trimmed: `filings since ${since}` }, { headers: SEC_HEADERS });
     if (out.error) return out;
     const p = out.payload as { cik: string; name: string; filings: { recent: Record<string, unknown[]> } };
@@ -141,7 +156,7 @@ export const tdnet: FilingSource = {
     if (out.error) return out;
     const items = (out.payload as { items?: { Tdnet: { pubdate: string } }[] })?.items;
     if (!Array.isArray(items)) return withError(out, "TDnet mirror returned no item list");
-    const since = isoDate(historyStart());
+    const since = isoDate(await sinceFor(ctx, symbol));
     return { ...out, payload: { items: items.filter((i) => i.Tdnet.pubdate.slice(0, 10) >= since) } };
   },
   extract(payload) {
@@ -232,10 +247,12 @@ export const edinet: FilingSource = {
     const dates = Array.from({ length: EDINET_DAYS }, (_, i) => isoDate(daysAgo(i)));
     for (const date of dates) keep(await edinetDay(ctx, date));
 
-    // History: the windows not read through yet, newest first, within the run's budget of day lists.
+    // History: the windows not read through yet, newest first, within the run's budget of day lists. A watched ticker
+    // outside the analysis scope needs its last 14 days only (the day lists above).
     const searched = new Set(await searchedBefore(ctx, symbol));
+    const full = (await sinceFor(ctx, symbol)).getTime() <= historyStart().getTime();
     const since = new Date(Date.now() - EDINET_HISTORY_YEARS * 365.25 * 86_400_000);
-    const summaries = ctx.db
+    const summaries = ctx.db && full
       ? await ctx.db
           .select({ filingKey: filings.filingKey, title: filings.title, filedAt: filings.filedAt })
           .from(filings)
@@ -302,7 +319,7 @@ export const dart: FilingSource = {
   requiredEnv: ["DART_API_KEY"],
   covers: (symbol) => isMarket("KR")(symbol) && dartCorpCode(symbol) !== null,
   async fetch(symbol, ctx) {
-    const q = `corp_code=${dartCorpCode(symbol)}&bgn_de=${compact(historyStart())}&end_de=${compact(new Date())}&page_count=100`;
+    const q = `corp_code=${dartCorpCode(symbol)}&bgn_de=${compact(await sinceFor(ctx, symbol))}&end_de=${compact(new Date())}&page_count=100`;
     const list: unknown[] = [];
     let first: FetchOutcome | null = null;
     let pages = 0;
@@ -343,7 +360,7 @@ export const companiesHouse: FilingSource = {
   covers: (symbol) => companiesHouseNumber(symbol) !== null,
   async fetch(symbol, ctx) {
     const base = `https://api.company-information.service.gov.uk/company/${companiesHouseNumber(symbol)}/filing-history?items_per_page=100`;
-    const since = isoDate(historyStart());
+    const since = isoDate(await sinceFor(ctx, symbol));
     const items: { date: string }[] = [];
     let first: FetchOutcome | null = null;
     let pages = 0;
@@ -394,7 +411,7 @@ export const hkexnews: FilingSource = {
     const json = JSON.parse(text.replace(/^[^(]*\(/, "").replace(/\);?\s*$/, "")) as { stockInfo?: { stockId: number; code: string }[] };
     const stockId = json.stockInfo?.find((s) => s.code === code)?.stockId;
     if (!stockId) return { request: { url: prefixUrl }, httpStatus: res.status, payloadText: text, error: `HKEXnews has no stock id for ${code}` };
-    const from = compact(historyStart());
+    const from = compact(await sinceFor(ctx, symbol));
     const to = isoDate(new Date()).replace(/-/g, "");
     const url = `https://www1.hkexnews.hk/search/titleSearchServlet.do?sortDir=0&sortByOptions=DateTime&category=0&market=SEHK&stockId=${stockId}&documentType=-1&fromDate=${from}&toDate=${to}&title=&searchType=0&t1code=-2&t2Gcode=-2&t2code=-2&rowRange=3000&lang=E`;
     const out = await getJson(ctx, url, { url, stockId }, { headers: BROWSER_HEADERS });

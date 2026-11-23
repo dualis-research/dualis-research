@@ -5,7 +5,7 @@ import * as gold from "@/db/schema/gold";
 import { filings } from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import type { Dimension, PromoteResult } from "../../types";
-import { analysedSymbols } from "../watchlist";
+import { activeSymbols } from "../watchlist";
 import { FILING_SOURCES, type FilingItem } from "./sources";
 
 export const FILINGS_DIMENSION = "filings";
@@ -14,7 +14,9 @@ export const filingsDimension: Dimension = {
   name: FILINGS_DIMENSION,
   description: "Regulatory filings and exchange announcements, from each market's own registry.",
   sources: FILING_SOURCES,
-  subjects: analysedSymbols,
+  // Every active ticker (DAILY-EMAIL-1123: the morning email covers the watchlist); outside the analysis scope a
+  // registry is read 14 days back only (`sinceFor`).
+  subjects: activeSymbols,
   promote: promoteFilings,
 };
 
