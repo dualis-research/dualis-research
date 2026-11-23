@@ -55,13 +55,25 @@ export function KpiDriverChart({
   const k = kpi.filter((x) => inWindow(x.date));
   const m = markers.filter((x) => inWindow(x.date));
   const text = { fontFamily: FONT, fontSize: 11, color: ink.muted };
+  // Moments a few days apart share one line and one label (« 2, 3 »), else their numbers print on top of each other.
+  const span = (p.length ? Date.parse(p.at(-1)!.date) - Date.parse(p[0].date) : 0) / 86_400_000;
+  const near = Math.max(3, span / 60);
+  const groups: { date: string; ns: number[]; verdicts: Set<KpiMarker["verdict"]> }[] = [];
+  for (const x of [...m].sort((a, b) => a.date.localeCompare(b.date))) {
+    const g = groups.at(-1);
+    if (g && (Date.parse(x.date) - Date.parse(g.date)) / 86_400_000 <= near) {
+      g.ns.push(x.n);
+      g.verdicts.add(x.verdict);
+    } else groups.push({ date: x.date, ns: [x.n], verdicts: new Set([x.verdict]) });
+  }
+  const colour = (v: Set<KpiMarker["verdict"]>) => (v.size > 1 ? ink.muted : tone[[...v][0]]);
   const lines = (grid: 0 | 1) => ({
     symbol: "none",
     silent: true,
-    data: m.map((x) => ({
-      xAxis: x.date,
-      lineStyle: { color: tone[x.verdict], type: "solid", width: 1.5 },
-      label: grid === 0 ? { show: true, formatter: String(x.n), position: "end", color: tone[x.verdict], fontFamily: FONT, fontSize: 11, fontWeight: 600 } : { show: false },
+    data: groups.map((g) => ({
+      xAxis: g.date,
+      lineStyle: { color: colour(g.verdicts), type: "solid", width: 1.5 },
+      label: grid === 0 ? { show: true, formatter: g.ns.join(", "), position: "end", color: colour(g.verdicts), fontFamily: FONT, fontSize: 11, fontWeight: 600 } : { show: false },
     })),
   });
   const hasKpi = k.length > 0;
