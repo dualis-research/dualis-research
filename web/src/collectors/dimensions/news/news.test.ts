@@ -6,6 +6,7 @@ import { goldNewsItems, goldNewsLinks, newsItems, newsMentions } from "@/db/sche
 import type { Db } from "@/db/types";
 import { analyseEveryTicker, testDb } from "@/test/db";
 import { runDimension } from "../../runner";
+import type { Complete } from "@/llm/complete";
 import type { SourceContext } from "../../types";
 import { companyProfile } from "../company-profile";
 import { watchlist } from "../watchlist";
@@ -56,6 +57,9 @@ function fakeFetch(opts: { yahooTsrc: string }) {
       if (q.startsWith('"Monro"')) {
         return text(rss([{ title: "Monro reports second quarter results - Reuters", link: "https://news.google.com/rss/articles/A1", source: "Reuters" }]));
       }
+      if (q === '"tire service chains" when:2d' && url.searchParams.get("gl") === "US") {
+        return text(rss([{ title: "Tire chains raise prices as demand holds - Tire Review", link: "https://news.google.com/rss/articles/T1", source: "Tire Review" }]));
+      }
       if (q.includes("Conrad")) {
         return text(rss([{ title: "Conrad Shipyard delivers a new ferry - WorkBoat", link: "https://news.google.com/rss/articles/C1", source: "WorkBoat" }]));
       }
@@ -65,7 +69,14 @@ function fakeFetch(opts: { yahooTsrc: string }) {
   }) as typeof fetch;
 }
 
-const ctx = (yahooTsrc = "rss"): SourceContext => ({ env, fetch: fakeFetch({ yahooTsrc }) });
+/** Fake Claude: every company gets the same industry terms; counts its calls (terms are judged once per profile). */
+let termCalls = 0;
+const complete: Complete = async ({ prompt }) => {
+  termCalls += 1;
+  const terms = prompt.includes("(MNRO)") ? ["tire service chains", '"Monro"'] : ["shipyards"];
+  return { text: JSON.stringify({ terms, reason: "Its space." }), model: "fake" };
+};
+const ctx = (yahooTsrc = "rss"): SourceContext => ({ env, fetch: fakeFetch({ yahooTsrc }), complete });
 
 let db: Db;
 let close: () => Promise<void>;
@@ -122,9 +133,28 @@ describe("news dimension", () => {
       "Conrad Shipyard delivers a new ferry",
       "Monro names a new chief financial officer",
       "Monro reports second quarter results",
+      "Tire chains raise prices as demand holds",
     ]);
     expect(feed.every((i) => i.symbols.length === 1)).toBe(true);
 
+  });
+
+  it("industry terms: judged once per profile, each hit a mention of kind industry in silver and gold", async () => {
+    termCalls = 0;
+    await runDimension(db, news, { trigger: "test", ctx: ctx() });
+    const tickers = (await db.select().from(fetches).where(eq(fetches.dimension, "news"))).filter((r) => r.source === "google-news").length;
+    expect(termCalls).toBe(tickers);
+    const [mnro] = (await db.select().from(fetches).where(eq(fetches.subject, "MNRO"))).filter((r) => r.source === "google-news");
+    expect((mnro.request as { queries: { q: string }[] }).queries.map((q) => q.q)).toEqual(['"Monro"', '"tire service chains" when:2d']);
+
+    const [item] = await db.select().from(newsItems).where(eq(newsItems.titleKey, "tire chains raise prices as demand holds"));
+    const mentions = await db.select().from(newsMentions).where(eq(newsMentions.newsItemId, item.id));
+    expect(mentions.map((m) => [m.tickerSymbol, m.matchKind, m.matchedTerm])).toEqual([["MNRO", "industry", "tire service chains"]]);
+    const [link] = await db.select().from(goldNewsLinks).where(eq(goldNewsLinks.newsItemId, item.id));
+    expect(link.matchKinds).toEqual(["industry"]);
+
+    await runDimension(db, news, { trigger: "test", ctx: ctx() });
+    expect(termCalls).toBe(tickers);
   });
 
   it("a second run with a new link spelling adds nothing and keeps first-seen dates", async () => {

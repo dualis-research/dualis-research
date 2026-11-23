@@ -421,6 +421,13 @@
       "when": 1795432304309,
       "tag": "0059_drivers-six-steps",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1795439949544,
+      "tag": "0060_news-industry",
+      "breakpoints": true
     }
   ]
 }

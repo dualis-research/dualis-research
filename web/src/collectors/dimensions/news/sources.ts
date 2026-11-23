@@ -6,9 +6,11 @@ import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import { getJson, isUsSymbol } from "../../http";
 import type { FetchOutcome, Source, SourceContext } from "../../types";
+import { industryTerms } from "./industry";
 import {
   googleEdition,
   googleQueries,
+  industryQueries,
   parseDate,
   parseRss,
   type RawArticle,
@@ -100,7 +102,7 @@ export const yahooNews: NewsSource = {
   },
 };
 
-type GoogleAnswer = { kind: "name" | "alias"; term: string; q: string; url: string; httpStatus: number; body: string };
+type GoogleAnswer = { kind: "name" | "alias" | "industry"; term: string; q: string; url: string; httpStatus: number; body: string };
 
 /** What the Google source needs to build its queries: the resolved company name and Thierry's aliases. */
 async function queryTerms(db: Db, symbol: string) {
@@ -112,8 +114,9 @@ async function queryTerms(db: Db, symbol: string) {
 }
 
 /**
- * Google News RSS by company name and each watchlist alias (every market, no key). One bronze row per ticker
- * holds every query's raw answer; one failed query fails the row.
+ * Google News RSS by company name, each watchlist alias and each industry term (every market, no key; the terms are
+ * Claude's, once per company profile, `industry.ts`). One bronze row per ticker holds every query's raw answer; one
+ * failed query fails the row.
  */
 export const googleNews: NewsSource = {
   name: "google-news",
@@ -126,7 +129,11 @@ export const googleNews: NewsSource = {
     const [known] = await ctx.db.select({ id: goldNewsLinks.newsItemId }).from(goldNewsLinks).where(eq(goldNewsLinks.symbol, symbol)).limit(1);
     const answers: GoogleAnswer[] = [];
     const errors: string[] = [];
-    for (const query of googleQueries(symbol, name, aliases, known ? "when:7d" : "")) {
+    const own = googleQueries(symbol, name, aliases, known ? "when:7d" : "");
+    // A term that is the company's own name or alias is the company's news, already asked: never an industry hit.
+    const ownTerms = new Set(own.map((q) => q.term.toLowerCase()));
+    const terms = (await industryTerms(ctx.db, symbol, ctx.complete)).filter((t) => !ownTerms.has(t.toLowerCase()));
+    for (const query of [...own, ...industryQueries(terms)]) {
       const url = `https://news.google.com/rss/search?q=${encodeURIComponent(query.q)}&${googleEdition(query.term, market)}`;
       const res = await ctx.fetch(url, { headers: BROWSER_UA });
       const body = await res.text();
