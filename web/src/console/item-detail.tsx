@@ -944,8 +944,6 @@ function sourceItem(payload: SourcePayload): ItemView {
         {payload.v && <p className="font-mono text-3xl tabular text-kumo-strong">{payload.v}</p>}
         <div className="rounded-lg ring-1 ring-kumo-hairline">
           <FactList>
-            <Fact label="Figure">{payload.l}</Fact>
-            {payload.d && <Fact label="Date">{payload.d}</Fact>}
             <Fact label={from.length > 1 ? "Sources" : "Source"}>{from.length ? from.join(", ") : "Not recorded"}</Fact>
           </FactList>
         </div>
