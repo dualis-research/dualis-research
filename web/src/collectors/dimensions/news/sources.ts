@@ -24,7 +24,7 @@ export type NewsSource = Source & {
   extract: (fetch: BronzeFetch) => Omit<RawArticle, "bronzeId">[];
 };
 
-const BROWSER_UA = { "User-Agent": "Mozilla/5.0 (dualis-collector)" };
+export const BROWSER_UA = { "User-Agent": "Mozilla/5.0 (dualis-collector)" };
 const LOOKBACK_DAYS = 7;
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
@@ -102,7 +102,7 @@ export const yahooNews: NewsSource = {
   },
 };
 
-type GoogleAnswer = { kind: "name" | "alias" | "industry"; term: string; q: string; url: string; httpStatus: number; body: string };
+export type GoogleAnswer = { kind: "name" | "alias" | "industry"; term: string; q: string; url: string; httpStatus: number; body: string };
 
 /** What the Google source needs to build its queries: the resolved company name and Thierry's aliases. */
 async function queryTerms(db: Db, symbol: string) {
@@ -154,12 +154,20 @@ export const googleNews: NewsSource = {
       ...(errors.length ? { error: errors.join("; ") } : {}),
     };
   },
-  extract(f) {
-    const { answers } = f.payload as { answers: GoogleAnswer[] };
-    return answers.flatMap((a) =>
+  extract: extractGoogle,
+};
+
+/**
+ * Reads a Google News bronze row: the daily one (subject = the symbol) or a history window (`news-history`, subject
+ * `SYMBOL|kind|term|from|to`): the ticker is the subject's first part either way.
+ */
+export function extractGoogle(f: BronzeFetch): Omit<RawArticle, "bronzeId">[] {
+  const { answers } = f.payload as { answers: GoogleAnswer[] };
+  const symbol = f.subject.split("|")[0];
+  return answers.flatMap((a) =>
       parseRss(a.body).map((i) => ({
         source: "google-news",
-        symbol: f.subject,
+        symbol,
         matchKind: a.kind,
         matchedTerm: a.term,
         title: stripPublisherSuffix(i.title, i.source),
@@ -170,7 +178,6 @@ export const googleNews: NewsSource = {
         publishedAt: parseDate(i.pubDate),
       })),
     );
-  },
-};
+}
 
 export const NEWS_SOURCES = [finnhubNews, googleNews, yahooNews] as const;

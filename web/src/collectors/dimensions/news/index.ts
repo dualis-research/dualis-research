@@ -26,13 +26,17 @@ export const news: Dimension = {
   description: "Articles about each ticker from Finnhub, Google News and Yahoo Finance, deduplicated across sources.",
   sources: NEWS_SOURCES,
   subjects: activeSymbols,
-  promote: promoteNews,
+  promote: (db, fetches) => promoteNews(db, fetches),
 };
 
 /** "source\0symbol" -> articles in that source's latest answer for that ticker. */
 export type AnswerCounts = Map<string, number>;
 
-export async function promoteNews(db: Db, fetches: BronzeFetch[]): Promise<PromoteResult> {
+/**
+ * `since`: the oldest publication date this batch can hold; existing items published after it are matched against it
+ * (the daily run reads 60 days back, a history batch from its oldest window).
+ */
+export async function promoteNews(db: Db, fetches: BronzeFetch[], since = new Date(Date.now() - MATCH_HORIZON_MS)): Promise<PromoteResult> {
   const ok = fetches.filter((f) => !f.error).sort((a, b) => a.fetchedAt.getTime() - b.fetchedAt.getTime());
   const articles: RawArticle[] = [];
   const counts: AnswerCounts = new Map();
@@ -44,7 +48,6 @@ export async function promoteNews(db: Db, fetches: BronzeFetch[]): Promise<Promo
     articles.push(...found);
   }
 
-  const since = new Date(Date.now() - MATCH_HORIZON_MS);
   const existing = await db
     .select()
     .from(newsItems)
