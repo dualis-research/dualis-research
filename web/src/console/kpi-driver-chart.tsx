@@ -2,7 +2,7 @@
 
 import { Chart } from "@cloudflare/kumo";
 import { BarChart, LineChart } from "echarts/charts";
-import { AriaComponent, GridComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
+import { AriaComponent, GridComponent, MarkAreaComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
 import * as echarts from "echarts/core";
 import { CanvasRenderer } from "echarts/renderers";
 
@@ -12,12 +12,12 @@ import { FitWidth } from "./fit-width";
 import { usePageDark } from "./use-page-dark";
 import { COLOR } from "@/design/tokens";
 
-echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, MarkLineComponent, AriaComponent, CanvasRenderer]);
+echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, MarkLineComponent, MarkAreaComponent, AriaComponent, CanvasRenderer]);
 
-export type KpiPoint = { date: string; value: number };
+export type KpiPoint = { date: string; period: string; value: number };
 export type PricePoint = { date: string; raw: number; clean: number };
 /** A tested moment drawn as a numbered vertical line: green when the price followed the KPI, red when it did not. */
-export type KpiMarker = { n: number; date: string; verdict: "confirms" | "invalidates" };
+export type KpiMarker = { n: number; date: string; end: string; verdict: "confirms" | "invalidates" };
 
 /**
  * The proof a KPI drives the stock, before any word (Kevin 2026-11-23: « un visuel convainc mieux que du texte »):
@@ -58,13 +58,14 @@ export function KpiDriverChart({
   // Moments a few days apart share one line and one label (« 2, 3 »), else their numbers print on top of each other.
   const span = (p.length ? Date.parse(p.at(-1)!.date) - Date.parse(p[0].date) : 0) / 86_400_000;
   const near = Math.max(3, span / 60);
-  const groups: { date: string; ns: number[]; verdicts: Set<KpiMarker["verdict"]> }[] = [];
+  const groups: { date: string; end: string; ns: number[]; verdicts: Set<KpiMarker["verdict"]> }[] = [];
   for (const x of [...m].sort((a, b) => a.date.localeCompare(b.date))) {
     const g = groups.at(-1);
     if (g && (Date.parse(x.date) - Date.parse(g.date)) / 86_400_000 <= near) {
       g.ns.push(x.n);
       g.verdicts.add(x.verdict);
-    } else groups.push({ date: x.date, ns: [x.n], verdicts: new Set([x.verdict]) });
+      if (x.end > g.end) g.end = x.end;
+    } else groups.push({ date: x.date, end: x.end, ns: [x.n], verdicts: new Set([x.verdict]) });
   }
   const colour = (v: Set<KpiMarker["verdict"]>) => (v.size > 1 ? ink.muted : tone[[...v][0]]);
   const lines = (grid: 0 | 1) => ({
@@ -76,7 +77,14 @@ export function KpiDriverChart({
       label: grid === 0 ? { show: true, formatter: g.ns.join(", "), position: "end", color: colour(g.verdicts), fontFamily: FONT, fontSize: 11, fontWeight: 600 } : { show: false },
     })),
   });
+  // The 5 trading days measured after each moment, shaded on the price (Kevin 2026-11-23: « quelle time window »).
+  const windows = {
+    silent: true,
+    data: groups.map((g) => [{ xAxis: g.date, itemStyle: { color: colour(g.verdicts), opacity: 0.14 } }, { xAxis: g.end }]),
+  };
   const hasKpi = k.length > 0;
+  // Each bar says which stretch of time it covers and its value, when there are few enough to read.
+  const barLabel = k.length <= 10 ? { show: true, position: "top", fontFamily: FONT, fontSize: 10, color: ink.muted, formatter: (x: { data: [string, number, string] }) => `${formatUnit(x.data[1], unit, currency)}\n${x.data[2]}` } : { show: false };
   const options = {
     animation: false,
     textStyle: { fontFamily: FONT },
@@ -84,7 +92,7 @@ export function KpiDriverChart({
     tooltip: { trigger: "axis" },
     grid: hasKpi
       ? [
-          { left: 56, right: 12, top: 18, height: "34%" },
+          { left: 56, right: 12, top: 40, height: "30%" },
           { left: 56, right: 12, top: "54%", bottom: 24 },
         ]
       : [{ left: 56, right: 12, top: 18, bottom: 24 }],
@@ -102,19 +110,37 @@ export function KpiDriverChart({
       ...(hasKpi
         ? [{ type: "value", gridIndex: 0, name: kpiLabel, nameTextStyle: { ...text, align: "left" }, axisLabel: { ...text, formatter: (v: number) => formatUnit(v, unit, currency) }, splitLine: { lineStyle: { color: ink.grid } } }]
         : []),
-      { type: "value", gridIndex: hasKpi ? 1 : 0, scale: true, name: `Share price · dark: ${indexName} taken out`, nameTextStyle: { ...text, align: "left" }, axisLabel: text, splitLine: { lineStyle: { color: ink.grid } } },
+      { type: "value", gridIndex: hasKpi ? 1 : 0, scale: true, name: "Share price", nameTextStyle: { ...text, align: "left" }, axisLabel: text, splitLine: { lineStyle: { color: ink.grid } } },
     ],
     series: [
       ...(hasKpi
-        ? [{ type: "bar", name: kpiLabel, xAxisIndex: 0, yAxisIndex: 0, data: k.map((x) => [x.date, x.value]), itemStyle: { color: ink.navy }, barMaxWidth: 14, markLine: lines(0), tooltip: { valueFormatter: (v: number) => formatUnit(v, unit, currency) } }]
+        ? [{ type: "bar", name: kpiLabel, xAxisIndex: 0, yAxisIndex: 0, data: k.map((x) => [x.date, x.value, x.period]), label: barLabel, itemStyle: { color: ink.navy }, barMaxWidth: 14, markLine: lines(0), tooltip: { valueFormatter: (v: number) => formatUnit(v, unit, currency) } }]
         : []),
       { type: "line", name: "Share price", xAxisIndex: hasKpi ? 1 : 0, yAxisIndex: hasKpi ? 1 : 0, data: p.map((x) => [x.date, x.raw]), showSymbol: false, lineStyle: { color: ink.muted, width: 1, opacity: 0.5 }, itemStyle: { color: ink.muted }, ...(hasKpi ? {} : { markLine: lines(0) }) },
-      { type: "line", name: `Market taken out (${indexName})`, xAxisIndex: hasKpi ? 1 : 0, yAxisIndex: hasKpi ? 1 : 0, data: p.map((x) => [x.date, x.clean]), showSymbol: false, lineStyle: { color: ink.navy, width: 1.75 }, itemStyle: { color: ink.navy }, ...(hasKpi ? { markLine: lines(1) } : {}) },
+      { type: "line", name: `Market taken out (${indexName})`, xAxisIndex: hasKpi ? 1 : 0, yAxisIndex: hasKpi ? 1 : 0, data: p.map((x) => [x.date, x.clean]), showSymbol: false, lineStyle: { color: ink.navy, width: 1.75 }, itemStyle: { color: ink.navy }, markArea: windows, ...(hasKpi ? { markLine: lines(1) } : {}) },
     ],
   };
+  // What each colour and line means, under the chart (Kevin 2026-11-23: « rouge vert gris manque légende »).
+  const key = (swatch: React.ReactNode, words: string) => (
+    <li className="inline-flex items-center gap-1.5">
+      {swatch}
+      {words}
+    </li>
+  );
+  const bar = (color: string, h = 10, w = 2, opacity = 1) => <span aria-hidden className="inline-block" style={{ background: color, width: w, height: h, opacity }} />;
   return (
-    <FitWidth>
-      <Chart echarts={echarts} options={options as never} height={height} isDarkMode={dark} />
-    </FitWidth>
+    <figure className="flex flex-col gap-2">
+      <FitWidth>
+        <Chart echarts={echarts} options={options as never} height={height} isDarkMode={dark} />
+      </FitWidth>
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-kumo-default">
+        {key(bar(tone.confirms), "Price followed the KPI")}
+        {key(bar(tone.invalidates), "KPI moved, price did not")}
+        {groups.some((g) => g.verdicts.size > 1) && key(bar(ink.muted), "Moments days apart, mixed")}
+        {key(bar(ink.muted, 10, 10, 0.25), "5 trading days measured")}
+        {key(bar(ink.muted, 2, 14, 0.5), "Share price")}
+        {key(bar(ink.navy, 2, 14), `Share price, ${indexName} taken out`)}
+      </ul>
+    </figure>
   );
 }

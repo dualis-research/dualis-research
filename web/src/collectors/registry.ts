@@ -107,10 +107,12 @@ export const STAGES: readonly (readonly string[])[] = [
   ["narrative-state"],
   ["signals"],
   ["signal-alerts"],
+  // On demand, but its texts get their bold in the same run (Kevin 2026-11-23: the KPI driver reason had none).
+  ["kpi-drivers"],
   // Bold on the texts the analysis chain just wrote (Kevin 2026-11-23); the Ideas get theirs on the next run.
   ["emphasis"],
   ...GROWTH_DIMENSIONS.map((d) => [d]),
-  ...ON_DEMAND_DIMENSIONS.map((d) => [d]),
+  ...ON_DEMAND_DIMENSIONS.filter((d) => d !== "kpi-drivers").map((d) => [d]),
 ];
 
 /** The dimensions to run, grouped by stage, in order. */
@@ -136,6 +138,8 @@ export function dimensionsFor(arg: string): readonly Dimension[] {
     const i = DIMENSIONS.indexOf(dimensionByName(arg.slice(5)));
     return DIMENSIONS.slice(i).filter((d) => d === DIMENSIONS[i] || (!GROWTH_DIMENSIONS.includes(d.name) && !ON_DEMAND_DIMENSIONS.includes(d.name)));
   }
+  // A KPI test writes prose the console shows in bold: the bold pass closes the run.
+  if (arg === "kpi-drivers") return [dimensionByName(arg), dimensionByName("emphasis")];
   return [dimensionByName(arg)];
 }
 
