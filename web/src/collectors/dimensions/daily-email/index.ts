@@ -34,8 +34,8 @@ export const NEWS_WINDOW_MS = 24 * 3_600_000;
 export const FILING_WINDOW_MS = 48 * 3_600_000;
 /** What was told in the last days, handed to the judge so a story is never told twice. */
 const TOLD_MS = 3 * 86_400_000;
-/** The white knot the email shows, served by the mailer Worker (Gmail did not render it attached by cid). */
-export const MARK_URL = "https://mailer.dualisresearch.com/mark-white.png";
+/** Where the email's pictures live: the mailer Worker serves the white knot and the kind icons (Gmail did not render a cid image). */
+export const ASSETS_URL = "https://mailer.dualisresearch.com";
 /** Items per Claude call: a ticker's whole day in one call, so one story told by ten outlets is told once. */
 export const BATCH = 150;
 /** At most this many items per company in one email (in the prompt: the model keeps the most important ones). */
@@ -248,7 +248,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const items: DigestItem[] = material
     .sort((a, b) => rank.get(a.symbol)! - rank.get(b.symbol)! || KIND_ORDER[a.kind as Kind] - KIND_ORDER[b.kind as Kind] || (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0))
     .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "" }));
-  const email = items.length ? renderEmail(day, items, MARK_URL) : null;
+  const email = items.length ? renderEmail(day, items, ASSETS_URL) : null;
   await db
     .insert(goldDailyDigests)
     .values({ day, items, subject: email?.subject ?? null, text: email?.text ?? null, html: email?.html ?? null, builtAt: now })

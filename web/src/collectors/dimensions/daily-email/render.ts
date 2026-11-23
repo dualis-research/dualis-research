@@ -4,13 +4,17 @@ import type { DigestItem } from "@/db/schema/daily-email";
  * The email's words and look (Kevin 2026-11-23 on the first test: a thin header and footer in the brand with the logo,
  * each item one very short sentence with its main idea, key words in bold, an icon per kind of item). Dualis copy rules:
  * plain, no dash, no fair value or price target, the disclaimer in the footer. Pure: the digest items in, subject +
- * plain text + HTML out; the header and footer show the white knot from `markUrl`, each company its own logo
+ * plain text + HTML out; the header and footer show the white knot from `<assets>/mark-white.png`, each company its own logo
  * (Kevin 2026-11-23: « the logo of each company much visible », the kind icons discreet).
  */
 export const FOOTER = "Not investment advice. A summary of public news and filings on your watchlist, for information only.";
 
-/** Same kind = same icon, so the eye sorts the email at a glance. */
-export const KIND_ICON: Record<DigestItem["kind"], string> = { filing: "📄", news: "📰", industry: "🏭" };
+/**
+ * Same kind = same icon, so the eye sorts the email at a glance: grey Phosphor icons (FileText, Newspaper, Factory)
+ * served as PNGs by the mailer at `<assets>/icons/<kind>.png` (Kevin 2026-11-23: the emojis did not show, « des icônes
+ * plus propres sans couleurs »).
+ */
+export const KINDS: readonly DigestItem["kind"][] = ["filing", "news", "industry"];
 const KIND_LABEL: Record<DigestItem["kind"], string> = { filing: "Filing", news: "Company news", industry: "Industry" };
 
 const INK = "#1A1640";
@@ -44,16 +48,19 @@ export function byCompany(items: readonly DigestItem[]): { symbol: string; compa
 const band = (inner: string, pad: string) =>
   `<tr><td style="background:${INK};padding:${pad};">${inner}</td></tr>`;
 
-export function renderEmail(day: string, items: readonly DigestItem[], markUrl: string): { subject: string; text: string; html: string } {
+export function renderEmail(day: string, items: readonly DigestItem[], assets: string): { subject: string; text: string; html: string } {
   const groups = byCompany(items);
   // No count in the subject (Kevin 2026-11-23): the date says which email it is.
   const subject = `Your watchlist, ${shortDay(day)}`;
-  const used = (Object.keys(KIND_ICON) as DigestItem["kind"][]).filter((k) => items.some((i) => i.kind === k));
+  const used = KINDS.filter((k) => items.some((i) => i.kind === k));
+  const markUrl = `${assets}/mark-white.png`;
+  const icon = (k: DigestItem["kind"], size: number) =>
+    `<img src="${esc(`${assets}/icons/${k}.png`)}" width="${size}" height="${size}" alt="${KIND_LABEL[k]}" title="${KIND_LABEL[k]}" style="display:inline-block;vertical-align:middle;border:0;width:${size}px;height:${size}px;">`;
 
   const text = [
     `Dualis Research. Your watchlist, ${shortDay(day)}`,
     "",
-    ...groups.flatMap((g) => [`${g.company} (${g.symbol})`, ...g.items.map((i) => `${KIND_ICON[i.kind]} ${plain(i.summary)}${i.url ? ` ${i.url}` : ""}`), ""]),
+    ...groups.flatMap((g) => [`${g.company} (${g.symbol})`, ...g.items.map((i) => `${KIND_LABEL[i.kind]}: ${plain(i.summary)}${i.url ? ` ${i.url}` : ""}`), ""]),
     FOOTER,
   ].join("\n");
 
@@ -68,7 +75,7 @@ export function renderEmail(day: string, items: readonly DigestItem[], markUrl: 
 
   const body = `<tr><td style="padding:24px 24px 8px;font-family:${FONT};color:${INK};">
 <h1 style="font-size:19px;line-height:1.3;margin:0 0 6px;font-weight:600;">Your watchlist</h1>
-<p style="font-size:11px;color:${MUTED};opacity:0.8;margin:0 0 4px;">${used.map((k) => `${KIND_ICON[k]} ${KIND_LABEL[k]}`).join("&nbsp;&nbsp;·&nbsp;&nbsp;")}</p>
+<p style="font-size:11px;color:${MUTED};opacity:0.8;margin:0 0 4px;">${used.map((k) => `${icon(k, 14)}&nbsp;<span style="vertical-align:middle;">${KIND_LABEL[k]}</span>`).join("&nbsp;&nbsp;&nbsp;&nbsp;")}</p>
 ${groups
   .map(
     (g) => `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:26px 0 10px;"><tr>${
@@ -79,7 +86,7 @@ ${groups
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
 ${g.items
   .map(
-    (i) => `<tr><td style="width:20px;vertical-align:top;font-size:11px;line-height:22px;opacity:0.45;padding:0 0 8px;">${KIND_ICON[i.kind]}</td>
+    (i) => `<tr><td style="width:26px;vertical-align:top;padding:3px 0 8px;">${icon(i.kind, 17)}</td>
 <td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 8px;">${boldHtml(i.summary)}${
       i.url ? ` <a href="${esc(i.url)}" style="color:${INDIGO};font-size:13px;text-decoration:none;white-space:nowrap;">${esc(i.publisher ?? "Source")}&nbsp;&#8599;</a>` : ""
     }</td></tr>`,
