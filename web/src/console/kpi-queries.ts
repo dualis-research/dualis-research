@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { driverEvents, kpiDrivers, priceMoveCauses, priceMoves } from "@/db/schema/analysis";
+import { driverEvents, kpiDrivers, narrativeDrivers, narratives, priceMoveCauses, priceMoves } from "@/db/schema/analysis";
 import { goldNewsLinks } from "@/db/schema/news";
 import { priceBars } from "@/db/schema/gold";
 import { localIndex } from "@/collectors/benchmark";
@@ -47,21 +47,25 @@ export const cleanPrice = cache(async (symbol: string) => {
 
 /**
  * The proof structure of a ticker (PROOF-STRUCTURE-1123): every event of 3 years (industry news marked), every unusual
- * week with its ONE verdict and the items it rests on, the candidates with their tests and reversals, the price chart.
+ * week with its ONE verdict and the items it rests on, the candidates with their tests, the narrative written on the
+ * trusted ones (its side, and what the market believes about each), their reversals against it, the price chart.
  */
 export const proofData = cache(async (symbol: string) => {
   const db = getDb();
   const since = sinceDay();
-  const [events, moves, causes, kpis, chart, industry] = await Promise.all([
+  const [events, moves, causes, kpis, chart, industry, [story], beliefs] = await Promise.all([
     db.select().from(driverEvents).where(eq(driverEvents.symbol, symbol)).orderBy(asc(driverEvents.day), asc(driverEvents.id)),
     db.select().from(priceMoves).where(and(eq(priceMoves.symbol, symbol), gte(priceMoves.endDay, since))).orderBy(asc(priceMoves.startDay)),
     db.select().from(priceMoveCauses).where(eq(priceMoveCauses.symbol, symbol)),
     kpiDriversOf(symbol),
     cleanPrice(symbol),
     db.select({ id: goldNewsLinks.newsItemId }).from(goldNewsLinks).where(and(eq(goldNewsLinks.symbol, symbol), sql`'industry' = any(${goldNewsLinks.matchKinds})`, sql`not ('name' = any(${goldNewsLinks.matchKinds}))`, sql`not ('alias' = any(${goldNewsLinks.matchKinds}))`, sql`not ('symbol' = any(${goldNewsLinks.matchKinds}))`)),
+    db.select().from(narratives).where(eq(narratives.symbol, symbol)),
+    db.select().from(narrativeDrivers).where(eq(narrativeDrivers.symbol, symbol)).orderBy(asc(narrativeDrivers.rank)),
   ]);
+  const narrative = story ? await withBold({ side: story.side, text: story.text, sideWhy: story.sideWhy, drivers: beliefs.filter((d) => d.side === story.side).map((d) => ({ id: d.id, kpiDriverId: d.kpiDriverId, category: d.category, title: d.title, summary: d.summary })) }) : null;
   const from = chart.price[0]?.date ?? events[0]?.day ?? since;
   const weeks = moves.filter((m) => m.startDay >= from);
-  return { events, arrows: moveArrows(weeks, causes), kpis, chart, industryNews: new Set(industry.map((x) => String(x.id))) };
+  return { events, arrows: moveArrows(weeks, causes), kpis, narrative, chart, industryNews: new Set(industry.map((x) => String(x.id))) };
 });
 export type ProofData = Awaited<ReturnType<typeof proofData>>;

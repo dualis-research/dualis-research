@@ -23,10 +23,8 @@ export const EMPHASIS_DIMENSION = "emphasis";
 
 /** Where Claude's prose lives, first-sight texts first; the fields are the prose ones (never a title or a quote). */
 export const EMPHASIS_SOURCES: readonly { table: PgTable; fields: readonly string[] }[] = [
-  { table: analysis.narratives, fields: ["text", "detail"] },
+  { table: analysis.narratives, fields: ["text", "detail", "sideWhy"] },
   { table: analysis.narrativeDrivers, fields: ["summary", "text"] },
-  { table: analysis.narrativeStates, fields: ["why", "headline", "reason", "explanation"] },
-  { table: analysis.driverConfidence, fields: ["reason", "why"] },
   { table: analysis.kpiDrivers, fields: ["why", "reason", "signalWhy"] },
   { table: analysis.signals, fields: ["why"] },
   { table: analysis.signalChanges, fields: ["updateNote"] },

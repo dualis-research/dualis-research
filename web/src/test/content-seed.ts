@@ -1,8 +1,9 @@
 import { evidence, narrativeDrivers, narratives, signalChanges, signals } from "@/db/schema/analysis";
 import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
+import { priceDriver, seedPriceDrivers } from "./price-drivers";
 
-/** One analysed ticker with the analysis objects the Ideas read: signal, fair value, narrative, a driver, evidence, a Signal Change. */
+/** One analysed ticker with the analysis objects the Ideas read: signal, fair value, narrative, a trusted Price Driver and its Narrative Driver, evidence, a Signal Change. */
 export async function seedAnalysedTicker(db: Db, symbol = "CCLD", opts: { name?: string; evidenceHeadline?: string } = {}) {
   const now = new Date();
   await db.insert(gold.tickers).values({ symbol, market: "US", aliases: [], inPortfolio: false, analysed: true, position: "long" });
@@ -12,7 +13,9 @@ export async function seedAnalysedTicker(db: Db, symbol = "CCLD", opts: { name?:
     quote: 4, quoteDate: now.toISOString().slice(0, 10), gapPct: -1 / 3, evidenceIds: [`${symbol}|news:n1`], since: now,
   });
   await db.insert(narratives).values({ id: `${symbol}:long`, symbol, side: "long", text: `The market thinks ${symbol} lost its biggest client.`, detail: "Detail.", version: "v1", asOf: now });
-  await db.insert(narrativeDrivers).values({ id: `${symbol}:long:1`, symbol, side: "long", rank: 1, category: "Business economics", title: "Client loss", summary: "Revenue fell 20%.", text: "Long text.", version: "v1" });
+  const pd = priceDriver(symbol, 1, "Client revenue");
+  await seedPriceDrivers(db, [pd]);
+  await db.insert(narrativeDrivers).values({ id: `${symbol}:long:1`, symbol, side: "long", rank: 1, category: "Business economics", title: "Client loss", summary: "Revenue fell 20%.", text: "Long text.", kpiDriverId: pd.id, version: "v1" });
   await db.insert(evidence).values({
     id: `${symbol}|news:n1`, symbol, driverId: `${symbol}:long:1`, effect: "reversal", strength: "strong", probability: 0.9, why: "A new client replaces the lost one.",
     citedSentence: null, exhibitId: null, kind: "news", headline: opts.evidenceHeadline ?? `${symbol} signs a new hospital client`, url: "https://news.example/n1", publisher: "Reuters",

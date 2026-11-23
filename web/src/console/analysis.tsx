@@ -32,14 +32,12 @@ import { SourcedFigure } from "./sourced";
 import { itemHref } from "./item-href";
 export { itemHref };
 
-export const parseThesis = (v: string | undefined): ThesisSide | null => (v === "long" || v === "short" ? v : null);
-
-export async function analysisData(symbol: string, thesis: ThesisSide | null = null, page = false) {
+export async function analysisData(symbol: string, page = false) {
   const [row, data, consensus, objects, chart, valuation, moves] = await Promise.all([
     boardRowOf(symbol),
     getTicker(symbol),
     consensusOf(symbol),
-    getTickerAnalysis(symbol, thesis),
+    getTickerAnalysis(symbol),
     priceVsFairValue(symbol),
     getValuation(symbol),
     // The significant moves' markers sit on the Analysis page's chart only (the Signals panel stays light).
@@ -188,10 +186,7 @@ export function EvidenceRows({ symbol, rows, driverId, side }: { symbol: string;
 
 export { PRICED_WORD };
 
-/**
- * One story on screen (Kevin 2026-11-09, « WTF IS THAT » on the two-thesis tabs): the thesis that signals, else the only
- * one, else the long. The competition between two theses stays in the backend.
- */
+/** One story per ticker (Kevin 2026-11-24): the narrative written on its trusted Price Drivers, its side decided by the analysis. */
 export function AnalysisBody({ analysis, variant }: { analysis: Analysis; variant: "panel" | "page" }) {
   const { row, consensus, objects, chart, valuation, moves } = analysis;
   const exhibitByNumber = new Map(objects.drivers.flatMap((d) => d.exhibits).map((x) => [x.number, x]));
@@ -199,8 +194,7 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
   // The analysis writes the narrative; nobody edits it by hand (Kevin 2026-11-09).
   const narrative = objects.narrative?.text ?? null;
   const side = objects.side;
-  // Item links keep the shown thesis only when two compete (one thesis = the default).
-  const keep = objects.theses.length > 1 ? side : null;
+  const keep = null;
   const gap = variant === "page" ? "gap-14" : "gap-10";
   return (
     <div className={`flex flex-col ${gap}`}>
@@ -224,7 +218,7 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
         )}
       </Section>
 
-      {/* The proof of the Price Drivers, closed (PROOF-STRUCTURE-1123): candidates, confidence, reversals. */}
+      {/* The proof of the Price Drivers, closed (PROOF-STRUCTURE-1123): candidates, confidence, narrative, reversals. */}
       <ProofSections symbol={symbol} />
 
       {variant === "page" && (
@@ -268,7 +262,7 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
   );
 }
 
-/** The News table's rows for the shown thesis: importance = the strongest tag the item carries on one of its drivers. */
+/** The News table's rows: importance = the strongest tag the item carries on one of its drivers. */
 function newsRows(symbol: string, objects: Analysis["objects"], keep: ThesisSide | null): NewsRow[] {
   const ids = new Set(objects.drivers.map((d) => d.id));
   return objects.evidence.map((e) => {

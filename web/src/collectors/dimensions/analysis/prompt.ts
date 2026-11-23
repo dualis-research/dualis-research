@@ -3,18 +3,17 @@ import { firstJsonObject } from "@/llm/judge";
 import { stripDashes } from "../thesis/structure";
 
 /**
- * Bump when a prompt changes meaning: every ticker is analysed again. v7 (Kevin 2026-11-09): one analysis per thesis
- * side. v8 (INFLECTION-1117): drivers found from the moves the market made on the business, each citing them; leverage
- * read against earnings.
+ * Bump when a prompt changes meaning: every ticker is analysed again. v9 (Kevin 2026-11-19): 5 years of business moves,
+ * each with the reported figure behind it. v10 (Kevin 2026-11-24): ONE narrative per ticker, written on the trusted
+ * Price Drivers (one Narrative Driver each, never an invented one); the model decides the side of the story itself from
+ * the price, the fair value and its history (no coded rule, no second thesis in parallel).
  */
-/** v9 (Kevin 2026-11-19): 5 years of business moves, each with the reported figure behind it; a driver names that figure. */
-export const ANALYSIS_VERSION = "analysis@v9";
+export const ANALYSIS_VERSION = "analysis@v10";
 
 const METHOD = [
   "The analyst's method: he does not believe in one true value. The price reflects the market's NARRATIVE; the FAIR VALUE is what the business is worth if its plan works.",
-  "The fair value is GIVEN in the facts (weighted from several valuation methods, with its range low to high): never compute another one.",
-  "A ticker has a LONG thesis and a SHORT thesis. The long thesis is the PESSIMISTIC story the market holds, the reason the price sits at or below fair value; its turn (an inflection) is a buy. The short thesis is the OPTIMISTIC story, the reason the price sits at or above fair value; its turn (a crack) is a sell.",
-  "Price below the fair value range: only the long thesis is written. Above it: only the short one. Inside the range: both are written, each on its own, and they compete.",
+  "The fair value is GIVEN in the facts (weighted from several valuation methods, with its range low to high, and how it moved over time): never compute another one. It is one input among others: weigh it with the price path and what the market has been shown to trade the stock on.",
+  "A stock carries ONE narrative, and it has a side. long = a PESSIMISTIC story: the market prices the business below what it is worth, and a Price Driver turning against that story (an inflection) is a buy. short = an OPTIMISTIC story: the market prices it above what it is worth, and a Price Driver breaking that story (a crack) is a sell.",
 ].join(" ");
 
 export const ANALYSIS_SYSTEM = [
@@ -24,58 +23,44 @@ export const ANALYSIS_SYSTEM = [
   "Answer with JSON only, no prose, no code fence.",
 ].join(" ");
 
-const SIDE_WORDS: Record<ThesisSide, { thesis: string; story: string; tone: string; against: string; consensus: string }> = {
-  long: {
-    thesis: "the LONG thesis",
-    story: "the PESSIMISTIC story the market tells about the company, the reason the price sits at or below the fair value",
-    tone: "a reason for pessimism (a missed guide, a shrinking market, margins under pressure, a dilution, debt heavy against earnings...)",
-    against: "A fact that goes AGAINST this story (a record quarter under a gloomy story) is never a driver: it is the news that may turn one.",
-    consensus: "analysts expect a decline or keep cutting estimates; a company no analyst follows (no consensus in the facts) is also a reason for the discount",
-  },
-  short: {
-    thesis: "the SHORT thesis",
-    story: "the OPTIMISTIC story the market tells about the company, the reason the price sits at or above the fair value",
-    tone: "a reason for optimism (fast growth, a hot theme, a big contract, rising margins...)",
-    against: "A fact that goes AGAINST this story (a missed quarter under a glowing story) is never a driver: it is the news that may crack one.",
-    consensus: "analysts bake in strong growth or keep raising estimates",
-  },
-};
+/** The previous version of the narrative, kept word for word unless the facts changed what the market believes. */
+export type PreviousThesis = { side?: ThesisSide; sideWhy?: string | null; narrative: string; narrativeDetail?: string | null; drivers: { priceDriver?: string | null; category: string; title: string; summary?: string | null; text: string }[] };
 
-/** The previous version of the same thesis, kept word for word unless the facts changed what the market believes. */
-export type PreviousThesis = { narrative: string; narrativeDetail?: string | null; drivers: { category: string; title: string; summary?: string | null; text: string }[] };
-
-export function analysisPrompt(factsText: string, side: ThesisSide, previous: PreviousThesis | null = null): string {
-  const w = SIDE_WORDS[side];
+/**
+ * The one call that writes the narrative: `priceDrivers` = the block of trusted Price Drivers (labelled P1..), the
+ * ONLY reasons the narrative may rest on; `labels` = those labels, each of which gets exactly one Narrative Driver.
+ */
+export function analysisPrompt(factsText: string, priceDrivers: string, labels: string[], previous: PreviousThesis | null = null): string {
   return [
     "Facts (all from the collected data):",
     factsText,
     "",
+    priceDrivers,
+    "",
     ...(previous
       ? [
-          `Your previous version of ${w.thesis}:`,
+          "Your previous version of this narrative:",
           JSON.stringify(previous, null, 1),
-          "Keep it WORD FOR WORD (same narrative, same drivers in the same order, same words) unless the facts above changed what the market believes, or a driver breaks the method below. A new news item is not a reason to rewrite the story: news are judged against it separately. Rewrite only what the facts or the method made wrong.",
+          "Keep it WORD FOR WORD (same side, same narrative, same drivers in the same order, same words) unless the facts above changed what the market believes, a Price Driver was added or dropped, or a driver breaks the method below. A new news item is not a reason to rewrite the story: news are judged against it separately. Rewrite only what the facts or the method made wrong.",
           "",
         ]
       : []),
-    `Write ${w.thesis} of this ticker as JSON:`,
+    "Write the narrative of this ticker as JSON:",
     "{",
-    `  "narrative": "<ONE short plain sentence, subject verb complement: ${w.story}, at most one figure, e.g. ${side === "long" ? "The market sees Kyungbang as a dying textile maker." : "The market sees Lifeway as a kefir brand that keeps growing fast."}>",`,
-    '  "narrativeDetail": "<3 to 5 sentences: why the market holds this story and where the price sits versus the fair value and its range, with the figures>",',
-    '  "drivers": [ 1 to 5, the REASONS the market holds that story, most important first:',
-    `    {"category": <one of: ${DRIVER_CATEGORIES.map((c) => JSON.stringify(c)).join(", ")}>, "title": "<5 to 9 words, the reason itself>", "summary": "<ONE short plain sentence, subject verb complement, no figure>", "text": "<2 to 3 sentences with the reported figures>",`,
-    '     "moves": [<the date of each [move YYYY-MM-DD] listed in the facts that this reason caused, e.g. "2025-08-14"; [] when none did>],',
-    '     (the "text" names the reported figure behind those moves, e.g. the operating margin or backlog to revenue, with its values: the structural element the market reacted to)',
-    '     "exhibits": [1 or 2 charts that show it: {"title": "<chart title>", "chart": "bar" | "line", "series": [<1 to 3 keys from the stored chart series list, same period type>], "takeaway": "<one line: what the chart shows>"}]}',
+    '  "side": "long" | "short",',
+    '  "sideWhy": "<ONE sentence: why the story the market tells is pessimistic (long) or optimistic (short), with the price against the fair value and its range>",',
+    '  "narrative": "<ONE short plain sentence, subject verb complement: the story the market tells about the company, at most one figure, e.g. The market sees Kyungbang as a dying textile maker. or The market sees Lifeway as a kefir brand that keeps growing fast.>",',
+    '  "narrativeDetail": "<3 to 5 sentences: why the market holds this story, on which Price Drivers, and where the price sits versus the fair value and its range, with the figures>",',
+    `  "drivers": [ exactly one per Price Driver (${labels.join(", ")}), the most important for the story first:`,
+    `    {"priceDriver": "<its label, e.g. P1>", "category": <one of: ${DRIVER_CATEGORIES.map((c) => JSON.stringify(c)).join(", ")}>, "title": "<5 to 9 words: what the market believes about this Price Driver>", "summary": "<ONE short plain sentence, subject verb complement, no figure: why the market holds the story on it>", "text": "<2 to 3 sentences with its reported figures: what it did, how the price reacted, what the market now assumes about it>",`,
+    '     "exhibits": [0 to 2 charts that show it: {"title": "<chart title>", "chart": "bar" | "line", "series": [<1 to 3 keys from the stored chart series list, same period type>], "takeaway": "<one line: what the chart shows>"}]}',
     "  ]",
     "}",
-    `Every driver SUPPORTS the narrative: it is a reason the market believes the story, ${w.tone}. ${w.against}`,
-    "Drivers are every reason the market really holds, and only those: 1 to 5, as many as there are. Never invent a reason to fill the list, and never leave one out: a reason left out is a reason whose reversal no news can show.",
-    `"Consensus expectations" is a driver when the analyst consensus agrees with the narrative, even when it only follows another reason: ${w.consensus}. When the consensus goes against this story, it is not one of its drivers.`,
-    "How to find the drivers: a driver is what the market reacted to on the BUSINESS. The significant price moves listed with their business cause show what the market cared about on this company: each driver should rest on the moves it caused (\"moves\"). A move caused by the market at large (rates, a war, a commodity, a sector selloff) or by trading is never a driver. A reason with no move is allowed when the market priced it without a single event (no analyst coverage, a consensus, a slow story), and its text says so.",
-    "Debt is a reason only when it is heavy against the earnings that service it (net debt / EBITDA, interest cover in the facts), never because it is large against the market cap: a small company with debt of 2x EBITDA carries normal debt.",
-    "Each driver needs at least one exhibit whose series keys appear EXACTLY in the stored chart series list.",
-    "The operating figures the company reports (backlog, remaining performance obligations, order intake) are facts like the statements: they often show a business changing before its revenue does. Weigh them like any figure: a driver can rest on one (its series can be charted), and one that goes against the story is said in the report.",
+    "The side is YOUR call, as the analyst would make it: read where the price sits against the fair value (base, low, high), how both moved over time, and what the Price Drivers did while the price moved. No rule decides it for you; a price inside the fair value range still carries one story, the one the market is really telling.",
+    "The Narrative Drivers ARE the Price Drivers listed above, one each, and nothing else: never add a reason of your own, never leave a Price Driver out. For each, say what the market believes about it today and how that belief holds the story. A Price Driver whose latest figures already go against the story is still one of its drivers: say what the market assumes about it; whether it is turning is judged separately, after you.",
+    "A weak-confidence Price Driver carries less of the story than a strong one: say so in its text when it matters.",
+    "An exhibit is optional; when you give one, its series keys appear EXACTLY in the stored chart series list (a policy or an industry fact has no series: give none).",
+    "Debt is read against the earnings that service it (net debt / EBITDA, interest cover in the facts), never against the market cap.",
   ].join("\n");
 }
 
@@ -85,16 +70,16 @@ export const REPORT_SYSTEM = [
   "Every figure comes from the facts given. No rating, no % upside, no time horizon, no price target other than the fair value. No em dash, no en dash. Markdown only.",
 ].join(" ");
 
-export function reportPrompt(factsText: string, analysis: AnalysisAnswer, exhibits: { number: number; title: string; takeaway: string }[], name: string, side: ThesisSide): string {
+export function reportPrompt(factsText: string, analysis: AnalysisAnswer, exhibits: { number: number; title: string; takeaway: string }[], name: string): string {
   return [
     "Facts:",
     factsText,
     "",
-    `The analysis already written for ${SIDE_WORDS[side].thesis} (narrative, drivers):`,
+    `The analysis already written (the narrative, a ${analysis.side === "short" ? "short: optimistic" : "long: pessimistic"} story, and its drivers, each one a Price Driver the market trades the stock on):`,
     JSON.stringify(analysis, null, 1),
     "",
     "Exhibits available (charts drawn from the stored data), cite each where it supports the text by writing [EXHIBIT n] on its own line:",
-    exhibits.map((e) => `EXHIBIT ${e.number}: ${e.title}: ${e.takeaway}`).join("\n"),
+    exhibits.map((e) => `EXHIBIT ${e.number}: ${e.title}: ${e.takeaway}`).join("\n") || "none",
     "",
     `Write the Research Report on ${name}: 900 to 1,400 words, markdown, these sections as ## headings, in order:`,
     "Executive Summary, Industry, Business Overview, Economics, Expectations, Management, Capital & float, Valuation, Catalysts, Risks.",
@@ -107,21 +92,25 @@ const isStr = (v: unknown): v is string => typeof v === "string" && v.trim() !==
 
 /**
  * The model's analysis, typed. Shape errors fail loud (the fetch fails, the Data page shows it, the next run asks
- * again). Exhibit series are matched against the stored ones by the caller.
+ * again). `labels` = the Price Driver labels of the prompt and the id each stands for: a driver naming an unknown label
+ * is dropped (never guessed), a label named twice keeps its first driver; a Price Driver left out is the caller's to see
+ * (`missingDrivers`). Exhibit series are matched against the stored ones by the caller.
  */
-export function parseAnalysis(text: string): AnalysisAnswer {
+export function parseAnalysis(text: string, labels: Map<string, string>): AnalysisAnswer {
   const o = JSON.parse(firstJsonObject(text)) as Record<string, unknown>;
+  if (o.side !== "long" && o.side !== "short") throw new Error(`analysis: side "${String(o.side)}" is not long or short`);
   if (!isStr(o.narrative)) throw new Error("analysis: no narrative");
-  const drivers = Array.isArray(o.drivers) ? (o.drivers as Record<string, unknown>[]) : [];
-  if (drivers.length === 0) throw new Error("analysis: no narrative driver");
-  return {
-    narrative: stripDashes(o.narrative),
-    narrativeDetail: isStr(o.narrativeDetail) ? stripDashes(o.narrativeDetail) : null,
-    drivers: drivers.slice(0, 5).map((d, i) => {
-      const category = DRIVER_CATEGORIES.find((c) => c === d.category);
-      if (!category) throw new Error(`analysis: driver ${i + 1} category "${String(d.category)}" is not a Driver Category`);
-      if (!isStr(d.title) || !isStr(d.text)) throw new Error(`analysis: driver ${i + 1} has no title or text`);
-      return {
+  const seen = new Set<string>();
+  const drivers = (Array.isArray(o.drivers) ? (o.drivers as Record<string, unknown>[]) : []).flatMap((d, i) => {
+    const kpiDriverId = labels.get(String(d.priceDriver ?? "").trim());
+    if (!kpiDriverId || seen.has(kpiDriverId)) return [];
+    seen.add(kpiDriverId);
+    const category = DRIVER_CATEGORIES.find((c) => c === d.category);
+    if (!category) throw new Error(`analysis: driver ${i + 1} category "${String(d.category)}" is not a Driver Category`);
+    if (!isStr(d.title) || !isStr(d.text)) throw new Error(`analysis: driver ${i + 1} has no title or text`);
+    return [
+      {
+        kpiDriverId,
         category,
         title: stripDashes(d.title),
         summary: isStr(d.summary) ? stripDashes(d.summary) : null,
@@ -129,17 +118,18 @@ export function parseAnalysis(text: string): AnalysisAnswer {
         exhibits: (Array.isArray(d.exhibits) ? (d.exhibits as Record<string, unknown>[]) : []).map(
           (e): ExhibitSpec => ({ title: stripDashes(String(e.title ?? "")), chart: e.chart === "line" ? "line" : "bar", series: Array.isArray(e.series) ? e.series.map(String) : [], takeaway: stripDashes(String(e.takeaway ?? "")) }),
         ),
-        // The move dates as written; `bindMoves` turns them into stored move ids and drops the unknown ones.
-        moveIds: (Array.isArray(d.moves) ? d.moves : []).map((m) => String(m).trim()),
-      };
-    }),
-  };
+        moveIds: [],
+      },
+    ];
+  });
+  if (drivers.length === 0) throw new Error("analysis: no narrative driver names a Price Driver of the list");
+  return { side: o.side, sideWhy: isStr(o.sideWhy) ? stripDashes(o.sideWhy) : null, narrative: stripDashes(o.narrative), narrativeDetail: isStr(o.narrativeDetail) ? stripDashes(o.narrativeDetail) : null, drivers };
 }
 
-/** Keeps only the moves the facts listed: a date becomes `<symbol>:<date>`; an unknown one is dropped (like an Exhibit key). */
-export function bindMoves(a: AnalysisAnswer, symbol: string, known: Set<string>): AnalysisAnswer {
-  const idOf = (m: string) => (m.startsWith(`${symbol}:`) ? m : `${symbol}:${m.replace(/^\[?move\s*/i, "").replace(/\]$/, "")}`);
-  return { ...a, drivers: a.drivers.map((d) => ({ ...d, moveIds: [...new Set((d.moveIds ?? []).map(idOf))].filter((id) => known.has(id)) })) };
+/** The Price Driver labels the answer gave no Narrative Driver for. */
+export function missingDrivers(a: AnalysisAnswer, labels: Map<string, string>): string[] {
+  const got = new Set(a.drivers.map((d) => d.kpiDriverId));
+  return [...labels].filter(([, id]) => !got.has(id)).map(([l]) => l);
 }
 
 export const RATIONALE_SYSTEM = [

@@ -11,7 +11,9 @@ import { analysedSymbols } from "../watchlist";
 import { firstJsonObject } from "@/llm/judge";
 import { itemsOf, type EvidenceItem } from "./items";
 import { narrativeSinceOf, sinceCap } from "../narrative-since/since";
-import { priceAndFairValue, SIDE, thesisId } from "../analysis/sides";
+import { marketLine, priceAndFairValue, SIDE, thesisId } from "../analysis/thesis";
+
+export { marketLine };
 import { reactionLine } from "../market-reaction/compute";
 import { reactionsOf } from "../market-reaction";
 
@@ -51,20 +53,12 @@ type Drivers = {
   market: Awaited<ReturnType<typeof priceAndFairValue>>;
 };
 
-/** One thesis' narrative and drivers (rank order), with today's price and fair value. */
+/** The narrative and its drivers (rank order; each one a trusted Price Driver since 2026-11-24), with today's price and fair value. */
 export async function driversOf(db: Db, symbol: string, side: ThesisSide): Promise<Drivers | null> {
   const drivers = (await db.select().from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.side, side)))).sort((a, b) => a.rank - b.rank);
   const [n] = await db.select().from(narratives).where(eq(narratives.id, thesisId(symbol, side)));
   if (drivers.length === 0 || !n) return null;
   return { side, version: n.version, drivers, narrative: n.text, gapPct: await gapOf(db, symbol), market: await priceAndFairValue(db, symbol) };
-}
-
-const px = (x: number) => (x >= 100 ? x.toFixed(0) : x.toFixed(2));
-/** Where the price sits today vs the fair value and its range, for every judge. */
-export function marketLine(m: Drivers["market"]): string {
-  if (!m) return "Today: no comparable quote and fair value.";
-  const range = m.fv.low !== null && m.fv.high !== null ? ` (range ${px(m.fv.low)} to ${px(m.fv.high)})` : "";
-  return `Today (${m.stamp}): price ${px(m.price)} ${m.currency ?? ""}, fair value ${px(m.fv.value)}${range}, the price ${((m.price / m.fv.value - 1) * 100).toFixed(1)}% vs the fair value.`;
 }
 
 /** quote / fair value - 1 from gold (same currency only), or null. */
@@ -220,7 +214,7 @@ export const evidenceSource: Source = {
 
 export const evidenceDim: Dimension = {
   name: EVIDENCE_DIMENSION,
-  description: "Every news item and filing of the last 12 months, judged against EACH Narrative Driver of each thesis with the fair value and what the price did around it: reversal / continuation (strong or weak) or noise, why, how much the price already moved, and the Exhibit that shows it. Once per driver: an item is judged again only when the reason changes.",
+  description: "Every news item and filing of the last 12 months, judged against EACH Narrative Driver of the ticker's narrative (one per trusted Price Driver) with the fair value and what the price did around it: reversal / continuation (strong or weak) or noise, why, how much the price already moved, and the Exhibit that shows it. Once per driver: an item is judged again only when the reason changes.",
   sources: [evidenceSource],
   subjects: pendingSubjects,
   promote: async (db): Promise<PromoteResult> => ({ silverRowsBySource: { claude: await rebuildEvidence(db) } }),

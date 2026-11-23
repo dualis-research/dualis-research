@@ -9,7 +9,7 @@ vi.mock("@/console/moves-chart", () => ({ MovesChart: ({ verdicts }: { verdicts?
 vi.mock("@/console/driver-steps-charts", () => ({ EventsTimeline: () => createElement("div", null, "timeline") }));
 vi.mock("@/console/kpi-queries", () => ({ proofData: async () => null }));
 
-/** PROOF-STRUCTURE-1123: the three sections of the whiteboard, closed, each title carrying its conclusion. */
+/** PROOF-STRUCTURE-1123 + the narrative step (2026-11-24): four sections, closed, each title carrying its conclusion. */
 
 const S = "1161.HK";
 const move = (id: string, startDay: string, direction: "up" | "down") => ({ id, startDay, endDay: startDay, direction, abnormal: direction === "up" ? 0.11 : -0.09, bench: "Hang Seng" });
@@ -30,21 +30,44 @@ const kpi = (rank: number, name: string, kind: GoldKpiDriver["kind"], level: Gol
 const kpis = [
   kpi(1, "Commercial rent levels", "industry", "none", { rows: [row(events[1], true, false, "invalidates", "market")], foundIn: [events[1].id] }),
   kpi(2, "Net income", "kpi", "strong", {
-    reversal: { intrinsic: { state: "reversing", period: null, why: "Profit doubled after two years of decline." }, leading: { probability: "high", why: "Bookings were full before the holiday.", events: [{ id: events[0].id, day: events[0].day, kind: "news", title: events[0].title, sourceId: "n1", url: events[0].url }] }, strength: "strong", direction: "up", why: "Profit is turning up." },
+    reversal: {
+      intrinsic: { state: "reversing-up", period: null, why: "Profit doubled after two years of decline." },
+      leading: { probability: "high", why: "Bookings were full before the holiday.", events: [{ id: events[0].id, day: events[0].day, kind: "news", title: events[0].title, sourceId: "n1", url: events[0].url }] },
+      strength: "strong",
+      direction: "up",
+      why: "Profit is turning up.",
+      side: "long",
+      stance: "against",
+      turn: "inflection",
+      durability: "structural",
+      magnitude: { figure: "Net income", from: "HK$32M", to: "HK$60M", change: "+88%", size: "material" },
+      pricedIn: "partly",
+      citations: [{ documentId: "d1", page: 3, quote: "bookings for the Lunar New Year were full", title: "Interim results" }],
+    },
   }),
-  kpi(3, "Hong Kong revenue", "kpi", "weak"),
+  // A weak driver the judge reads as going WITH the story, and whose own figure keeps falling.
+  kpi(3, "Hong Kong revenue", "kpi", "weak", { reversal: { intrinsic: { state: "continuing-to-fall", period: null, why: "Revenue fell again." }, leading: { probability: "none", why: "Nothing recent.", events: [] }, strength: "none", direction: "down", why: "Revenue keeps falling, as the market assumes.", side: "long", stance: "with", turn: null } }),
 ];
-const data = { events, arrows, kpis, chart: { price: [], beta: 1, indexName: "Hang Seng", windowEnd: (d: string) => d }, industryNews: new Set(["n2"]) };
+const narrative = { side: "long" as const, text: "The market prices Water Oasis as a flat, mature chain.", sideWhy: "The price sits a third under the fair value while profit halved.", drivers: [{ id: `${S}:long:1`, kpiDriverId: `${S}:kpi:2`, category: "Business economics" as const, title: "Profit is seen as stuck after the rent shock", summary: "The market assumes profit stays low." }] };
+const data = { events, arrows, kpis, narrative, chart: { price: [], beta: 1, indexName: "Hang Seng", windowEnd: (d: string) => d }, industryNews: new Set(["n2"]) };
 
 describe("the proof structure of a stock's Price Drivers", async () => {
-  const { ProofView, ConfidenceBody, reversalWords } = await import("./proof");
+  const { ProofView, ConfidenceBody, ReversalBody } = await import("./proof");
+  const { reversalWord } = await import("@/content/reversal-words");
   const html = renderToStaticMarkup(createElement(ProofView, { symbol: S, data }));
 
-  it("shows exactly the three sections, in order, each title with its conclusion, all closed", () => {
+  it("shows the four sections, in order, each title with its conclusion, all closed", () => {
     const at = (t: string) => html.indexOf(t);
     expect(at("1 · Price Driver Candidates")).toBeGreaterThan(-1);
     expect(at("1 · Price Driver Candidates")).toBeLessThan(at("2 · Confidence"));
-    expect(at("2 · Confidence")).toBeLessThan(at("3 · Reversals"));
+    expect(at("2 · Confidence")).toBeLessThan(at("3 · Narrative"));
+    expect(at("3 · Narrative")).toBeLessThan(at("4 · Reversals"));
+    // The narrative's title carries its side and its sentence; its body the model's why and the Price Drivers it rests on.
+    expect(html).toContain("Pessimistic: ");
+    expect(html).toContain("The market prices Water Oasis as a flat, mature chain.");
+    expect(html).toContain("The price sits a third under the fair value while profit halved.");
+    expect(html).toContain("Profit is seen as stuck after the rent shock");
+    expect(html).toContain(encodeURIComponent(`kdriver:${S}:kpi:2`));
     expect(html).toContain("3 found");
     expect(html).toContain("1 strong, 1 weak");
     expect(html).toContain("Net income: strong inflection");
@@ -82,9 +105,27 @@ describe("the proof structure of a stock's Price Drivers", async () => {
     expect(one).toContain("C · Both moved");
   });
 
-  it("reads a reversal as an inflection or a crack from which way the price should go", () => {
-    expect(reversalWords({ expected: "up", reversal: kpis[1].reversal })).toEqual({ word: "Strong inflection", variant: "success" });
-    expect(reversalWords({ expected: "down", reversal: kpis[1].reversal }).word).toBe("Strong crack");
-    expect(reversalWords({ expected: "up", reversal: null }).word).toBe("No reversal");
+  it("words a reversal from what the judge stored: its own direction, and the turn against the narrative; never from `expected`", () => {
+    expect(reversalWord(kpis[1].reversal)).toEqual({ word: "Strong inflection", variant: "success" });
+    // The same driver with the price expected to go the other way reads the same: `expected` plays no part.
+    expect(reversalWord({ ...kpis[1].reversal!, side: "short", turn: "crack", strength: "weak" })).toEqual({ word: "Weak crack", variant: "warning" });
+    expect(reversalWord(kpis[2].reversal).word).toBe("With the story");
+    expect(reversalWord({ ...kpis[2].reversal!, stance: "none" }).word).toBe("No reversal");
+    expect(reversalWord(null).word).toBe("Not assessed yet");
+    // A reading stored before the narrative step (v1: no stance) is said so, never guessed.
+    expect(reversalWord({ intrinsic: { state: "reversing", period: null, why: "w" }, leading: { probability: "none", why: "w", events: [] }, strength: "strong", direction: "up", why: "w" }).word).toBe("Not read against the narrative yet");
+    const up = renderToStaticMarkup(createElement(ReversalBody, { symbol: S, k: kpis[1] }));
+    expect(up).toContain("Reversing up");
+    // Whether it lasts, how big, how much is priced in: small badges beside the bottom line.
+    for (const t of ["Structural", "Net income: HK$32M to HK$60M (+88%) · Material", "Partly in the price"]) expect(up).toContain(t);
+    // The quote itself opens its page (one click on the quote).
+    expect(up).toContain(encodeURIComponent("doc:d1:3:bookings for the Lunar New Year were full"));
+    expect(up).toContain("« bookings for the Lunar New Year were full »");
+    const down = renderToStaticMarkup(createElement(ReversalBody, { symbol: S, k: kpis[2] }));
+    expect(down).toContain("Continuing to fall");
+    expect(down).not.toContain("In the company");
+    for (const [state, word] of [["continuing-to-rise", "Continuing to rise"], ["reversing-down", "Reversing down"], ["flat", "Flat"]] as const) {
+      expect(renderToStaticMarkup(createElement(ReversalBody, { symbol: S, k: { ...kpis[1], reversal: { ...kpis[1].reversal!, intrinsic: { ...kpis[1].reversal!.intrinsic, state } } } }))).toContain(word);
+    }
   });
 });

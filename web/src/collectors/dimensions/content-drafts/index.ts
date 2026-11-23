@@ -1,7 +1,8 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { evidence, type ExhibitPoint, type ExhibitSeries, exhibits, narrativeDrivers, narratives, narrativeStates, signalChanges, signals } from "@/db/schema/analysis";
+import { evidence, type ExhibitPoint, type ExhibitSeries, exhibits, kpiDrivers, narrativeDrivers, narratives, signalChanges, signals } from "@/db/schema/analysis";
 import { formatUnit, periodLabel, seriesPeriod } from "../../../console/exhibit-format";
-import { PRICED_WORD, signalWords, tagWord } from "@/content/signal-words";
+import { PRICED_WORD, signalWords } from "@/content/signal-words";
+import { reversalHeadline, reversalWord } from "@/content/reversal-words";
 import type { BronzeFetch } from "@/db/schema/bronze";
 import * as content from "@/db/schema/content";
 import type { DraftChart, DraftInputs } from "@/db/schema/content";
@@ -15,7 +16,7 @@ import { voiceGuides } from "../content-voices";
 import { chartOptions, type ChartOption } from "./charts";
 import { DRAFT_FORMATS, type DraftFormat, draftPrompt, draftSystem, type IdeaContext, parseGeneration, PROMPT_VERSION, withDisclaimer } from "./format";
 
-import { publicSide } from "../analysis/sides";
+import { publicSide } from "../analysis/thesis";
 export const DRAFTS_DIMENSION = "content-drafts";
 export const CLAUDE_SOURCE = "claude";
 
@@ -70,13 +71,14 @@ export async function ideaContext(db: Db, idea: content.SilverContentIdea, symbo
   const evidenceIds = refs("evidence");
   const driverIds = refs("driver");
   const changeIds = refs("change");
-  const [narrs, [s], ev, drv, ch, states] = await Promise.all([
+  const [narrs, [s], ev, drv, ch, pds] = await Promise.all([
     db.select().from(narratives).where(eq(narratives.symbol, symbol)),
     db.select().from(signals).where(eq(signals.symbol, symbol)),
     evidenceIds.length ? db.select().from(evidence).where(inArray(evidence.id, evidenceIds)) : [],
     db.select().from(narrativeDrivers).where(driverIds.length ? inArray(narrativeDrivers.id, driverIds) : eq(narrativeDrivers.symbol, symbol)),
     changeIds.length ? db.select().from(signalChanges).where(inArray(signalChanges.id, changeIds)) : [],
-    db.select().from(narrativeStates).where(and(eq(narrativeStates.symbol, symbol), eq(narrativeStates.level, "driver"))),
+    // Where each driver stands = its Price Driver's reversal against the narrative (kpi-reversal).
+    db.select({ id: kpiDrivers.id, reversal: kpiDrivers.reversal }).from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)),
   ]);
   const side = publicSide(s, narrs);
   const n = narrs.find((x) => x.side === side);
@@ -89,11 +91,11 @@ export async function ideaContext(db: Db, idea: content.SilverContentIdea, symbo
     figures: figureLines(charts),
     evidence: ev.map((e) => ({ headline: e.headline, publisher: e.publisher, day: e.eventDay, why: e.why, url: e.url })),
     drivers: shown.map((d) => {
-      const st = states.find((x) => x.driverId === d.id);
+      const st = pds.find((x) => x.id === d.kpiDriverId)?.reversal ?? null;
       return {
         title: d.title,
         summary: d.summary,
-        state: st ? { word: tagWord(st.effect, st.strength, st.side), since: st.since, headline: st.headline, pricedIn: st.pricedIn ? (PRICED_WORD[st.pricedIn] ?? null) : null } : null,
+        state: st ? { word: reversalWord(st).word, since: null, headline: reversalHeadline(st), pricedIn: st.pricedIn ? (PRICED_WORD[st.pricedIn] ?? null) : null } : null,
       };
     }),
     signalChanges: ch.map((c) => ({ label: `${c.fromSignal} ${c.fromStrength} to ${c.toSignal} ${c.toStrength} on ${utcDay(c.at)}`, note: c.updateNote })),

@@ -23,9 +23,8 @@ import { fxDim } from "./dimensions/fx";
 import { evidenceDim } from "./dimensions/evidence";
 import { marketReactionDim } from "./dimensions/market-reaction";
 import { moveCausesDim } from "./dimensions/move-causes";
-import { driverConfidenceDim } from "./dimensions/driver-confidence";
 import { kpiDriversDim } from "./dimensions/kpi-drivers";
-import { narrativeStateDim } from "./dimensions/narrative-state";
+import { kpiReversalDim } from "./dimensions/kpi-reversal";
 import { narrativeSinceDim } from "./dimensions/narrative-since";
 import { signalsDim } from "./dimensions/signals";
 import { signalAlertsDim } from "./dimensions/signal-alerts";
@@ -60,7 +59,8 @@ import type { Dimension } from "./types";
  * Portfolio right after watchlist: Thierry's positions (his posts + console edits); price also fetches the S&P 500 (`^GSPC`) the Portfolio page compares against.
  * FX (daily exchange rates, Yahoo) after peers, before valuation: a fair value computed in the reporting currency is shown in the quote currency.
  * Move causes after market-reaction (beside narrative-since): what caused each significant price move it found (business fact, macro, technical), from the news and filings around it.
- * Peers (comparables + analyst targets) after consensus; Valuation (the fair value pyramid) after peers; Analysis after valuation (it reads the Fair Value; one thesis below or above the fair value range, both inside it); Market Reaction beside it (the fair value history and what the price did around each news, code only); Narrative Since after analysis (the month the current story took hold); Evidence after it (every item since that month against each driver, older ones Too old); Narrative State after it (each driver's tag, then the ticker's); Signals last (fair value x the ticker's tag).
+ * Peers (comparables + analyst targets) after consensus; Valuation (the fair value pyramid) after peers; Market Reaction after it (the fair value history, the unusual weeks and the events, code only), then Move causes.
+ * One chain of reasoning since 2026-11-24 (Kevin): KPI drivers (Price Driver Candidates and their confidence) BEFORE the analysis; Analysis writes ONE narrative on the trusted Price Drivers and decides its side (it reads the price, the Fair Value and its history); KPI reversal after it (each trusted Price Driver read against the narrative); Narrative Since beside it (the month the story took hold); Evidence after (every item since that month against each driver, older ones Too old); Signals last (the narrative's side x the strongest reversal against it).
  * Cover photos right after content-posts: one photo per own article for the website covers.
  * Content ideas after content-voices (the day's Ideas, scored per channel x format); content-picks after it files the day's 2 posts (best X post, best Substack Note); content-drafts after it writes the drafts Thierry asked for and the picks; content-visuals after it draws each drafted Idea's chart, card, video and news capture.
  * Intraday price (5-minute bars, Yahoo) alone in its stage right after price (Yahoo rate limit): it moves gold.quotes to the latest 5-minute price, so EV, valuation, every judge and the live test read the real price, and market reaction the price at the minute a news item lands.
@@ -75,7 +75,7 @@ import type { Dimension } from "./types";
  * (every watchlist ticker); it judges each new item once and sends the morning email. A merge never runs it.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, driverConfidenceDim, kpiDriversDim, analysis, narrativeSinceDim, evidenceDim, narrativeStateDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, kpiDriversDim, analysis, kpiReversalDim, narrativeSinceDim, evidenceDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts): the daily schedule only. A deploy's
@@ -89,8 +89,7 @@ export const GROWTH_DIMENSIONS: readonly string[] = ["content-accounts", "conten
  * consensus, financials, peers) sit in different stages so they never hit its rate limit together.
  */
 /** Dimensions that run only when named: never part of `all`, `core` or `growth`. */
-/** kpi-drivers runs only when named while it is tested on one ticker (Kevin 2026-11-19: « un seul ticker… jusqu'à ce qu'on ait qqchose de convaincant »). */
-export const ON_DEMAND_DIMENSIONS: readonly string[] = ["x-publish", "kpi-drivers", "daily-email"];
+export const ON_DEMAND_DIMENSIONS: readonly string[] = ["x-publish", "daily-email"];
 
 export const STAGES: readonly (readonly string[])[] = [
   ["watchlist"],
@@ -104,22 +103,22 @@ export const STAGES: readonly (readonly string[])[] = [
   ["peers"],
   ["fx"],
   ["valuation"],
-  // The analysis reads the moves the market made on the business (INFLECTION-1117): their causes are judged first.
+  // The unusual weeks and the events, then ONE verdict per week: what the Price Drivers are read in.
   ["market-reaction"],
   ["move-causes"],
+  // Price Driver Candidates and their confidence (its judgments are stored once per input: an unchanged run asks nothing).
+  ["kpi-drivers"],
+  // ONE narrative per ticker, written on the trusted Price Drivers; the model decides its side (Kevin 2026-11-24).
   ["analysis"],
-  // How far each driver can be trusted (Kevin 2026-11-19): only strong and weak drivers get a Driver Signal.
-  ["narrative-since", "driver-confidence"],
+  // Each trusted Price Driver read against the narrative; the month the story took hold beside it.
+  ["kpi-reversal", "narrative-since"],
   ["evidence"],
-  ["narrative-state"],
   ["signals"],
   ["signal-alerts"],
-  // On demand, but its texts get their bold in the same run (Kevin 2026-11-23: the KPI driver reason had none).
-  ["kpi-drivers"],
   // Bold on the texts the analysis chain just wrote (Kevin 2026-11-23); the Ideas get theirs on the next run.
   ["emphasis"],
   ...GROWTH_DIMENSIONS.map((d) => [d]),
-  ...ON_DEMAND_DIMENSIONS.filter((d) => d !== "kpi-drivers").map((d) => [d]),
+  ...ON_DEMAND_DIMENSIONS.map((d) => [d]),
 ];
 
 /** The dimensions to run, grouped by stage, in order. */
@@ -145,8 +144,6 @@ export function dimensionsFor(arg: string): readonly Dimension[] {
     const i = DIMENSIONS.indexOf(dimensionByName(arg.slice(5)));
     return DIMENSIONS.slice(i).filter((d) => d === DIMENSIONS[i] || (!GROWTH_DIMENSIONS.includes(d.name) && !ON_DEMAND_DIMENSIONS.includes(d.name)));
   }
-  // A KPI test writes prose the console shows in bold: the bold pass closes the run.
-  if (arg === "kpi-drivers") return [dimensionByName(arg), dimensionByName("emphasis")];
   return [dimensionByName(arg)];
 }
 

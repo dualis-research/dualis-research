@@ -4,7 +4,7 @@ import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
 import { driversOf } from "../evidence";
-import { parseThesisId, SIDE } from "../analysis/sides";
+import { parseThesisId, SIDE } from "../analysis/thesis";
 import { analysedSymbols } from "../watchlist";
 import { narrativeSinceOf, SINCE_SUBJECT_KIND, sinceChoices, sinceKey } from "./since";
 

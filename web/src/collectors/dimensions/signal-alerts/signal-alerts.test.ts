@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { exhibits, narrativeStates, signalChanges } from "@/db/schema/analysis";
+import { exhibits, signalChanges } from "@/db/schema/analysis";
+import { reversal, setReversal } from "@/test/price-drivers";
 import * as content from "@/db/schema/content";
 import { priceBars } from "@/db/schema/gold";
 import { fairValues } from "@/db/schema/analysis";
@@ -30,7 +31,8 @@ beforeEach(async () => {
   const days = Array.from({ length: 30 }, (_, i) => new Date(Date.now() - (30 - i) * 86400_000).toISOString().slice(0, 10));
   await db.insert(priceBars).values(days.map((date, i) => ({ symbol: "CCLD", date, close: 3 + i / 30, sources: ["yahoo"], observations: [], alternatives: [] })) as never);
   await db.insert(fairValues).values({ symbol: "CCLD", value: 6, currency: "USD", low: 4.5, high: 8, author: "claude", inputs: [] });
-  await db.insert(narrativeStates).values({ id: "CCLD:long:1", symbol: "CCLD", side: "long", level: "driver", driverId: "CCLD:long:1", effect: "reversal", strength: "strong", why: "w", probability: 0.9, evidenceIds: [], headline: "New client signed", since: "2026-11-05", pricedIn: "partly", judgmentId: crypto.randomUUID(), asOf: new Date() });
+  // The Price Driver behind the driver turns against the pessimistic story (kpi-reversal).
+  await setReversal(db, "CCLD", reversal("long", { headline: "New client signed", pricedIn: "partly" }));
   await db.insert(whatsappLink).values({ id: "default", status: "linked" });
 });
 afterEach(async () => close());
@@ -97,21 +99,21 @@ describe("signal-alerts", () => {
   });
 
   it("the picture and caption show the signal, the story, the reported figure that breaks it and each driver's Status; never a fair value (Thierry 2026-11-16)", async () => {
-    await db.update(narrativeStates).set({ headline: "Q3 revenue $46.0M, up from $40.0M a year earlier" });
+    await setReversal(db, "CCLD", reversal("long", { pricedIn: "partly" }));
     const quarters = ["2025-09-30", "2025-12-31", "2026-03-31", "2026-06-30", "2026-09-30"];
     await db.insert(exhibits).values({ id: "CCLD:long:1:1", symbol: "CCLD", driverId: "CCLD:long:1", rank: 1, number: 1, title: "Revenue per quarter", chart: "bar", series: [{ key: "q:revenue", label: "Revenue", unit: "currency", currency: "USD", sources: ["sec"] }], points: quarters.map((period, i) => ({ period, values: { "q:revenue": [40, 41, 43, 44, 46][i] * 1e6 } })), takeaway: "t", sources: ["sec"] });
     const judge = async () => ({ text: JSON.stringify({ verdict: "2025-09-30", probability: 0.9, cited_sentence: null, reason: "a year earlier" }), model: "fake" });
     const input = await alertInput(db, change("CCLD", ["SELL", "weak"], ["BUY", "strong"]), judge);
     expect(input.side).toBe("long");
     expect(input.narrative).toBe("The market thinks CCLD lost its biggest client.");
-    expect(input.drivers).toEqual([{ category: "Business economics", title: "Client loss", summary: "Revenue fell 20%.", state: { effect: "reversal", strength: "strong", headline: "Q3 revenue $46.0M, up from $40.0M a year earlier", since: "2026-11-05", pricedIn: "partly" } }]);
+    expect(input.drivers).toEqual([{ category: "Business economics", title: "Client loss", summary: "Revenue fell 20%.", state: { effect: "reversal", strength: "strong", headline: "Q3 revenue $46.0M, up from $40.0M a year earlier", since: null, pricedIn: "partly" } }]);
     expect(input.breaks.map((b) => [b.driver, b.headline, b.base])).toEqual([["Client loss", "Q3 revenue $46.0M, up from $40.0M a year earlier", "2025-09-30"]]);
     const cmp = comparison(input.breaks[0])!;
     expect(cmp.periods).toEqual(["2025-09-30", "2026-09-30"]);
     expect(cmp.text).toMatch(/→ .* \(\+15%\)$/);
     expect(JSON.stringify(input)).not.toMatch(/fair|quote/i);
     const svg = alertSvg(input);
-    for (const t of ["CareCloud", "BUY", "Strong inflection", "was SELL (weak crack)", "THE MARKET BELIEVES", "lost its biggest client", "THE REPORTED FIGURE", "Q3 revenue $46.0M, up from $40.0M a year earlier", "Revenue per quarter", "(+15%)", "NARRATIVE DRIVERS", "Client loss", "Since 5 Nov 2026", "Partly in the price", "Not investment advice"]) {
+    for (const t of ["CareCloud", "BUY", "Strong inflection", "was SELL (weak crack)", "THE MARKET BELIEVES", "lost its biggest client", "THE REPORTED FIGURE", "Q3 revenue $46.0M, up from $40.0M a year earlier", "Revenue per quarter", "(+15%)", "NARRATIVE DRIVERS", "Client loss", "Partly in the price", "Not investment advice"]) {
       expect(svg).toContain(t);
     }
     expect(svg).not.toMatch(/fair value|Range |below fair|above fair|SELL zone|BUY zone|opportunity/i);
@@ -119,7 +121,7 @@ describe("signal-alerts", () => {
   });
 
   it("the caption carries the signal, the reported figure and the Update Note, never a gap", async () => {
-    await db.update(narrativeStates).set({ headline: "Q3 revenue $46.0M, up from $40.0M a year earlier" });
+    await setReversal(db, "CCLD", reversal("long", { pricedIn: "partly" }));
     await db.insert(exhibits).values({ id: "CCLD:long:1:1", symbol: "CCLD", driverId: "CCLD:long:1", rank: 1, number: 1, title: "Revenue per quarter", chart: "bar", series: [{ key: "q:revenue", label: "Revenue", unit: "currency", currency: "USD", sources: ["sec"] }], points: [{ period: "2026-09-30", values: { "q:revenue": 46e6 } }], takeaway: "t", sources: ["sec"] });
     await db.insert(signalChanges).values(change("CCLD", ["none", "noise"], ["BUY", "strong"]));
     await run();

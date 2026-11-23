@@ -3,7 +3,7 @@ import { withBold } from "./emphasis";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { SignalCall, SignalStrength } from "@/content/signal-words";
 import { getDb } from "@/db/client";
-import { driverConfidence, evidence as goldEvidence, exhibits, fairValues, marketReactions, narrativeDrivers, narrativeStates, priceMoveCauses, priceMoves, signals, type ThesisSide } from "@/db/schema/analysis";
+import { evidence as goldEvidence, exhibits, fairValues, kpiDrivers, marketReactions, narrativeDrivers, signals, type ThesisSide } from "@/db/schema/analysis";
 import { consensus } from "@/db/schema/consensus";
 import { companyProfiles, filings, priceBars, quotes, tickers } from "@/db/schema/gold";
 import { goldNewsItems } from "@/db/schema/news";
@@ -33,9 +33,9 @@ export type BoardRow = {
   gap: { pct: number; side: "below" | "above" } | null;
   call: SignalCall | null;
   strength: SignalStrength;
-  /** The ticker's tag as shown (Kevin 2026-11-06: "Weak inflection", never a bare "Weak"): the signal's reversal, else its only thesis' tag. */
+  /** The ticker's tag as shown (Kevin 2026-11-06: "Weak inflection", never a bare "Weak"): the signal's reversal, else its narrative's reading. */
   tag: { effect: string; strength: string } | null;
-  /** The thesis the tag reads on (long = Inflection, short = Crack): the signalling one, else the only one; null when two compete silently. */
+  /** The narrative's side the tag reads on (long = Inflection, short = Crack); null when no narrative is written yet. */
   side: ThesisSide | null;
   since: Date | null;
 };
@@ -170,39 +170,17 @@ export async function priceDetail(symbol: string) {
   return getDb().select().from(priceBars).where(eq(priceBars.symbol, symbol)).orderBy(asc(priceBars.date));
 }
 
-/** Level C: one Narrative Driver with its exhibits, its tag, and every news whose verdict against IT is not noise. */
+/** Level C: one Narrative Driver with the Price Driver it is about, its exhibits and every news whose verdict against IT is not noise. */
 export async function driverDetail(symbol: string, id: string) {
   const db = getDb();
-  const [[driver], xs, ev, [state], reactions] = await Promise.all([
+  const [[driver], xs, ev] = await Promise.all([
     db.select().from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.id, id))),
     db.select().from(exhibits).where(eq(exhibits.driverId, id)).orderBy(asc(exhibits.rank)),
     db.select().from(goldEvidence).where(eq(goldEvidence.symbol, symbol)).orderBy(desc(goldEvidence.eventAt)),
-    db.select().from(narrativeStates).where(eq(narrativeStates.id, id)),
-    db.select().from(marketReactions).where(eq(marketReactions.symbol, symbol)),
   ]);
   if (!driver) return null;
-  // The significant moves the market made on this reason (what made it a driver), newest first.
-  const moves = driver.moveIds.length
-    ? (await db.select().from(priceMoves).leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id)).where(inArray(priceMoves.id, driver.moveIds)).orderBy(desc(priceMoves.startDay))).map((r) => ({ ...r.price_moves, cause: r.price_move_causes }))
-    : [];
-  return withBold({ driver, exhibits: xs, evidence: ev.filter((e) => e.verdicts.some((v) => v.driverId === id && v.effect !== "noise")), state: state ?? null, side: driver.side, moves, reactions: new Map(reactions.map((r) => [r.id, r])) });
-}
-
-/**
- * Level C, Driver Temporal Confidence (Kevin 2026-11-19): the driver, how far it can be trusted, the moves it was found
- * from (its origin) and the later business moves it was tested on, each with its cause and the figure behind it.
- */
-export async function confidenceDetail(symbol: string, id: string) {
-  const db = getDb();
-  const [[driver], [confidence]] = await Promise.all([
-    db.select().from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.id, id))),
-    db.select().from(driverConfidence).where(eq(driverConfidence.id, id)),
-  ]);
-  if (!driver) return null;
-  const ids = [...new Set([...driver.moveIds, ...(confidence?.rows.map((r) => r.moveId) ?? [])])];
-  const moves = ids.length ? (await db.select().from(priceMoves).leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id)).where(inArray(priceMoves.id, ids))).map((r) => ({ ...r.price_moves, cause: r.price_move_causes })) : [];
-  const byId = new Map(moves.map((m) => [m.id, m]));
-  return withBold({ driver, confidence: confidence ?? null, origin: driver.moveIds.map((m) => byId.get(m)).filter((m) => !!m).sort((a, b) => a!.startDay.localeCompare(b!.startDay)) as typeof moves });
+  const [priceDriver] = driver.kpiDriverId ? await db.select().from(kpiDrivers).where(eq(kpiDrivers.id, driver.kpiDriverId)) : [];
+  return withBold({ driver, priceDriver: priceDriver ?? null, exhibits: xs, evidence: ev.filter((e) => e.verdicts.some((v) => v.driverId === id && v.effect !== "noise")), side: driver.side });
 }
 
 /** Level C: one Exhibit and the driver it supports. */

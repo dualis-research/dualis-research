@@ -8,6 +8,7 @@ import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import { itemsOf } from "../evidence/items";
 import { seriesCatalog, seriesMenu, type StoredSeries } from "./series";
+import { fairValueHistoryLine } from "./thesis";
 
 /**
  * Everything one analysis reads about a ticker, as plain text for the model, all from gold.
@@ -254,12 +255,14 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
   const fvLine = fairValue
     ? `Fair value (weighted from several valuation methods): ${fmt(fairValue.value, "per-share")} ${fairValue.currency ?? ""}${fairValue.low !== null && fairValue.high !== null ? `, range ${fmt(fairValue.low, "per-share")} to ${fmt(fairValue.high, "per-share")}` : ""}; ${fairValue.method ?? ""}.${vreport ? ` ${vreport.summary}` : ""}`
     : "Fair value: none yet (no valuation ran).";
+  // How the fair value moved (the model weighs it when it decides the side of the story): out of the hash, its bucket is in.
+  const fvHistory = await fairValueHistoryLine(db, symbol);
   const fvBucket = fairValue && fairValue.value > 0 ? Math.round(Math.log(fairValue.value) / Math.log(1.15)) : "none";
   const priceLine = q ? `Quote: ${fmt(q.close, "per-share")} ${q.currency ?? ""} (${q.stamp}); market cap at that price ${valuation?.marketCap ? fmt(valuation.marketCap) : "n/a"}, EV/EBITDA now ${fmt(valuation?.evEbitda, "multiple")}.` : "Quote: none.";
   const bucket = q && q.close > 0 ? Math.round(Math.log(q.close) / Math.log(1.15)) : "none";
   return {
     symbol,
-    text: `${priceLine}\n${fvLine}\n${stable}${leverage ? `\n\n${leverage}` : ""}${moves.text ? `\n\n${moves.text}` : ""}\n\n${news}`,
+    text: `${priceLine}\n${fvLine}\n${fvHistory}\n${stable}${leverage ? `\n\n${leverage}` : ""}${moves.text ? `\n\n${moves.text}` : ""}\n\n${news}`,
     hash: fnv(`${stable}\nprice-bucket:${bucket}\nfair-value-bucket:${fvBucket}`),
     catalog,
     quote: q,

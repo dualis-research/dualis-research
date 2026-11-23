@@ -10,7 +10,8 @@ import { valuationSyntheses } from "@/db/schema/valuation";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
-import { analysis, analysisSubjects, comparablePrice, currentSides } from "./dimensions/analysis";
+import { priceDriver, seedPriceDrivers } from "@/test/price-drivers";
+import { analysis, comparablePrice } from "./dimensions/analysis";
 import { gatherFacts } from "./dimensions/analysis/facts";
 import { deriveMetrics } from "./dimensions/financials/derive";
 import { fxDim, neededPairs, rateOn } from "./dimensions/fx";
@@ -20,7 +21,7 @@ import { watchlist } from "./dimensions/watchlist";
 import { runDimension } from "./runner";
 import type { SourceContext } from "./types";
 
-/** NO-NARRATIVE-1110: every ticker in the analysis scope gets its theses, or a failed fetch saying why. */
+/** NO-NARRATIVE-1110: every ticker in the analysis scope gets its narrative, or a failed fetch saying why. */
 const REPO_ROOT = resolve(__dirname, "../../..");
 const OBE = "OBE";
 const DAY = 86_400;
@@ -33,15 +34,17 @@ const yahooFx = (url: string) => {
 };
 
 const ANSWER = {
+  side: "long",
+  sideWhy: "The price sits inside the range but the market prices the debt, not the output.",
   narrative: "The market prices Obsidian as a small oil producer with too much debt.",
   narrativeDetail: "Its output grew while prices fell.",
-  drivers: [{ category: "Industry & cycle", title: "Oil prices set the cash flow", summary: "Cheaper oil means less cash.", text: "Revenue fell.", exhibits: [{ title: "Revenue", chart: "bar", series: ["line:revenue"], takeaway: "Down." }] }],
+  drivers: [{ priceDriver: "P1", category: "Industry & cycle", title: "Oil prices set the cash flow", summary: "Cheaper oil means less cash.", text: "Revenue fell.", exhibits: [{ title: "Revenue", chart: "bar", series: ["line:revenue"], takeaway: "Down." }] }],
 };
 let asked: string[] = [];
 const fake: Complete = async ({ prompt, system }) => {
   if (system.includes("equity research reports")) return { text: "## Summary\n[EXHIBIT 1]", model: "fake" };
   if (system.includes("WHY the market holds")) return { text: JSON.stringify({ summary: "Debt worries.", claims: [{ text: "Revenue fell in 2025.", drivers: [1], sources: [{ type: "exhibit", ref: "1", label: "Revenue" }] }], exhibits: [] }), model: "fake" };
-  asked.push(prompt.includes("Write the LONG thesis") ? "long" : "short");
+  asked.push(prompt.includes("Write the narrative of this ticker") ? "narrative" : "other");
   return { text: JSON.stringify(ANSWER), model: "fake" };
 };
 const ctx = (): SourceContext => ({ env: { REPO_ROOT, CLAUDE_OAUTH_TOKEN: "t" }, fetch: (async (u: string | URL) => yahooFx(String(u))) as typeof fetch, complete: fake });
@@ -66,17 +69,16 @@ beforeEach(async () => {
 afterEach(async () => close());
 
 describe("fair value and quote in different currencies (OBE: CAD statements, USD listing)", () => {
-  it("without a stored rate: no thesis asked, a failed fetch names the missing pair", async () => {
+  it("without a stored rate: no narrative asked, a failed fetch names the missing pair", async () => {
     await rebuildValuationGold(db);
     expect(await comparablePrice(db, OBE)).toEqual({ reason: "fair value in CAD, quote in USD: no CAD/USD exchange rate stored (dimension fx)" });
-    expect(await analysisSubjects(db)).toEqual([OBE]);
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
     const [row] = await db.select().from(bronze).where(and(eq(bronze.dimension, "analysis"), eq(bronze.subject, OBE)));
-    expect(row.error).toBe("no thesis: fair value in CAD, quote in USD: no CAD/USD exchange rate stored (dimension fx)");
+    expect(row.error).toBe("no narrative: fair value in CAD, quote in USD: no CAD/USD exchange rate stored (dimension fx)");
     expect(asked).toEqual([]);
   });
 
-  it("stores the CAD/USD rate (bronze -> silver -> gold), shows the fair value in USD with its conversion, and asks both theses", async () => {
+  it("stores the CAD/USD rate (bronze -> silver -> gold), shows the fair value in USD with its conversion, and asks ONE narrative", async () => {
     expect(await neededPairs(db)).toEqual(["CAD/USD"]);
     await runDimension(db, fxDim, { trigger: "test", ctx: ctx() });
     const rates = await db.select().from(gold.fxRates);
@@ -91,13 +93,13 @@ describe("fair value and quote in different currencies (OBE: CAD statements, USD
     expect(fv.high).toBeCloseTo(17.54 * 0.72, 6);
     expect(fv.conversion).toEqual({ from: "CAD", to: "USD", rate: 0.72, date: "2026-11-09", source: "yahoo", value: 13.4, low: 9.69, high: 17.54 });
 
-    // 9.22 USD sits inside the converted range (6.98 to 12.63 USD): both theses compete.
-    expect(await currentSides(db, OBE)).toEqual(["long", "short"]);
-    expect(await analysisSubjects(db)).toEqual([`${OBE}:long`, `${OBE}:short`]);
+    // 9.22 USD sits inside the converted range (6.98 to 12.63 USD): still ONE narrative, its side the model's call
+    // (two theses competed here before 2026-11-24).
+    await seedPriceDrivers(db, [priceDriver(OBE, 1, "Oil price realised")]);
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect((await db.select().from(bronze).where(eq(bronze.dimension, "analysis"))).map((r) => r.error)).toEqual([null, null]);
-    expect(asked.sort()).toEqual(["long", "short"]);
-    expect((await db.select().from(narratives)).map((n) => n.id).sort()).toEqual([`${OBE}:long`, `${OBE}:short`]);
+    expect((await db.select().from(bronze).where(eq(bronze.dimension, "analysis"))).map((r) => [r.subject, r.error])).toEqual([[OBE, null]]);
+    expect(asked).toEqual(["narrative"]);
+    expect((await db.select().from(narratives)).map((n) => n.id)).toEqual([`${OBE}:long`]);
 
     // The fair value history the judges read is in USD too, at that day's rate.
     await runDimension(db, marketReactionDim, { trigger: "test", ctx: ctx() });
@@ -119,10 +121,9 @@ describe("a ticker with no analysis possible", () => {
   it("writes a failed fetch with a readable reason, never a silent skip", async () => {
     await db.delete(valuationSyntheses);
     await rebuildValuationGold(db);
-    expect(await analysisSubjects(db)).toEqual([OBE]);
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
     const [row] = await db.select().from(bronze).where(and(eq(bronze.dimension, "analysis"), eq(bronze.subject, OBE)));
-    expect(row.error).toBe("no thesis: no fair value yet (the valuation produced none for this ticker)");
+    expect(row.error).toBe("no narrative: no fair value yet (the valuation produced none for this ticker)");
   });
 });
 

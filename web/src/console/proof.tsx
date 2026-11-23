@@ -1,6 +1,8 @@
-import { ArrowsDownUpIcon, CalendarDotsIcon, ChartBarIcon, CompassIcon, CrosshairIcon, GaugeIcon, LightbulbIcon, ListChecksIcon, MagnifyingGlassIcon, ScalesIcon, SealCheckIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowsDownUpIcon, BookOpenTextIcon, CalendarDotsIcon, ChartBarIcon, CompassIcon, CrosshairIcon, FileTextIcon, GaugeIcon, LightbulbIcon, ListChecksIcon, MagnifyingGlassIcon, ScalesIcon, SealCheckIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
 import { Badge } from "@cloudflare/kumo";
 import type { DriverReversal, GoldDriverEvent, GoldKpiDriver, KpiEventRow } from "@/db/schema/analysis";
+import { reversalWord, STATE_WORD, turnsAgainst } from "@/content/reversal-words";
+import { PRICED_WORD } from "@/content/signal-words";
 import { decodeEntities } from "@/collectors/dimensions/content-posts/parse";
 import { kpiChange, kpiValue, periodWords } from "@/collectors/dimensions/kpi-drivers/steps";
 import { ConfidenceBadge } from "./confidence-badge";
@@ -23,8 +25,9 @@ import { Sourced, SourcedFigure, sourceItemId } from "./sourced";
  * 1 · The search for Price Driver Candidates: (1) price movement, (2) events, (3) which event explains which week,
  *     (4) fundamental or not (ONE verdict per week), (5) the candidates read in the events.
  * 2 · Confidence of each candidate: tests A, B and C, the AI's level on top.
- * 3 · The Price Drivers in reversal: on its own latest value, through a leading indicator, the bottom line.
- * The same blocks render on the Analysis page, in the ticker panel and (2 then 3 of one driver) in the `kdriver:` panel.
+ * 3 · The Narrative written on the trusted Price Drivers: its side (the AI's call) and what the market believes about each.
+ * 4 · The Price Drivers in reversal, read against that narrative: its own direction, a leading indicator, the bottom line.
+ * The same blocks render on the Analysis page, in the ticker panel and (2 then 4 of one driver) in the `kdriver:` panel.
  */
 
 const KIND = { release: "Results", news: "News", filing: "Filing" } as const;
@@ -303,17 +306,9 @@ export function ConfidenceBody({ symbol, k, arrows }: { symbol: string; k: GoldK
   );
 }
 
-/** « Strong inflection » / « Weak crack »: a turn the price should follow up is an inflection, down a crack. */
-export function reversalWords(k: Pick<GoldKpiDriver, "expected" | "reversal">): { word: string; variant: "success" | "warning" | "neutral" } {
-  const r = k.reversal;
-  if (!r || r.strength === "none") return { word: "No reversal", variant: "neutral" };
-  const priceUp = r.direction === null ? null : (r.direction === "up") === (k.expected === "up");
-  const what = priceUp === null ? "reversal" : priceUp ? "inflection" : "crack";
-  return { word: `${r.strength === "strong" ? "Strong" : "Weak"} ${what}`, variant: r.strength === "strong" ? "success" : "warning" };
-}
-
-function ReversalBadge({ k }: { k: Pick<GoldKpiDriver, "expected" | "reversal"> }) {
-  const w = reversalWords(k);
+/** The bottom line as the judge stored it: « Strong inflection », « Weak crack », « No reversal » (against or with the narrative is its call). */
+function ReversalBadge({ k }: { k: Pick<GoldKpiDriver, "reversal"> }) {
+  const w = reversalWord(k.reversal);
   return (
     <Badge appearance="dot" variant={w.variant}>
       {w.word}
@@ -321,17 +316,29 @@ function ReversalBadge({ k }: { k: Pick<GoldKpiDriver, "expected" | "reversal"> 
   );
 }
 
-const STATE_WORD: Record<DriverReversal["intrinsic"]["state"], string> = { reversing: "Reversing", continuing: "Continuing", flat: "No change that matters" };
 const CHANCE_WORD: Record<DriverReversal["leading"]["probability"], string> = { high: "High chance it turns soon", medium: "Some chance it turns soon", low: "Low chance it turns soon", none: "No leading indicator" };
+const LASTING: Record<string, string> = { structural: "Structural", temporary: "Temporary" };
 
-/** Section 3 for one Price Driver: on its latest value, a leading indicator, then the bottom line. */
+/** Section 4 for one Price Driver: the bottom line with whether it lasts, how big and how much is priced in; then its own direction, a leading indicator, the documents. */
 export function ReversalBody({ symbol, k }: { symbol: string; k: GoldKpiDriver }) {
   const r = k.reversal;
   if (!trusted(k)) return <p className="text-base text-kumo-subtle">Not a trusted price driver: its reversal is not read.</p>;
   if (!r) return <p className="text-base text-kumo-subtle">Not assessed yet.</p>;
+  const m = r.magnitude;
+  const cites = r.citations ?? [];
+  const lasting = r.durability ? LASTING[r.durability] : undefined;
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-lg leading-snug text-kumo-strong"><Rich text={r.why} /></p>
+      <div className="flex flex-col gap-2">
+        <p className="text-lg leading-snug text-kumo-strong"><Rich text={r.why} /></p>
+        {(lasting || m || r.pricedIn) && (
+          <span className="flex flex-wrap items-center gap-2 text-sm text-kumo-subtle">
+            {lasting && <Badge variant="outline">{lasting}</Badge>}
+            {m && <Badge variant="outline">{`${m.figure}${m.from && m.to ? `: ${m.from} to ${m.to}` : ""}${m.change ? ` (${m.change})` : ""} · ${m.size === "material" ? "Material" : "Small"}`}</Badge>}
+            {r.pricedIn && <span>{PRICED_WORD[r.pricedIn]}</span>}
+          </span>
+        )}
+      </div>
       <Drawers>
         <Drawer icon={<GaugeIcon size={16} aria-hidden />} title={<Title name="On its latest value" conclusion={STATE_WORD[r.intrinsic.state]} />}>
           <PeriodStrip k={k} />
@@ -353,20 +360,53 @@ export function ReversalBody({ symbol, k }: { symbol: string; k: GoldKpiDriver }
             </ul>
           )}
         </Drawer>
+        {cites.length > 0 && (
+          <Drawer icon={<FileTextIcon size={16} aria-hidden />} title={<Title name="In the company's words" conclusion={plural(cites.length, "quote")} />}>
+            <ul className="flex flex-col gap-2">
+              {cites.map((c, i) => (
+                <li key={i} className="text-base leading-relaxed text-kumo-default">
+                  <Sourced symbol={symbol} item={docItemId(c.documentId, c.page, c.quote)}>{`« ${c.quote} »`}</Sourced>
+                </li>
+              ))}
+            </ul>
+          </Drawer>
+        )}
       </Drawers>
     </div>
   );
 }
 
-/** The three sections from loaded data (pure: the test renders it). */
+const SIDE_WORD = { long: "Pessimistic", short: "Optimistic" } as const;
+
+/** Section 3: why the story reads pessimistic or optimistic (the AI's call), then what the market believes about each Price Driver it rests on. */
+export function NarrativeBody({ symbol, narrative }: { symbol: string; narrative: NonNullable<ProofData["narrative"]> }) {
+  return (
+    <div className="flex flex-col gap-4">
+      {narrative.sideWhy && <p className="text-lg leading-snug text-kumo-strong"><Rich text={narrative.sideWhy} /></p>}
+      <ol className="flex flex-col">
+        {narrative.drivers.map((d) => (
+          <li key={d.id}>
+            <Link href={itemHref(symbol, d.kpiDriverId ? `kdriver:${d.kpiDriverId}` : `driver:${d.id}`)} scroll={false} className="-mx-3 flex flex-col gap-0.5 rounded-lg px-3 py-2.5 transition-colors hover:bg-kumo-tint">
+              <span className="text-base font-semibold text-kumo-strong">{d.title}</span>
+              {d.summary && <span className="text-sm text-kumo-default"><Rich text={d.summary} /></span>}
+              <span className="text-sm text-kumo-subtle">{d.category}</span>
+            </Link>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+/** The four sections from loaded data (pure: the test renders it). */
 export function ProofView({ symbol, data }: { symbol: string; data: ProofData }) {
-  const { events, arrows, kpis, chart, industryNews } = data;
+  const { events, arrows, kpis, chart, industryNews, narrative } = data;
   const ranked = [...kpis].sort((a, b) => LEVEL_RANK[a.level ?? "none"] - LEVEL_RANK[b.level ?? "none"] || a.rank - b.rank);
   const count = (l: "strong" | "weak") => kpis.filter((k) => k.level === l).length;
   const strong = count("strong");
   const weak = count("weak");
   const pds = ranked.filter(trusted);
-  const turning = pds.filter((k) => k.reversal && k.reversal.strength !== "none").sort((a, b) => LEVEL_RANK[a.reversal!.strength] - LEVEL_RANK[b.reversal!.strength]);
+  const turning = pds.filter((k) => turnsAgainst(k.reversal)).sort((a, b) => LEVEL_RANK[a.reversal!.strength] - LEVEL_RANK[b.reversal!.strength]);
   const industry = events.filter((e) => e.kind === "news" && industryNews.has(e.sourceId)).length;
   const verdicts = (["fundamental", "market", "unknown"] as const).map((w) => `${arrows.filter((a) => a.week === w).length} ${w}`).join(", ");
   const explained = arrows.filter((a) => a.week !== "unknown" && a.cites.length > 0).length;
@@ -402,9 +442,12 @@ export function ProofView({ symbol, data }: { symbol: string; data: ProofData })
           ))}
         </Drawers>
       </Drawer>
+      <Drawer icon={<BookOpenTextIcon size={18} aria-hidden />} title={<Title big name="3 · Narrative" conclusion={narrative ? <span><span className="font-semibold">{`${SIDE_WORD[narrative.side]}: `}</span><Rich text={narrative.text} /></span> : pds.length ? "Not written yet" : "No trusted price driver to write it on"} />}>
+        {narrative ? <NarrativeBody symbol={symbol} narrative={narrative} /> : <p className="text-base text-kumo-subtle">The narrative is written on the trusted price drivers.</p>}
+      </Drawer>
       <Drawer
         icon={<TrendUpIcon size={18} aria-hidden />}
-        title={<Title big name="3 · Reversals" conclusion={turning.length ? turning.slice(0, 2).map((k) => `${k.name}: ${reversalWords(k).word.toLowerCase()}`).join(" · ") : pds.length ? "No price driver is turning" : "No trusted price driver"} />}
+        title={<Title big name="4 · Reversals" conclusion={turning.length ? turning.slice(0, 2).map((k) => `${k.name}: ${reversalWord(k.reversal).word.toLowerCase()}`).join(" · ") : pds.length ? "No price driver is turning against the narrative" : "No trusted price driver"} />}
       >
         {pds.length ? (
           <Drawers>
@@ -422,14 +465,14 @@ export function ProofView({ symbol, data }: { symbol: string; data: ProofData })
   );
 }
 
-/** The Analysis page and the ticker panel: the three sections, closed. */
+/** The Analysis page and the ticker panel: the four sections, closed. */
 export async function ProofSections({ symbol }: { symbol: string }) {
   const data = await proofData(symbol);
   if (data.events.length === 0 && data.kpis.length === 0) return null;
   return <ProofView symbol={symbol} data={data} />;
 }
 
-/** The `kdriver:` panel: that driver's confidence (2), then its reversal (3), closed, each title carrying its conclusion. */
+/** The `kdriver:` panel: that driver's confidence (2), then its reversal (4), closed, each title carrying its conclusion. */
 export async function DriverProof({ symbol, k }: { symbol: string; k: GoldKpiDriver }) {
   const { arrows } = await proofData(symbol);
   return (
@@ -437,7 +480,7 @@ export async function DriverProof({ symbol, k }: { symbol: string; k: GoldKpiDri
       <Drawer icon={<SealCheckIcon size={16} aria-hidden />} title={<Title name="2 · Confidence" conclusion={<ConfidenceBadge level={!k.level || k.level === "none" ? "noise" : k.level} />} />}>
         <ConfidenceBody symbol={symbol} k={k} arrows={arrows} />
       </Drawer>
-      <Drawer icon={<TrendUpIcon size={16} aria-hidden />} title={<Title name="3 · Reversal" conclusion={trusted(k) ? <ReversalBadge k={k} /> : "Not a trusted price driver"} />}>
+      <Drawer icon={<TrendUpIcon size={16} aria-hidden />} title={<Title name="4 · Reversal" conclusion={trusted(k) ? <ReversalBadge k={k} /> : "Not a trusted price driver"} />}>
         <ReversalBody symbol={symbol} k={k} />
       </Drawer>
     </Drawers>

@@ -1,7 +1,8 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as content from "@/db/schema/content";
-import { exhibits, fairValues, narrativeStates } from "@/db/schema/analysis";
+import { exhibits, fairValues } from "@/db/schema/analysis";
+import { reversal, setReversal } from "@/test/price-drivers";
 import { judgments } from "@/db/schema/silver";
 import type { Complete } from "@/llm/complete";
 import * as gold from "@/db/schema/gold";
@@ -292,7 +293,7 @@ describe("the chart shouts (Kevin 2026-11-09)", () => {
 describe("the story-break frame (Thierry 2026-11-16: real figures, never our fair value)", () => {
   it("heads with the signal's words and the reported figures, in the 6 looks, never a price, fair value or opportunity", async () => {
     await addExhibits();
-    await db.insert(narrativeStates).values({ id: "CCLD:long:driver:1", symbol: "CCLD", side: "long", level: "driver", driverId: "CCLD:long:1", effect: "reversal", strength: "strong", why: "w", probability: 0.9, evidenceIds: [], headline: "Hospital clients up to 45 from 31 in 2023", judgmentId: crypto.randomUUID(), asOf: new Date() });
+    await setReversal(db, "CCLD", reversal("long", { headline: "Hospital clients up to 45 from 31 in 2023" }));
     // The fair value in gold (3.19) is never read by the frame.
     const story = (await storyBreak(db, "CCLD"))!;
     expect(story.signal).toEqual({ signal: "BUY", strength: "strong" });

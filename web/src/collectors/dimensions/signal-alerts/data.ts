@@ -1,5 +1,6 @@
 import { and, asc, eq } from "drizzle-orm";
-import { type ExhibitPoint, type ExhibitSeries, narrativeDrivers, narratives, narrativeStates, type ThesisSide } from "@/db/schema/analysis";
+import { type ExhibitPoint, type ExhibitSeries, kpiDrivers, narrativeDrivers, narratives, type ThesisSide } from "@/db/schema/analysis";
+import { reversalHeadline, reversalTag } from "@/content/reversal-words";
 import { companyProfiles } from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import { sideOfSignal, type SignalStep } from "@/content/signal-alert";
@@ -8,8 +9,8 @@ import { storyBreak } from "../content-visuals/story-break";
 
 /**
  * What the alert shows, read from gold when the alert is planned (it lands in bronze as the plan's payload): the signal,
- * the story the market holds, the reported figure that breaks it (the strongest driver reversing now, with its chart and
- * the two periods it compares), and the Narrative Drivers with their Status. Never the fair value, the quote vs it or a
+ * the story the market holds, the reported figure that breaks it (the strongest Price Driver turning against it now,
+ * with its chart and the two periods it compares), and the Narrative Drivers each with its Price Driver's reversal. Never the fair value, the quote vs it or a
  * gap (Thierry 2026-11-16: not confident in our fair values; real figures + the shortest convincing why of the break).
  */
 export type AlertInput = SignalStep & {
@@ -43,15 +44,15 @@ export async function alertInput(db: Db, c: SignalStep & { symbol: string }, com
     db.select({ name: companyProfiles.name }).from(companyProfiles).where(eq(companyProfiles.symbol, c.symbol)),
     db.select({ text: narratives.text }).from(narratives).where(eq(narratives.id, `${c.symbol}:${side}`)),
     db.select().from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, c.symbol), eq(narrativeDrivers.side, side))).orderBy(asc(narrativeDrivers.rank)),
-    db.select().from(narrativeStates).where(and(eq(narrativeStates.symbol, c.symbol), eq(narrativeStates.side, side), eq(narrativeStates.level, "driver"))),
+    db.select({ id: kpiDrivers.id, reversal: kpiDrivers.reversal }).from(kpiDrivers).where(eq(kpiDrivers.symbol, c.symbol)),
     storyBreak(db, c.symbol, complete, side),
   ]);
   const rows = drivers.map((d) => {
-    const s = states.find((x) => x.driverId === d.id);
-    return { category: d.category, title: d.title, summary: d.summary, state: s ? { effect: s.effect, strength: s.strength, headline: s.headline, since: s.since, pricedIn: s.pricedIn } : null };
+    const r = states.find((x) => x.id === d.kpiDriverId)?.reversal ?? null;
+    return { category: d.category, title: d.title, summary: d.summary, state: r ? { ...reversalTag(r), headline: reversalHeadline(r), since: null, pricedIn: r.pricedIn ?? null } : null };
   });
-  // Same order as the console's Status table: the newest turn first, noise and unjudged last (by rank).
-  const turn = (r: (typeof rows)[number]) => (r.state && r.state.effect !== "noise" ? r.state.since : null) ?? "";
+  // The drivers turning against the story first (strong before weak), the others after, each group by rank.
+  const turn = (r: (typeof rows)[number]) => (r.state?.effect === "reversal" ? (r.state.strength === "strong" ? "2" : "1") : "0");
   return {
     symbol: c.symbol,
     fromSignal: c.fromSignal,
