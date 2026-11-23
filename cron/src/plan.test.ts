@@ -6,7 +6,7 @@ import { dispatchBody, dispatchFor, OWN_WORKFLOW, SCHEDULE } from "./plan.ts";
 test("each slot starts collect.yml on main with its dimension, marked as a scheduled run", () => {
   assert.deepEqual(dispatchBody("0 2 * * *"), {
     ref: "main",
-    inputs: { dimension: "growth-outreach,substack-network,growth-brief", trigger: "schedule" },
+    inputs: { dimension: "growth-outreach,substack-network,growth-brief,news,filings,daily-email", trigger: "schedule" },
   });
   assert.equal(dispatchBody("15 5 * * *").inputs.dimension, "all");
   assert.equal(dispatchBody("15 13 * * *").inputs.dimension, "core");
