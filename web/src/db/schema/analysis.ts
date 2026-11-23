@@ -730,9 +730,10 @@ export type KpiLevel = (typeof KPI_LEVELS)[number];
 /** How a KPI is measured (step 3 -> 4): a stored series, a formula of stored series, or its value read in each report. */
 export type KpiMeasure = { source: "series" | "formula" | "reports"; /** How it reads on screen: « Operating margin, half years ». */ label: string; periodType: "year" | "half" | "quarter"; unit: "currency" | "ratio" | "multiple" | "per-share" | "count"; currency: string | null; providers: string[] };
 /**
- * Step 4, « When the KPI moved »: one row per period at the finest period reported, its change on the same period a
- * year earlier (points for a ratio, % for an amount) and how many times its usual change that is (the median of the
- * series' other changes; >= 2 = significant). `releaseId` = the release that first reported it (step 1 id).
+ * Step 4, « When the KPI moved »: one row per period of 5 years at the finest period reported, its change on the same
+ * period a year earlier (code: points for a ratio, % for an amount), then whether that change is big enough to matter
+ * and why (the AI's assessment, never a hardcoded threshold: Kevin 2026-11-23), and the event that first disclosed it
+ * (`releaseId`, a step-1 id: the report, or an announcement before it such as a profit warning).
  */
 export type KpiPeriod = {
   period: string;
@@ -741,8 +742,9 @@ export type KpiPeriod = {
   prior: number | null;
   change: number | null;
   changeKind: "points" | "relative";
-  ratio: number | null;
   significant: boolean;
+  /** The AI's reason, at most 12 words (« net profit fell 47%, the largest drop in 5 years »). */
+  why: string | null;
   releaseId: string | null;
   releaseDay: string | null;
   /** The report page it was read on, when read in the reports (else the stored series' providers say where). */
@@ -751,8 +753,8 @@ export type KpiPeriod = {
 export const KPI_RESULTS = ["confirms", "invalidates", "other-cause", "nothing"] as const;
 export type KpiResult = (typeof KPI_RESULTS)[number];
 /**
- * Step 5, « Event by event » (code): one row per step-1 event. KPI moved = the release first reporting a period whose
- * change was significant (null = not measured at that moment: not a release, or no new period); price moved = the
+ * Step 5, « Event by event » (code): one row per step-1 event. KPI moved = the event that first disclosed a period
+ * (its report, or an announcement before it), as step 4 judged it (null = no new period disclosed then); price moved = the
  * event sits in a step-2 move. confirms = both, the way the expected direction says; invalidates = the KPI moved, the
  * price did not or went the other way; other-cause = the price moved, the KPI did not (never counted against it).
  */
@@ -769,7 +771,8 @@ export type KpiEventRow = {
   from: number | null;
   to: number | null;
   change: number | null;
-  ratio: number | null;
+  /** Step 4's reason for that period. */
+  kpiWhy: string | null;
   kpiMoved: boolean | null;
   /** The event's own 5 trading days (stock as traded, with the market taken out, z) and the move it sits in. */
   stock: number | null;

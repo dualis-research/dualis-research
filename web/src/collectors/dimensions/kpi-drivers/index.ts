@@ -13,7 +13,7 @@ import { seriesCatalog, type StoredSeries } from "../analysis/series";
 import { verifyQuote } from "../filing-documents/read";
 import { stripDashes } from "../thesis/structure";
 import { analysedSymbols } from "../watchlist";
-import { eventRows, kpiChange, kpiPeriods, kpiValue, measureKpi, parseFormula, periodWords } from "./steps";
+import { eventRows, kpiChange, kpiPeriods, kpiValue, measureKpi, parseFormula, periodEnd, periodWords } from "./steps";
 
 export * from "./steps";
 
@@ -35,7 +35,14 @@ export const CANDIDATES_QUESTION = "kpi-candidates@v3";
 /** Step 4 when nothing stored measures the KPI: its value read in each report, the quote checked on its page. */
 export const READ_QUESTION = "kpi-read@v1";
 /** Step 6: the verdict from the step-5 table only (the AI decides, never a count rule: Kevin 2026-11-19). */
-export const VERDICT_QUESTION = "kpi-verdict@v1";
+/** Step 1b: does an event announce, before its report, figures of the period that report covers (a profit warning)? */
+export const ANNOUNCES_QUESTION = "event-announces@v1";
+/** Step 4: which periods' changes matter, and which event first disclosed each (the AI's assessment, never a threshold). */
+export const MOVES_QUESTION = "kpi-moves@v1";
+/** v2: step 4 is the AI's assessment of size, the first disclosure may be an announcement. */
+export const VERDICT_QUESTION = "kpi-verdict@v2";
+/** Step 4 reads 5 years of the KPI (Kevin 2026-11-23); the events stay 3 years. */
+export const KPI_HISTORY_YEARS = 5;
 /** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). v2: v1 echoed its own instruction once (Water Oasis, Hong Kong and Macau revenue). */
 export const REASON_QUESTION = "kpi-reason@v2";
 export const REASON_SYSTEM = "You shorten ONE verdict an analyst wrote about a company KPI. Keep its facts and its conclusion (does the stock trade on this KPI, and what moved the price instead), in AT MOST 15 words, plain English. Never describe the task, never ask a question. No dates, no em dash. Answer with the shortened sentence only.";
@@ -127,7 +134,7 @@ export const READ_SYSTEM = [
 
 export const VERDICT_SYSTEM = [
   "You give the verdict on ONE hypothesis for a small-cap long/short analyst: « this fundamental KPI of the company moves this stock ».",
-  "You read ONLY the table you are given: every event of 3 years (results release, news, filing), whether the KPI moved significantly then (at least twice its usual change on the same period a year earlier, measured at the release that first reported it), whether the share price moved significantly in the 5 trading days after (at least twice its usual 5-day move once its own market is taken out), and the result computed from both: confirms (both, the way the KPI should move the price), invalidates (the KPI moved, the price did not or went the other way), other cause (the price moved, the KPI did not: never against the KPI).",
+  "You read ONLY the table you are given: every event of 3 years (results release, news, filing), whether the KPI moved significantly then (its change on the same period a year earlier, judged big enough to matter, at the event that first disclosed it: the report, or an announcement before it such as a profit warning), whether the share price moved significantly in the 5 trading days after (at least twice its usual 5-day move once its own market is taken out), and the result computed from both: confirms (both, the way the KPI should move the price), invalidates (the KPI moved, the price did not or went the other way), other cause (the price moved, the KPI did not: never against the KPI).",
   "level: decide it yourself, as the analyst would, never by counting. Weigh each moment: how big the KPI move was, how clear the price move was, whether the event's title says another fact moved the price, how recent it is. A small cap's price is noisy: one contrary moment can be noise, a clean, large KPI move the price ignored says much more. strong = the market clearly trades the stock on this KPI; weak = it does sometimes, or the evidence is thin; none = it does not.",
   "reason = ONE plain sentence, at most 15 words, a reader understands at once: how the stock reacts to this KPI. When some moments went against it, the same sentence says whether that is normal (another fact moved the price those days) or a real doubt. No dates, no list of figures, no labels.",
   "signal (only when level is strong or weak, else null): does the KPI turn NOW, at the latest release, by enough to change the story, with the price not reacting yet? strong (only for a strong KPI) / weak / none. signalWhy = one sentence with the figure.",
@@ -187,6 +194,22 @@ export function parseVerdict(text: string): Verdict {
   return { level, reason: stripDashes(obj.reason.trim()), signal, signalWhy: signal && typeof obj.signalWhy === "string" ? stripDashes(obj.signalWhy.trim()) : null };
 }
 
+export const ANNOUNCES_SYSTEM = [
+  "You read company announcements for an equity analyst. For each one, say whether it discloses, BEFORE the report named beside it, figures of the period that report covers: a profit warning or positive profit alert, inside information on the results, a dividend announcement carrying the period's result, a business update with the period's sales.",
+  "announces = true only when the announcement itself carries figures or a direction of that period's results; a board meeting date, a share buyback, a monthly return of equity, a change of director announce nothing. what = at most 12 words, the figure or direction it gives (« net profit for the six months expected to fall about 30% »), null when it announces nothing.",
+  "No em dash. JSON only, no prose, no code fence:",
+  '{"events": [{"event": "E1", "announces": true, "what": string | null}]}',
+].join("\n");
+
+export const MOVES_SYSTEM = [
+  "You judge, for a small-cap long/short analyst, when ONE fundamental KPI of a company really moved.",
+  "Each period of 5 years is listed with its value, the same period a year earlier and the change. Decide yourself, as the analyst would, whether each change is big enough to matter to the market (his rule of thumb: « if the backlog doubles, it matters; a 3% difference, who cares »). Weigh it against this KPI's own history and what it is (a margin, a revenue line, a share count); never apply a fixed threshold.",
+  "first = the event that first told the market THIS KPI's change for that period: an announcement listed before the report only when what it announces carries this KPI (a profit warning carries profit and margins, rarely revenue), else the report. Copy its label exactly.",
+  "why = at most 12 words, the size in plain words (« net profit fell 47%, its largest drop in 5 years »).",
+  "No em dash. JSON only, no prose, no code fence:",
+  '{"periods": [{"period": "P1", "moved": boolean, "why": string, "first": "R3" | "A2"}]}',
+].join("\n");
+
 const KIND = { release: "Results release", news: "News", filing: "Filing" } as const;
 const RESULT = { confirms: "confirms", invalidates: "invalidates", "other-cause": "other cause", nothing: "nothing moved" } as const;
 
@@ -198,12 +221,119 @@ export function tableText(rows: KpiEventRow[], measure: KpiMeasure | null, perio
       const p = r.period ? byPeriod.get(r.period) : undefined;
       const kpi =
         p && measure
-          ? `KPI ${periodWords(p.periodType, p.period)}: ${kpiValue(r.from, measure)} a year earlier -> ${kpiValue(r.to, measure)} (${kpiChange(r.change, p.changeKind)}${r.ratio === null ? ", too short a history to say how unusual" : `, ${r.ratio.toFixed(1)}x its usual change`}), ${r.kpiMoved ? "moved" : "did not move"}`
+          ? `KPI ${periodWords(p.periodType, p.period)}: ${kpiValue(r.from, measure)} a year earlier -> ${kpiValue(r.to, measure)} (${kpiChange(r.change, p.changeKind)}), ${r.kpiMoved ? "moved" : "did not move"}${r.kpiWhy ? `: ${r.kpiWhy}` : ""}`
           : "KPI: not reported at this moment";
       const price = `price ${signedPct(r.reaction)} beyond the ${bench} over 5 trading days${r.z === null ? "" : ` (${Math.abs(r.z).toFixed(1)}x its usual move)`}, ${r.priceMoved ? "moved" : "did not move"}`;
       return `${r.day} ${KIND[r.kind]}: ${r.title.replace(/\s+/g, " ")}. ${kpi}; ${price}. Result: ${RESULT[r.result]}.`;
     })
     .join("\n");
+}
+
+type Announcement = { announces: boolean; what: string | null };
+
+/**
+ * Step 1b: a stored reading of each news item and filing that comes before a report (within 120 days, after the one
+ * before it): does it announce figures of the period that report covers? One judgment per event, asked in one call
+ * for every event not read yet; read back after.
+ */
+export async function announcementsOf(db: Db, complete: Complete, events: GoldDriverEvent[]): Promise<Map<string, Announcement & { releaseId: string }>> {
+  const releases = events.filter((e) => e.kind === "release");
+  const candidates = events.flatMap((e) => {
+    if (e.kind === "release") return [];
+    const next = releases.find((r) => r.day > e.day);
+    if (!next || Date.parse(next.day) - Date.parse(e.day) > 120 * DAY) return [];
+    return [{ e, next }];
+  });
+  const key = (c: (typeof candidates)[number]) => `${ANNOUNCES_QUESTION}:${c.next.id}`;
+  const out = new Map<string, Announcement & { releaseId: string }>();
+  if (candidates.length === 0) return out;
+  const stored = await db
+    .select()
+    .from(silver.judgments)
+    .where(and(eq(silver.judgments.subjectKind, "event-announces"), inArray(silver.judgments.subjectId, candidates.map((c) => c.e.id))));
+  const hit = new Map(stored.map((j) => [`${j.subjectId}|${j.questionKey}`, j.raw as Announcement]));
+  const missing = candidates.filter((c) => !hit.has(`${c.e.id}|${key(c)}`));
+  for (let i = 0; i < missing.length; i += 40) {
+    const batch = missing.slice(i, i + 40);
+    const prompt = batch.map((c, j) => `E${j + 1} ${c.e.day} ${KIND[c.e.kind]}: ${c.e.title.replace(/\s+/g, " ")}. Next report: ${c.next.day} ${c.next.title.replace(/\s+/g, " ")}.`).join("\n");
+    const r = await complete({ system: ANNOUNCES_SYSTEM, prompt });
+    const obj = JSON.parse(firstJsonObject(r.text)) as { events?: unknown };
+    if (!Array.isArray(obj.events)) throw new Error(`kpi-drivers: announcements answer has no events array: ${r.text.slice(0, 200)}`);
+    const byLabel = new Map((obj.events as Record<string, unknown>[]).map((x) => [String(x.event), x]));
+    const rows = batch.map((c, j) => {
+      const x = byLabel.get(`E${j + 1}`);
+      if (!x || typeof x.announces !== "boolean") throw new Error(`kpi-drivers: no announcement reading for E${j + 1} (${c.e.title.slice(0, 60)})`);
+      const a: Announcement = { announces: x.announces, what: x.announces && typeof x.what === "string" && x.what.trim() ? stripDashes(x.what.trim()) : null };
+      hit.set(`${c.e.id}|${key(c)}`, a);
+      return { subjectKind: "event-announces", subjectId: c.e.id, questionKey: key(c), question: `${ANNOUNCES_QUESTION}: does « ${c.e.title.slice(0, 120)} » announce figures of « ${c.next.title.slice(0, 120)} »?`, verdict: a.announces ? "yes" : "no", probability: 1, citedSentence: null, reason: a.what, model: r.model, raw: a };
+    });
+    await db.insert(silver.judgments).values(rows).onConflictDoNothing();
+  }
+  for (const c of candidates) out.set(c.e.id, { ...hit.get(`${c.e.id}|${key(c)}`)!, releaseId: c.next.id });
+  return out;
+}
+
+/**
+ * Step 4, the AI half: which periods' changes matter for this KPI and which event first disclosed each (its report, or
+ * an announcement before it). Asked once per KPI and figures; a period the answer skips, or an unknown label, is loud.
+ */
+export async function judgeKpiMoves(
+  db: Db,
+  complete: Complete,
+  symbol: string,
+  company: string,
+  k: KpiCandidate,
+  periods: KpiPeriod[],
+  measure: KpiMeasure,
+  events: GoldDriverEvent[],
+  announced: Map<string, Announcement & { releaseId: string }>,
+): Promise<KpiPeriod[]> {
+  const asked = periods.filter((p) => p.change !== null);
+  if (asked.length === 0) return periods;
+  const byId = new Map(events.map((e) => [e.id, e]));
+  const labels = new Map<string, string>();
+  const label = (id: string, prefix: "R" | "A") => {
+    if (!labels.has(id)) labels.set(id, `${prefix}${[...labels.values()].filter((l) => l.startsWith(prefix)).length + 1}`);
+    return labels.get(id)!;
+  };
+  const lines = asked.map((p, i) => {
+    const release = p.releaseId ? byId.get(p.releaseId) : undefined;
+    const before = release ? [...announced].filter(([id, a]) => a.announces && a.releaseId === release.id && Date.parse(byId.get(id)!.day) > periodEnd(p.period)).map(([id, a]) => ({ e: byId.get(id)!, a })) : [];
+    return [
+      `P${i + 1} ${periodWords(p.periodType, p.period)}: ${kpiValue(p.value, measure)} vs ${kpiValue(p.prior, measure)} a year earlier (${kpiChange(p.change, p.changeKind)}).`,
+      release ? `  Report: ${label(release.id, "R")} ${release.day} ${release.title.replace(/\s+/g, " ")}` : "  Report: none stored (older than 3 years)",
+      ...before.map(({ e, a }) => `  Announced before it: ${label(e.id, "A")} ${e.day} ${KIND[e.kind]}: ${e.title.replace(/\s+/g, " ")} (it announces: ${a.what})`),
+    ].join("\n");
+  });
+  const byLabel = new Map([...labels].map(([id, l]) => [l, id]));
+  const answer = await once(
+    db,
+    complete,
+    "kpi-moves",
+    `${symbol}:${k.name}`,
+    `${MOVES_QUESTION}:${fnv(`${k.name}|${lines.join("\n")}`)}`,
+    `${MOVES_QUESTION}: when did « ${k.name} » of ${symbol} really move?`,
+    MOVES_SYSTEM,
+    [`Company: ${company}`, `KPI: ${k.name}. ${k.why}`, `Measured as: ${measure.label}.`, "", "Every period with a year earlier to compare, oldest first:", lines.join("\n")].join("\n"),
+    (text) => {
+      const obj = JSON.parse(firstJsonObject(text)) as { periods?: unknown };
+      if (!Array.isArray(obj.periods)) throw new Error(`kpi-drivers: moves answer has no periods array: ${text.slice(0, 200)}`);
+      const got = new Map((obj.periods as Record<string, unknown>[]).map((x) => [String(x.period), x]));
+      return asked.map((p, i) => {
+        const x = got.get(`P${i + 1}`);
+        if (!x || typeof x.moved !== "boolean") throw new Error(`kpi-drivers: no reading of P${i + 1} (${p.period}) for ${k.name}`);
+        const first = typeof x.first === "string" ? byLabel.get(x.first) : undefined;
+        return { period: p.period, moved: x.moved, why: typeof x.why === "string" && x.why.trim() ? stripDashes(x.why.trim()) : null, first: first ?? p.releaseId };
+      });
+    },
+  );
+  const by = new Map(answer.map((a) => [a.period, a]));
+  return periods.map((p) => {
+    const a = by.get(p.period);
+    if (!a) return p;
+    const first = a.first ? byId.get(a.first) : undefined;
+    return { ...p, significant: a.moved, why: a.why, releaseId: first?.id ?? p.releaseId, releaseDay: first?.day ?? p.releaseDay };
+  });
 }
 
 export type KpiDriverResult = KpiCandidate & Verdict & { measure: KpiMeasure | null; periods: KpiPeriod[]; rows: KpiEventRow[]; direction: "up" | "down" | null };
@@ -218,7 +348,7 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
   const company = `${symbol}${profile?.name ? ` (${profile.name})` : ""}${profile?.industry ? `, ${profile.industry}` : ""}. ${profile?.description ?? ""}`.trim();
   const keys = [...catalog.values()].filter((s) => /^(line|hline|qline|metric|hmetric|qmetric):/.test(s.key)).map((s) => `${s.label} [${s.key}]`);
   const docKey = fnv(releases.map((r) => r.id).join(","));
-  const since = new Date(Date.now() - KPI_YEARS * 365.25 * DAY).toISOString().slice(0, 7);
+  const since = new Date(Date.now() - KPI_HISTORY_YEARS * 365.25 * DAY).toISOString().slice(0, 7);
   const bench = events[0]?.bench ?? moves[0]?.bench ?? "market";
   // Step 3.
   const candidates = await once(
@@ -232,6 +362,8 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
     [`Company: ${company}`, "", "Stored series:", keys.join("\n") || "none", "", "Its latest reports (best pages):", releasesText(releases.slice(-4))].join("\n"),
     (text) => parseCandidates(text, catalog),
   );
+  // Step 1b, once per event: the announcements that carry a period's figures before its report.
+  const announced = await announcementsOf(db, complete, events);
   const drivers: KpiDriverResult[] = [];
   for (const k of candidates) {
     // Step 4: from what is stored, else read in the reports.
@@ -254,7 +386,8 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
         measured = { measure: read.measure, points: read.points };
       }
     }
-    const periods = measured ? kpiPeriods(measured.points, measured.measure, releases, since, cites) : [];
+    const computed = measured ? kpiPeriods(measured.points, measured.measure, releases, since, cites) : [];
+    const periods = measured ? await judgeKpiMoves(db, complete, symbol, company, k, computed, measured.measure, events, announced) : [];
     // Step 5.
     const rows = eventRows(events, periods, k.expected, moves);
     // Step 6, from the table only.

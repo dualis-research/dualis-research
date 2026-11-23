@@ -4,14 +4,11 @@ import type { StoredSeries } from "../analysis/series";
 /**
  * Steps 4 and 5 of the KPI drivers (DRIVERS-SIX-STEPS-1123): pure code over stored rows, the console may import it.
  * 4) When the KPI moved: its value per period at the finest period it is reported (half years for a Hong Kong company),
- *    each period's change on the same period a year earlier, and how many times its usual change that is (the median
- *    of the series' other changes); >= 2 = significant.
+ *    each period's change on the same period a year earlier (whether it matters is the AI's assessment, index.ts).
  * 5) Event by event: each step-1 event crossed with the KPI's moves and the step-2 price moves; confirms / invalidates /
  *    other cause / nothing by rule, no judgment.
  */
 
-/** A period change at least this many times the usual one is significant. */
-export const KPI_RATIO = 2;
 /** A release reports the latest period that ended at most this long before it (an annual report ~100 days after the year end). */
 export const REPORTED_WITHIN_DAYS = 140;
 const DAY = 86_400_000;
@@ -85,62 +82,40 @@ export function measureKpi(catalog: Map<string, StoredSeries>, k: { series: stri
 const ym = (p: string) => p.slice(0, 7);
 const yearBefore = (p: string) => `${Number(p.slice(0, 4)) - 1}${p.slice(4, 7)}`;
 const endOf = (p: string) => Date.parse(`${ym(p)}-28T00:00:00Z`);
-const median = (xs: number[]) => {
-  const s = [...xs].sort((a, b) => a - b);
-  return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
-};
 
 /**
- * Step 4: every period's change on the same period a year earlier and how unusual it is (|change| over the median of
- * the series' OTHER changes; null with fewer than 2 others), each tied to the release that first reported it.
+ * Step 4, the code half: every period's change on the same period a year earlier and the release that first reported
+ * it (the first one within 140 days of the period end). Whether the change matters is the AI's call (`judgeKpiMoves`).
  */
 export function kpiPeriods(points: Map<string, number>, measure: KpiMeasure, releases: { id: string; day: string }[], since: string, cites: Map<string, DocCitation> = new Map()): KpiPeriod[] {
   const changeKind = measure.unit === "ratio" ? ("points" as const) : ("relative" as const);
   const byYm = new Map([...points].map(([p, v]) => [ym(p), { p, v }]));
-  const changeOf = (p: string): number | null => {
-    const prior = byYm.get(yearBefore(p))?.v;
-    const v = points.get(p)!;
-    if (prior === undefined) return null;
-    if (changeKind === "points") return v - prior;
-    return prior === 0 ? null : (v - prior) / Math.abs(prior);
-  };
-  const all = [...points.keys()].sort();
-  const changes = new Map(all.map((p) => [p, changeOf(p)]));
   const sorted = [...releases].sort((a, b) => a.day.localeCompare(b.day));
-  return all
+  return [...points.keys()]
+    .sort()
     .filter((p) => p >= since)
     .map((p) => {
-      const change = changes.get(p) ?? null;
-      const others = all.filter((q) => q !== p).map((q) => changes.get(q)).filter((c): c is number => c !== null && c !== undefined).map(Math.abs);
-      const usual = others.length >= 2 ? median(others) : null;
-      const ratio = change !== null && usual !== null && usual > 0 ? Math.abs(change) / usual : null;
+      const v = points.get(p)!;
+      const prior = byYm.get(yearBefore(p))?.v ?? null;
+      const change = prior === null ? null : changeKind === "points" ? v - prior : prior === 0 ? null : (v - prior) / Math.abs(prior);
       const release = sorted.find((r) => Date.parse(`${r.day}T00:00:00Z`) > endOf(p) && Date.parse(`${r.day}T00:00:00Z`) - endOf(p) <= REPORTED_WITHIN_DAYS * DAY) ?? null;
-      return {
-        period: p,
-        periodType: measure.periodType,
-        value: points.get(p)!,
-        prior: byYm.get(yearBefore(p))?.v ?? null,
-        change,
-        changeKind,
-        ratio,
-        significant: ratio !== null && ratio >= KPI_RATIO,
-        releaseId: release?.id ?? null,
-        releaseDay: release?.day ?? null,
-        cite: cites.get(p) ?? null,
-      };
+      return { period: p, periodType: measure.periodType, value: v, prior, change, changeKind, significant: false, why: null, releaseId: release?.id ?? null, releaseDay: release?.day ?? null, cite: cites.get(p) ?? null };
     });
 }
 
+/** The period's end as a time (for « announced after the period ended »). */
+export const periodEnd = endOf;
+
 /**
- * Step 5: one row per event. The KPI is measured at the release that first reported a period (null elsewhere: not a
- * release, or no new period); the price at the event's own 5 trading days (step 1) and the move it sits in (step 2).
+ * Step 5: one row per event. The KPI is measured at the event that first disclosed a period (its report, or an
+ * announcement before it, as step 4 says; null elsewhere); the price at the event's own 5 trading days (step 1) and the move it sits in (step 2).
  */
 export function eventRows(events: GoldDriverEvent[], periods: KpiPeriod[], expected: "up" | "down", moves: Pick<GoldPriceMove, "id" | "direction">[]): KpiEventRow[] {
   const byRelease = new Map(periods.filter((p) => p.releaseId).map((p) => [p.releaseId!, p]));
   const direction = new Map(moves.map((m) => [m.id, m.direction]));
   return events.map((e) => {
-    const p = e.kind === "release" ? byRelease.get(`${e.symbol}|release:${e.sourceId}`) : undefined;
-    const kpiMoved = p ? (p.ratio === null ? null : p.significant) : null;
+    const p = byRelease.get(e.id);
+    const kpiMoved = p ? (p.change === null ? null : p.significant) : null;
     const priceMoved = e.moveId !== null;
     let result: KpiResult = priceMoved ? "other-cause" : "nothing";
     if (kpiMoved && p?.change != null) {
@@ -159,7 +134,7 @@ export function eventRows(events: GoldDriverEvent[], periods: KpiPeriod[], expec
       from: p?.prior ?? null,
       to: p?.value ?? null,
       change: p?.change ?? null,
-      ratio: p?.ratio ?? null,
+      kpiWhy: p?.why ?? null,
       kpiMoved,
       stock: e.stock,
       reaction: e.reaction,
