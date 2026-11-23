@@ -130,6 +130,7 @@ describe("kpi drivers end to end on stored steps", () => {
         if (prompt.includes("Store count")) return { text: JSON.stringify({ values: [] }), model: "fake" };
         return { text: JSON.stringify({ values: [{ report: "R1", page: 1, period: "2024-03", periodType: "half", value: 30, unit: "percent", quote: "Service margin was 30.0%" }, { report: "R2", page: 1, period: "2025-03", periodType: "half", value: 22, unit: "percent", quote: "not printed there" }] }), model: "fake" };
       }
+      if (system.startsWith("Rewrite this sentence")) return { text: "Thin: the price moved on other facts.", model: "fake" };
       // Step 6 reads the step-5 table only: the profit warning reads the same price move for both KPIs.
       expect(prompt).toMatch(/Filing: Profit Warning\. KPI: not reported at this moment; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: other cause\./);
       return { text: JSON.stringify({ level: "weak", reason: "Thin evidence: the price moved on other facts.", signal: "strong", signalWhy: "x" }), model: "fake" };
@@ -149,11 +150,12 @@ describe("kpi drivers end to end on stored steps", () => {
     expect(pw(ks[0])).toEqual(pw(ks[1]));
     expect(pw(ks[0])).toMatchObject({ priceMoved: true, kpiMoved: null, result: "other-cause", moveId: warning.moveId });
     expect(ks[0].invalidated).toBe(0);
+    expect(ks[0].reason).toBe("Thin: the price moved on other facts.");
     // Stored once: a second run asks nothing.
     const before = calls;
     await kpiSource.fetch(SYMBOL, kctx);
     expect(calls).toBe(before);
-    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["kpi-candidates", "kpi-read", "kpi-read", "kpi-verdict", "kpi-verdict"]);
+    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["kpi-candidates", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-verdict", "kpi-verdict"]);
   });
 
   it("measures each stock against its OWN market's index", () => {
