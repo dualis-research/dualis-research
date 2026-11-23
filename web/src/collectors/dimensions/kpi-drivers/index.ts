@@ -36,9 +36,9 @@ export const CANDIDATES_QUESTION = "kpi-candidates@v3";
 export const READ_QUESTION = "kpi-read@v1";
 /** Step 6: the verdict from the step-5 table only (the AI decides, never a count rule: Kevin 2026-11-19). */
 export const VERDICT_QUESTION = "kpi-verdict@v1";
-/** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). */
-export const REASON_QUESTION = "kpi-reason@v1";
-export const REASON_SYSTEM = "Rewrite this sentence in AT MOST 15 words, plain English, same meaning: how the stock reacts to this KPI, and whether the misses are normal or a doubt. No dates, no figures, no em dash. Answer with the sentence only.";
+/** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). v2: v1 echoed its own instruction once (Water Oasis, Hong Kong and Macau revenue). */
+export const REASON_QUESTION = "kpi-reason@v2";
+export const REASON_SYSTEM = "You shorten ONE verdict an analyst wrote about a company KPI. Keep its facts and its conclusion (does the stock trade on this KPI, and what moved the price instead), in AT MOST 15 words, plain English. Never describe the task, never ask a question. No dates, no em dash. Answer with the shortened sentence only.";
 /** Pages of each report the AI reads (the results discussion first) and how much of each page. */
 const PAGES_PER_RELEASE = 2;
 const PAGE_CHARS = 3_500;
@@ -279,7 +279,7 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
       `${REASON_QUESTION}:${fnv(verdict.reason)}`,
       `${REASON_QUESTION}: the verdict on « ${k.name} » in 15 words`,
       REASON_SYSTEM,
-      verdict.reason,
+      `Verdict to shorten: ${verdict.reason}`,
       (text) => {
         const t = stripDashes(text.trim().replace(/^["«\s]+|["»\s]+$/g, ""));
         if (!t) throw new Error("kpi-drivers: empty short reason");
