@@ -18,3 +18,4 @@ export * as valuation from "./valuation";
 export * as sandbox from "./sandbox";
 export * as x from "./x";
 export * as documents from "./documents";
+export * as emphasis from "./emphasis";

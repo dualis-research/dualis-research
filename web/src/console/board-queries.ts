@@ -1,4 +1,5 @@
 import { cache } from "react";
+import { withBold } from "./emphasis";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { SignalCall, SignalStrength } from "@/content/signal-words";
 import { getDb } from "@/db/client";
@@ -139,7 +140,7 @@ export async function evidenceDetail(symbol: string, id: string) {
     judged ? db.select().from(narrativeDrivers).where(eq(narrativeDrivers.symbol, symbol)).orderBy(asc(narrativeDrivers.side), asc(narrativeDrivers.rank)) : [],
     db.select().from(marketReactions).where(eq(marketReactions.id, id)),
   ]);
-  return {
+  return withBold({
     catalyst,
     // Judged against a Narrative Driver (gold.evidence) when the ticker has drivers; else the narrative-level judgment.
     evidence: judged ?? null,
@@ -152,7 +153,7 @@ export async function evidenceDetail(symbol: string, id: string) {
     strength: own.strength,
     articles,
     filings: docs,
-  };
+  });
 }
 
 /** Level C: one KPI vs consensus over every period. */
@@ -184,7 +185,7 @@ export async function driverDetail(symbol: string, id: string) {
   const moves = driver.moveIds.length
     ? (await db.select().from(priceMoves).leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id)).where(inArray(priceMoves.id, driver.moveIds)).orderBy(desc(priceMoves.startDay))).map((r) => ({ ...r.price_moves, cause: r.price_move_causes }))
     : [];
-  return { driver, exhibits: xs, evidence: ev.filter((e) => e.verdicts.some((v) => v.driverId === id && v.effect !== "noise")), state: state ?? null, side: driver.side, moves, reactions: new Map(reactions.map((r) => [r.id, r])) };
+  return withBold({ driver, exhibits: xs, evidence: ev.filter((e) => e.verdicts.some((v) => v.driverId === id && v.effect !== "noise")), state: state ?? null, side: driver.side, moves, reactions: new Map(reactions.map((r) => [r.id, r])) });
 }
 
 /**
@@ -201,7 +202,7 @@ export async function confidenceDetail(symbol: string, id: string) {
   const ids = [...new Set([...driver.moveIds, ...(confidence?.rows.map((r) => r.moveId) ?? [])])];
   const moves = ids.length ? (await db.select().from(priceMoves).leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id)).where(inArray(priceMoves.id, ids))).map((r) => ({ ...r.price_moves, cause: r.price_move_causes })) : [];
   const byId = new Map(moves.map((m) => [m.id, m]));
-  return { driver, confidence: confidence ?? null, origin: driver.moveIds.map((m) => byId.get(m)).filter((m) => !!m).sort((a, b) => a!.startDay.localeCompare(b!.startDay)) as typeof moves };
+  return withBold({ driver, confidence: confidence ?? null, origin: driver.moveIds.map((m) => byId.get(m)).filter((m) => !!m).sort((a, b) => a!.startDay.localeCompare(b!.startDay)) as typeof moves });
 }
 
 /** Level C: one Exhibit and the driver it supports. */
@@ -210,7 +211,7 @@ export async function exhibitDetail(symbol: string, id: string) {
   const [exhibit] = await db.select().from(exhibits).where(and(eq(exhibits.symbol, symbol), eq(exhibits.id, id)));
   if (!exhibit) return null;
   const [driver] = await db.select().from(narrativeDrivers).where(eq(narrativeDrivers.id, exhibit.driverId));
-  return { exhibit, driver: driver ?? null };
+  return withBold({ exhibit, driver: driver ?? null });
 }
 
 /**

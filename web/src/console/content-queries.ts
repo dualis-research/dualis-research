@@ -1,4 +1,5 @@
 import { asc, desc, eq, sql } from "drizzle-orm";
+import { withBold } from "./emphasis";
 import { cache } from "react";
 import { getDb } from "@/db/client";
 import { runs } from "@/db/schema/ops";
@@ -39,7 +40,7 @@ export async function lastContentRun(dimension: "content-posts" | "content-draft
 
 /** The Ideas table: newest day first, best score first within a day. */
 export const listIdeas = cache(async () =>
-  getDb().select().from(goldContentIdeas).orderBy(desc(goldContentIdeas.day), sql`${goldContentIdeas.bestScore} desc nulls last`, asc(goldContentIdeas.rank)),
+  withBold(await getDb().select().from(goldContentIdeas).orderBy(desc(goldContentIdeas.day), sql`${goldContentIdeas.bestScore} desc nulls last`, asc(goldContentIdeas.rank))),
 );
 
 /**

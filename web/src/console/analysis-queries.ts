@@ -33,6 +33,7 @@ import {
 import { goldMethodValuations, valuationMethods, valuationReports } from "@/db/schema/valuation";
 import { financialMetrics, goldFinancialLines, valuations, type GoldFinancialLine, type GoldFinancialMetric, type GoldValuation } from "@/db/schema/financials";
 import { companyProfiles, tickers } from "@/db/schema/gold";
+import { withBold } from "./emphasis";
 
 /**
  * The analysis read contract (gold only), for the console UI. Names = Kevin's business objects:
@@ -129,7 +130,7 @@ export const getTickerAnalysis = cache(async (symbol: string, asked: ThesisSide 
   const narrative = nars.find((n) => n.side === side);
   const rationale = rationales.find((r) => r.side === side);
   const drivers = allDrivers.filter((d) => d.side === side);
-  return {
+  return withBold({
     symbol,
     side,
     theses,
@@ -143,7 +144,7 @@ export const getTickerAnalysis = cache(async (symbol: string, asked: ThesisSide 
     report: reports.find((r) => r.side === side) ?? null,
     signalChanges: changes,
     reactions: new Map(reactions.map((r) => [r.id, r])),
-  };
+  });
 });
 
 /** One Exhibit (level C panel): its chart data and sources. */
@@ -177,14 +178,14 @@ export const getValuation = cache(async (symbol: string) => {
     db.select().from(fairValues).where(eq(fairValues.symbol, symbol)),
   ]);
   const byId = new Map(methods.map((m) => [m.method, m]));
-  return {
+  return withBold({
     report: report ?? null,
     fairValue: fairValue ?? null,
     methods: catalogue.flatMap((c) => {
       const m = byId.get(c.id);
       return m ? [{ ...m, name: c.name, family: c.family, description: c.description, weight: report?.weights.find((w) => w.method === c.id) ?? null }] : [];
     }),
-  };
+  });
 });
 export type Valuation = Awaited<ReturnType<typeof getValuation>>;
 
@@ -205,5 +206,5 @@ export async function priceMoveMarkers(symbol: string): Promise<MoveMarker[]> {
 /** One significant move and its cause (the `move:` item panel). */
 export async function getPriceMove(id: string) {
   const [r] = await getDb().select().from(priceMoves).leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id)).where(eq(priceMoves.id, id));
-  return r ? { move: r.price_moves, cause: r.price_move_causes } : null;
+  return r ? withBold({ move: r.price_moves, cause: r.price_move_causes }) : null;
 }

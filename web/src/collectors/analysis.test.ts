@@ -421,7 +421,7 @@ describe("speed (Kevin 2026-11-06)", () => {
     expect(STAGES.flat().sort()).toEqual(DIMENSIONS.map((d) => d.name).sort());
     const at = (n: string) => STAGES.findIndex((s) => s.includes(n));
     for (const [before, after] of [["company-profile", "news"], ["price", "financials"], ["filings", "financials"], ["consensus", "peers"], ["peers", "valuation"], ["valuation", "analysis"], ["valuation", "market-reaction"], ["move-causes", "analysis"], ["market-reaction", "evidence"], ["market-reaction", "move-causes"], ["analysis", "evidence"], ["analysis", "narrative-since"], ["narrative-since", "evidence"], ["evidence", "narrative-state"], ["narrative-state", "signals"], ["price", "intraday-price"], ["intraday-price", "financials"], ["intraday-price", "market-reaction"], ["intraday-price", "signals"], ["signals", "signal-alerts"]]) expect(at(before)).toBeLessThan(at(after));
-    expect(stagesFor(dimensionsFor("from:valuation")).map((s) => s.map((d) => d.name))).toEqual([["valuation"], ["market-reaction"], ["move-causes"], ["analysis"], ["narrative-since", "driver-confidence"], ["evidence"], ["narrative-state"], ["signals"], ["signal-alerts"]]);
+    expect(stagesFor(dimensionsFor("from:valuation")).map((s) => s.map((d) => d.name))).toEqual([["valuation"], ["market-reaction"], ["move-causes"], ["analysis"], ["narrative-since", "driver-confidence"], ["evidence"], ["narrative-state"], ["signals"], ["signal-alerts"], ["emphasis"]]);
   });
   it("a merge collects only what its files can move", () => {
     expect(collectPlan(["web/src/console/analysis.tsx", "site/src/app/page.tsx", "CLAUDE.md"])).toBeNull();

@@ -23,6 +23,7 @@ import { day, numberFormat, utc } from "./format";
 import { consensusOf, getTicker } from "./queries";
 import { Section } from "./signal";
 import { PRICED_WORD } from "@/content/signal-words";
+import { Rich } from "./rich";
 
 /**
  * Level B: one ticker's analysis. The SAME content renders in the right panel (`variant="panel"`, from a Signals row)
@@ -129,7 +130,7 @@ function SignalHistory({ changes }: { changes: Analysis["objects"]["signalChange
               <KTableCell className="py-3 align-top text-kumo-default">
                 {signalWordsOf(c.fromSignal, c.fromStrength)} <span className="text-kumo-subtle">→</span> <span className="font-medium text-kumo-strong">{signalWordsOf(c.toSignal, c.toStrength)}</span>
               </KTableCell>
-              <KTableCell className="py-3 pr-4 align-top text-kumo-strong">{c.updateNote ?? "–"}</KTableCell>
+              <KTableCell className="py-3 pr-4 align-top text-kumo-default"><Rich text={c.updateNote ?? "–"} /></KTableCell>
             </KTableRow>
           ))}
         </KTableBody>
@@ -146,7 +147,7 @@ export function Exhibit({ symbol, exhibit, linked = true }: { symbol: string; ex
     <div className="flex flex-col gap-2">
       {chart}
       <Link href={itemHref(symbol, `exhibit:${exhibit.id}`)} scroll={false} className="self-start text-sm font-medium text-kumo-link hover:underline">
-        {exhibit.takeaway}
+        <Rich text={exhibit.takeaway} />
       </Link>
     </div>
   );
@@ -188,7 +189,7 @@ function KpiRow({ href, name, sub, badge }: { href: string; name: string; sub?: 
       <Link href={href} scroll={false} className="-mx-3 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 rounded-lg px-3 py-3 transition-colors hover:bg-kumo-tint">
         <span className="flex min-w-0 flex-col gap-1">
           <span className="text-lg font-semibold text-kumo-strong">{name}</span>
-          {sub && <span className="text-sm text-kumo-subtle">{sub}</span>}
+          {sub && <span className="text-sm text-kumo-subtle"><Rich text={sub} /></span>}
         </span>
         <span className="flex items-center gap-2">
           {badge}
@@ -256,12 +257,8 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
   const gap = variant === "page" ? "gap-14" : "gap-10";
   return (
     <div className={`flex flex-col ${gap}`}>
-      {variant === "panel" && (
-        <Link href={`/tickers/${encodeURIComponent(symbol)}`} className="inline-flex items-center gap-2 self-start text-sm font-medium text-kumo-link hover:underline">
-          <ArrowSquareOutIcon size={16} aria-hidden /> Open the full analysis
-        </Link>
-      )}
-      <Verdict row={row} />
+      {/* The panel carries the verdict in its one-line header (Kevin 2026-11-23: « prend trop de place pour rien »). */}
+      {variant === "page" && <Verdict row={row} />}
 
       {chart.bars.length > 0 && (
         <PriceFairValueChart symbol={symbol} bars={chart.bars} fair={chart.fair} currency={chart.fair?.currency ?? row.currency} sources={chart.sources} moves={variant === "page" ? moves : []} priceHref={itemHref(symbol, "price")} fairHref={chart.fair ? itemHref(symbol, "fair-value") : null} />
@@ -270,7 +267,7 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
       <Section title="Narrative">
         {narrative ? (
           <>
-            <p className={`max-w-prose leading-snug text-kumo-strong ${variant === "page" ? "text-2xl" : "text-xl"}`}>{narrative}</p>
+            <p className={`max-w-prose leading-snug text-kumo-default ${variant === "page" ? "text-2xl" : "text-xl"}`}><Rich text={narrative} /></p>
             <Link href={itemHref(symbol, "narrative", keep)} scroll={false} className="inline-flex items-center gap-1 self-start text-sm font-medium text-kumo-link hover:underline">
               Why <CaretRightIcon size={14} weight="bold" aria-hidden />
             </Link>
@@ -360,4 +357,29 @@ function newsRows(symbol: string, objects: Analysis["objects"], keep: ThesisSide
 /** Title of the panel / page: the company and its ticker. */
 export function analysisTitle(row: BoardRow) {
   return row.name ?? row.symbol;
+}
+
+/**
+ * The ticker panel's header in ONE line (Kevin 2026-11-23: name, ticker, verdict were four stacked lines): the name,
+ * the ticker in grey, the signal and its strength; the full analysis opens from the icon beside the close button.
+ */
+export function PanelHeading({ row }: { row: BoardRow }) {
+  return (
+    <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+      <span className="truncate">{analysisTitle(row)}</span>
+      <span className="font-mono text-sm font-normal text-kumo-subtle">{row.symbol}</span>
+      <span className="flex items-center gap-2 text-sm font-normal">
+        <CallBadge call={row.call} />
+        <TickerTag row={row} />
+      </span>
+    </span>
+  );
+}
+
+export function OpenFullAnalysis({ symbol }: { symbol: string }) {
+  return (
+    <Link href={`/tickers/${encodeURIComponent(symbol)}`} title="Open the full analysis" aria-label="Open the full analysis" className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-kumo-subtle transition-colors hover:bg-kumo-tint hover:text-kumo-strong">
+      <ArrowSquareOutIcon size={18} aria-hidden />
+    </Link>
+  );
 }

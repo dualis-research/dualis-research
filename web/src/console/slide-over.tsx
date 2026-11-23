@@ -16,6 +16,7 @@ export function SlideOver({
   size = "md",
   back = false,
   onClose,
+  actions,
   children,
 }: {
   title: React.ReactNode;
@@ -27,6 +28,8 @@ export function SlideOver({
   back?: boolean;
   /** Closes without a navigation (a panel opened by `item-nav.ts`); default: go to `closeHref`. */
   onClose?: () => void;
+  /** Icons beside the close button (the ticker panel's « open the full analysis »). */
+  actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -36,7 +39,7 @@ export function SlideOver({
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-40 bg-black/20 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0" />
         <Dialog.Popup className={`fixed inset-y-0 right-0 z-50 flex ${size === "lg" ? "w-[min(680px,100vw)]" : "w-[min(480px,100vw)]"} flex-col bg-kumo-base shadow-2xl ring-1 ring-kumo-line outline-none transition-[transform,opacity] duration-200 ease-out data-[ending-style]:translate-x-6 data-[ending-style]:opacity-0 data-[starting-style]:translate-x-6 data-[starting-style]:opacity-0`}>
-          <header className="flex items-start justify-between gap-3 border-b border-kumo-hairline px-4 py-4 sm:px-6">
+          <header className={`flex ${subtitle ? "items-start" : "items-center"} justify-between gap-3 border-b border-kumo-hairline px-4 py-4 sm:px-6`}>
             {back && (
               <Button
                 variant="ghost"
@@ -52,6 +55,7 @@ export function SlideOver({
               <Dialog.Title className="text-lg font-semibold text-kumo-strong">{title}</Dialog.Title>
               {subtitle && <div className="mt-0.5 text-sm text-kumo-subtle">{subtitle}</div>}
             </div>
+            {actions}
             <Dialog.Close
               render={(props) => <Button {...props} variant="ghost" shape="square" size="sm" icon={XIcon} aria-label="Close" />}
             />

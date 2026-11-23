@@ -1,4 +1,5 @@
 import { Badge } from "@cloudflare/kumo";
+import { Rich } from "@/console/rich";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import { day, price, relativeTime, signedPct, utc } from "@/console/format";
 import { signalLabel } from "@/console/live-test";
@@ -192,7 +193,7 @@ export default async function LiveTestPage({ searchParams }: { searchParams: Pro
                       </span>
                     )}
                   </KTableCell>
-                  <KTableCell className="max-w-md py-4 pr-6 text-sm text-kumo-default">{e.updateNote ?? empty}</KTableCell>
+                  <KTableCell className="max-w-md py-4 pr-6 text-sm text-kumo-default">{e.updateNote ? <Rich text={e.updateNote} /> : empty}</KTableCell>
                 </KTableRow>
               ))}
             </Table>

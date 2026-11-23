@@ -1,4 +1,5 @@
 import { Badge, Button } from "@cloudflare/kumo";
+import { Rich } from "@/console/rich";
 import Link from "@/console/link";
 import { FORMAT_LABEL, publishLink, X_LIMIT } from "@/collectors/dimensions/content-drafts/format";
 import { CopyButton } from "@/console/content-ui";
@@ -99,7 +100,7 @@ export function DraftPanel({ draft, closeHref, visuals = [] }: { draft: GoldCont
               )}
             </Fact>
           )}
-          {idea && <Fact label="Why now">{idea.angle}</Fact>}
+          {idea && <Fact label="Why now"><Rich text={idea.angle} /></Fact>}
           <Fact label="Charts">
             {draft.charts?.length ? (
               draft.charts.map((c) => c.title).join(", ")
