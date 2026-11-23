@@ -907,7 +907,7 @@ type PdfExtraction = {
 type ReportKind = "annual" | "interim";
 type PdfDocument = { title: string; url: string; filedAt: string };
 type PdfRead = { kind: ReportKind; version: string; document: PdfDocument; pages: PdfPage[]; extraction: PdfExtraction; model: string };
-/** v2: one read per report (the latest annual one and the interim one filed after it). v1 = one annual report, top level. */
+/** v2: one read per report (every annual and interim report of 3 years since HALF-YEAR-KPI-1123). v1 = one annual report, top level. */
 type PdfPayload = { version: string; documents: PdfRead[] } | { version: string; document: PdfDocument; pages: PdfPage[]; extraction: PdfExtraction; model: string };
 
 /** Pages worth reading: the 5-year summary, the primary statements, the segment note. */
@@ -983,20 +983,36 @@ const REPORT_TITLES: Record<ReportKind, RegExp> = {
   interim: /^interim report( \d{4}(\/\d{2,4})?)?$/i,
 };
 
-/** The latest annual report PDF, and the latest interim report PDF when it was filed after it (an older one adds nothing). */
-export async function latestReports(ctx: SourceContext, symbol: string): Promise<{ kind: ReportKind; doc: PdfDocument }[]> {
+/**
+ * How far back the report PDFs are read (HALF-YEAR-KPI-1123): every half year of 3 years, as the KPI drivers test them.
+ * An interim report prints its six months and the same six months a year earlier; an annual report its fiscal year
+ * (the second half = the fiscal year minus the first half, `secondHalves` in derive.ts).
+ */
+export const REPORT_HISTORY_YEARS = 3;
+
+/**
+ * Every annual and interim report PDF filed in the last 3 years (the latest annual one whatever its date), newest
+ * first, annual reports before interim ones: the first value read per (period, line) wins, so a restated comparative
+ * beats the original and an annual year-end balance sheet beats the interim reprint.
+ */
+export async function latestReports(ctx: SourceContext, symbol: string, now = new Date()): Promise<{ kind: ReportKind; doc: PdfDocument }[]> {
   if (!ctx.db) return [];
   const rows = await ctx.db
     .select({ title: gold.filings.title, url: gold.filings.url, filedAt: gold.filings.filedAt })
     .from(gold.filings)
     .where(eq(gold.filings.symbol, symbol))
     .orderBy(desc(gold.filings.filedAt));
-  const latest = (kind: ReportKind) => rows.find((r) => r.url?.endsWith(".pdf") && REPORT_TITLES[kind].test(r.title.trim()));
-  const annual = latest("annual");
-  const interim = latest("interim");
+  const since = new Date(now.getTime() - REPORT_HISTORY_YEARS * 365.25 * 86_400_000);
   const out: { kind: ReportKind; doc: PdfDocument }[] = [];
-  if (annual?.url) out.push({ kind: "annual", doc: { title: annual.title, url: annual.url, filedAt: annual.filedAt.toISOString() } });
-  if (interim?.url && (!annual || interim.filedAt > annual.filedAt)) out.push({ kind: "interim", doc: { title: interim.title, url: interim.url, filedAt: interim.filedAt.toISOString() } });
+  for (const kind of ["annual", "interim"] as const) {
+    const reports = rows.filter((r) => r.url?.endsWith(".pdf") && REPORT_TITLES[kind].test(r.title.trim()));
+    const seen = new Set<string>();
+    reports.forEach((r, i) => {
+      if (!r.url || seen.has(r.url) || (r.filedAt < since && !(kind === "annual" && i === 0))) return;
+      seen.add(r.url);
+      out.push({ kind, doc: { title: r.title, url: r.url, filedAt: r.filedAt.toISOString() } });
+    });
+  }
   return out;
 }
 
@@ -1066,8 +1082,9 @@ export const pdfExtract: FinancialsSource = {
         out.push({ periodType: pt, periodEnd: sg.periodEnd, line: segmentLine(sg.axis, sg.name), value: v * scale, currency, label: sg.name, consolidated: true, citation: cite(sg.page, sg.printed) });
       }
     }
-    // One value per (period, line): the annual report first (an interim report reprints its year-end balance sheet), then
-    // the first page cited (the summary / statement before the notes).
+    // One value per (period, line): annual reports first (an interim report reprints its year-end balance sheet), each
+    // kind newest first (a restated comparative beats the original), then the first page cited (the summary / statement
+    // before the notes).
     const seen = new Map<string, LineReading>();
     for (const r of out) if (!seen.has(`${r.periodType}|${r.periodEnd}|${r.line}`)) seen.set(`${r.periodType}|${r.periodEnd}|${r.line}`, r);
     return [...seen.values()];

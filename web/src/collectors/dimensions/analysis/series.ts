@@ -9,7 +9,7 @@ import { LINES, type LineKey } from "../financials/lines";
  * The stored series a ticker's Exhibits can draw from: every number on a chart comes from here (gold), never from
  * the model. Keys:
  *   line:<line> / hline:<line> / qline:<line>   reported line, fiscal years / half years / quarters (gold.financial_lines)
- *   metric:<m> / qmetric:<m>          derived metric (gold.financial_metrics)
+ *   metric:<m> / hmetric:<m> / qmetric:<m>   derived metric, fiscal years / half years / quarters (gold.financial_metrics)
  *   consensus:<m> / actual:<m>        analyst mean vs reported actual per fiscal year (gold.consensus)
  *   qconsensus:<m> / qactual:<m>      same per quarter
  *   price                             month-end close, 5 years
@@ -65,7 +65,9 @@ export async function seriesCatalog(db: Db, symbol: string): Promise<Map<string,
   }
   for (const m of await db.select().from(financialMetrics).where(eq(financialMetrics.symbol, symbol))) {
     const name = METRIC_NAMES[m.metric] ?? titleCase(m.metric);
-    put(`${m.periodType === "year" ? "metric" : "qmetric"}:${m.metric}`, { label: m.periodType === "year" ? name : `${name} (quarterly)`, unit: m.unit, currency: m.currency, periodType: m.periodType }, m.periodEnd, m.value, m.sources);
+    const prefix = { year: "metric", half: "hmetric", quarter: "qmetric" }[m.periodType];
+    const suffix = { year: "", half: " (half-yearly)", quarter: " (quarterly)" }[m.periodType];
+    put(`${prefix}:${m.metric}`, { label: `${name}${suffix}`, unit: m.unit, currency: m.currency, periodType: m.periodType }, m.periodEnd, m.value, m.sources);
   }
   for (const c of await db.select().from(consensus).where(eq(consensus.symbol, symbol))) {
     const q = c.periodType === "quarter";
@@ -76,6 +78,21 @@ export async function seriesCatalog(db: Db, symbol: string): Promise<Map<string,
     if (c.actual !== null) put(`${q ? "qactual" : "actual"}:${c.metric}`, { label: `${name}, reported${q ? " (quarterly)" : ""}`, unit, currency: c.currency, periodType: c.periodType }, c.periodEnd, c.actual, srcOf("actual"));
   }
   return out;
+}
+
+/**
+ * The finest period a company reports for a figure since a date: a yearly key (`metric:`, `line:`) falls back on its
+ * quarterly twin (`qmetric:`), else its half-yearly one (`hmetric:`, a company reporting every six months), when that
+ * twin has at least 2 points since then; else the key itself.
+ */
+export function finestSeries(catalog: Map<string, StoredSeries>, key: string, since: string): StoredSeries | undefined {
+  if (key.startsWith("metric:") || key.startsWith("line:")) {
+    for (const p of ["q", "h"]) {
+      const twin = catalog.get(`${p}${key}`);
+      if (twin && [...twin.points.keys()].filter((d) => d >= since).length >= 2) return twin;
+    }
+  }
+  return catalog.get(key);
 }
 
 /** How many periods an exhibit shows per period type. */

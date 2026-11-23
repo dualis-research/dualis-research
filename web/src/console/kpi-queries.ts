@@ -4,7 +4,7 @@ import { getDb } from "@/db/client";
 import { kpiDrivers, type KpiTestRow } from "@/db/schema/analysis";
 import { priceBars } from "@/db/schema/gold";
 import { localIndex } from "@/collectors/benchmark";
-import { seriesCatalog } from "@/collectors/dimensions/analysis/series";
+import { finestSeries, seriesCatalog } from "@/collectors/dimensions/analysis/series";
 import { betaBefore, KPI_YEARS } from "@/collectors/dimensions/kpi-drivers";
 import { withBold } from "./emphasis";
 
@@ -32,12 +32,7 @@ export async function kpiDriverChart(k: { symbol: string; series: string | null;
   ]);
   const since = new Date(Date.now() - KPI_YEARS * 365.25 * 86_400_000).toISOString().slice(0, 10);
   const ratio = k.approximation?.match(/^\s*([\w:.-]+)\s*\/\s*([\w:.-]+)\s*$/);
-  // The finest period the company reports draws the KPI (a yearly key falls back on its quarterly twin, e.g. qmetric:).
-  const finest = (key: string) => {
-    const twin = key.startsWith("metric:") ? `q${key}` : key.startsWith("line:") ? `q${key}` : null;
-    const q = twin ? catalog.get(twin) : undefined;
-    return q && [...q.points.keys()].some((d) => d >= since) ? q : catalog.get(key);
-  };
+  const finest = (key: string) => finestSeries(catalog, key, since);
   const top = k.series ? finest(k.series) : ratio ? finest(ratio[1]) : undefined;
   const bottom = ratio ? finest(ratio[2]) : undefined;
   const kpi = top

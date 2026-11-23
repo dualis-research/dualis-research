@@ -68,12 +68,58 @@ export function bridgeAt(lines: Line[], periodType: string, periodEnd: string): 
   return { total: parts.reduce((s, p) => s + p.sign * p.value, 0), parts };
 }
 
+type GoldLine = Omit<GoldFinancialLine, "rebuiltAt" | "derivation"> & { derivation?: GoldFinancialLine["derivation"] };
+
+/** A flow over a period, so two periods add up: income and cash flow lines, segment revenue, order intake. Never a balance, a per-share figure or a share count. */
+function isFlow(l: Pick<GoldLine, "line" | "statement">): boolean {
+  if (/^(eps-|shares-)/.test(l.line)) return false;
+  return l.statement === "income" || l.statement === "cashflow" || l.statement === "segment" || l.line === "order-intake";
+}
+
+/**
+ * The second half of a fiscal year a company reports every six months (Hong Kong, HALF-YEAR-KPI-1123): the annual
+ * report prints the fiscal year and the interim report the first half, never the second one. Second half = fiscal
+ * year - first half, for every flow line both print in one currency, only when no document printed that half itself.
+ * Each input keeps its own citation in `derivation`. Thierry 2026-11-11: skipping a half read revenue as « stalled ».
+ */
+export function secondHalves(lines: GoldLine[]): GoldLine[] {
+  const at = new Map(lines.map((l) => [`${l.periodType}|${l.periodEnd}|${l.line}`, l]));
+  const out: GoldLine[] = [];
+  for (const fy of lines) {
+    if (fy.periodType !== "year" || !isFlow(fy) || at.has(`half|${fy.periodEnd}|${fy.line}`)) continue;
+    const h1 = at.get(`half|${minusMonths(fy.periodEnd, 6)}|${fy.line}`);
+    if (!h1 || h1.currency !== fy.currency) continue;
+    const input = (l: GoldLine) => ({ periodType: l.periodType, periodEnd: l.periodEnd, line: l.line, value: l.value, sources: l.sources, citation: l.citation ?? null });
+    out.push({
+      symbol: fy.symbol,
+      periodType: "half",
+      periodEnd: fy.periodEnd,
+      line: fy.line,
+      statement: fy.statement,
+      value: fy.value - h1.value,
+      currency: fy.currency,
+      label: `Second half: fiscal year ${fy.periodEnd} minus the six months to ${h1.periodEnd}`,
+      consolidated: fy.consolidated,
+      sources: [...new Set([...fy.sources, ...h1.sources])].sort(),
+      alternatives: [],
+      citation: null,
+      derivation: { formula: `fiscal year to ${fy.periodEnd} - first half to ${h1.periodEnd}`, inputs: [input(fy), input(h1)] },
+    });
+  }
+  return out;
+}
+
+/** The periods whose flows add up to the 12 months to a period end: the fiscal year, the last 2 halves or the last 4 quarters. */
+const LTM_STEPS = { year: [0], half: [0, 6], quarter: [0, 3, 6, 9] } as const;
+const LTM_WORDS = { year: "fiscal year", half: "last 2 reported half years", quarter: "last 4 reported quarters" } as const;
+const SAME_PERIOD = { year: "prior fiscal year", half: "same half prior year", quarter: "same quarter prior year" } as const;
+
 export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
   const currency = reportingCurrency(lines);
   const at = new Map(lines.map((l) => [`${l.periodType}|${l.periodEnd}|${l.line}`, l]));
   const get = (pt: string, pe: string, line: string) => at.get(`${pt}|${pe}|${line}`);
-  // Metrics per fiscal year and quarter; half years feed the revenue streams (`streams.ts`).
-  const periods = [...new Set(lines.filter((l) => l.periodType === "year" || l.periodType === "quarter").map((l) => `${l.periodType}|${l.periodEnd}`))].map((k) => k.split("|") as ["year" | "quarter", string]);
+  // Metrics per fiscal year, half year (companies that report every six months) and quarter.
+  const periods = [...new Set(lines.filter((l) => l.periodType === "year" || l.periodType === "half" || l.periodType === "quarter").map((l) => `${l.periodType}|${l.periodEnd}`))].map((k) => k.split("|") as ["year" | "half" | "quarter", string]);
   const out: Metric[] = [];
   const metrics = new Map<string, number>();
 
@@ -112,12 +158,16 @@ export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
     const margin = (metric: string, line: string) => add(metric, "ratio", `${line} / revenue`, [g(line), g("revenue")], ([x, r]) => (r > 0 ? x / r : null));
     margin("gross-margin", "gross-profit");
     margin("operating-margin", "operating-income");
+    // A statement with no operating profit line (Hong Kong IFRS layouts go from expenses straight to « profit before
+    // taxation »): operating margin = (pretax income + finance costs) / revenue, the formula says so, never an estimate.
+    if (!g("operating-income"))
+      add("operating-margin", "ratio", "(pretax income + interest expense) / revenue, no operating income line printed", [g("pretax-income"), g("interest-expense"), g("revenue")], ([p, i, r]) => (r > 0 ? (p + Math.abs(i)) / r : null));
     margin("net-margin", "net-income");
-    add("revenue-growth", "ratio", pt === "year" ? "revenue / prior fiscal year revenue - 1" : "revenue / same quarter prior year - 1", [g("revenue"), prior("revenue")], ([r, p]) => (p > 0 ? r / p - 1 : null));
+    add("revenue-growth", "ratio", `revenue / ${SAME_PERIOD[pt]} revenue - 1`, [g("revenue"), prior("revenue")], ([r, p]) => (p > 0 ? r / p - 1 : null));
     // The order book against revenue (Thierry 2026-11-12: « over a hundred percent… ideally 200% » of sales): a balance
     // at the period end over the revenue of the 12 months to it; order intake over the same period's revenue.
-    const ltmRevenue = pt === "year" ? [g("revenue")] : [0, 3, 6, 9].map((n) => get("quarter", minusMonths(pe, n), "revenue"));
-    const ltmWords = pt === "year" ? "fiscal year revenue" : "revenue of the last 4 reported quarters";
+    const ltmRevenue = LTM_STEPS[pt].map((n) => get(pt, minusMonths(pe, n), "revenue"));
+    const ltmWords = pt === "year" ? "fiscal year revenue" : `revenue of the ${LTM_WORDS[pt]}`;
     for (const line of ["backlog", "remaining-performance-obligations"] as const) {
       add(`${line}-to-revenue`, "multiple", `${line.replace(/-/g, " ")} / ${ltmWords}`, [g(line), ...ltmRevenue], ([b, ...r]) => {
         const rev = r.reduce((a, x) => a + x, 0);
@@ -126,7 +176,7 @@ export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
       add(`${line}-growth`, "ratio", `${line.replace(/-/g, " ")} / the same date a year earlier - 1`, [g(line), prior(line)], ([b, p]) => (p > 0 ? b / p - 1 : null));
     }
     add("book-to-bill", "multiple", "order intake / revenue of the same period", [g("order-intake"), g("revenue")], ([o, r]) => (r > 0 ? o / r : null));
-    add("operating-income-growth", "ratio", pt === "year" ? "operating income / prior fiscal year - 1" : "operating income / same quarter prior year - 1", [g("operating-income"), prior("operating-income")], ([r, p]) => (p > 0 ? r / p - 1 : null));
+    add("operating-income-growth", "ratio", `operating income / ${SAME_PERIOD[pt]} - 1`, [g("operating-income"), prior("operating-income")], ([r, p]) => (p > 0 ? r / p - 1 : null));
   }
   // Second pass: metrics on metrics (EBITDA margin, FCF margin) and market values at each period end.
   for (const [pt, pe] of periods) {
@@ -144,8 +194,8 @@ export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
     // next to market cap): the debt at the period end over the EBITDA of the 12 months to it (the fiscal year, or the
     // last 4 reported quarters); interest cover = operating income / interest expense over the same 12 months.
     // No ratio when EBITDA (or operating income) is zero or negative: the multiple means nothing there.
-    const ltmQuarters = pt === "year" ? [pe] : [0, 3, 6, 9].map((n) => minusMonths(pe, n));
-    const ltmWords = pt === "year" ? "fiscal year" : "last 4 reported quarters";
+    const ltmQuarters = LTM_STEPS[pt].map((n) => minusMonths(pe, n));
+    const ltmWords = LTM_WORDS[pt];
     const ltmLines = (line: string) => ltmQuarters.map((p) => get(pt, p, line));
     const ltmEbitda = ltmQuarters.map((p) => metrics.get(`${pt}|${p}|ebitda`));
     if (ltmEbitda.every((v) => v !== undefined)) {

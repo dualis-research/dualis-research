@@ -189,7 +189,7 @@ export async function driverMoveLines(db: Db, moveIds: string[]): Promise<string
 export type DriverExhibit = { title: string; series: string[] };
 
 /** Series families whose keys name the same figure at another period length (`line:revenue`, `qline:revenue`...). */
-const FAMILIES = [["line", "hline", "qline", "metric", "qmetric"], ["consensus", "qconsensus", "actual", "qactual"]];
+const FAMILIES = [["line", "hline", "qline", "metric", "hmetric", "qmetric"], ["consensus", "qconsensus", "actual", "qactual"]];
 /**
  * The stored series that belong to a driver: its exhibits' keys, the same figure at the other period lengths, and the
  * figure's derived ratios (`revenue` -> `revenue-growth`, `net-debt` -> `net-debt-to-ebitda`). The share price is the
