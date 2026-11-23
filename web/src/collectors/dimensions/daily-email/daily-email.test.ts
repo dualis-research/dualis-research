@@ -22,10 +22,12 @@ const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
 type Sent = { to: string[]; subject: string; text: string; html: string };
 let sent: Sent[];
 let claudeCalls: number;
+let prompts: string[];
 
 /** Fake Claude: an item is material when its title says « results » or « price war »; everything else is noise. */
 const complete: Complete = async ({ prompt }) => {
   claudeCalls += 1;
+  prompts.push(prompt);
   const items = prompt
     .split("\n")
     .filter((l) => /^i\d+ \|/.test(l))
@@ -57,6 +59,7 @@ beforeEach(async () => {
   ({ db, close } = await testDb());
   sent = [];
   claudeCalls = 0;
+  prompts = [];
   await runDimension(db, watchlist, { trigger: "test", ctx: { env: { REPO_ROOT }, fetch: (() => { throw new Error("no network"); }) as unknown as typeof fetch } });
   for (const p of [
     { symbol: "MNRO", name: "Monro, Inc.", description: "Auto service and tire shops." },
@@ -111,6 +114,17 @@ describe("daily-email dimension", () => {
     await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
     expect(claudeCalls).toBe(2);
     expect(sent).toHaveLength(1);
+  });
+
+  it("a later item of the same ticker is judged knowing what was already told", async () => {
+    await addNews("MNRO", "Monro third quarter results beat", ["name"], hoursAgo(5));
+    await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
+    await addNews("MNRO", "Monro results: more coverage of the same beat", ["name"], hoursAgo(1));
+    await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).not.toContain("Already told");
+    expect(prompts[1]).toContain("Already told to the analyst");
+    expect(prompts[1]).toContain("- Summary of Monro third quarter results beat");
   });
 
   it("nothing material: a digest with no item, no email", async () => {

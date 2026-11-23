@@ -29,8 +29,10 @@ const NEWS_WINDOW_MS = 48 * 3_600_000;
 const FILING_WINDOW_MS = 3 * 86_400_000;
 /** A digest never reaches further back than this, even when no email went out for days. */
 const DIGEST_MAX_MS = 3 * 86_400_000;
-/** Items per Claude call. */
-export const BATCH = 40;
+/** Items per Claude call: a ticker's whole day in one call, so one story told by ten outlets is told once. */
+export const BATCH = 150;
+/** At most this many items per company in one email (in the prompt: the model keeps the most important ones). */
+export const MAX_PER_COMPANY = 3;
 const ABOUT_CHARS = 400;
 
 type Kind = DigestItem["kind"];
@@ -45,16 +47,17 @@ export type Candidate = {
   /** Industry items: the industry terms that found it. Filings: the form. */
   note: string | null;
 };
-type Batch = { symbol: string; company: string; about: string | null; items: Candidate[] };
+type Batch = { symbol: string; company: string; about: string | null; items: Candidate[]; told: string[] };
 const planned = new Map<string, Batch>();
 
 export type Verdict = { id: string; material: boolean; summary: string | null; why: string | null };
 
 const SYSTEM = [
-  "You screen the latest news and filings for an equity analyst who follows one listed company. For each item, decide whether it is MATERIAL: a fact that can change what the business earns or is worth.",
-  "Material, on the company: results, guidance, a profit warning, a large contract or customer won or lost, an acquisition or disposal, a capital raise, buyback or dividend change, a management or board change, a regulatory or legal decision, a filing with such content.",
-  "Material, on its industry (items marked industry): a fact about a competitor, supplier, customer or the company's own market that bears on its business: their results, prices, capacity, demand, a regulation or subsidy of that space.",
-  "Not material: macro news (interest rates, oil, currencies, inflation, war, stock indexes), share price recaps or technical analysis with no business fact, stock promotion and listicles, routine filings with no business content (a monthly share count return, a meeting notice, a director's dealing form of no size), articles about a different company with a similar name, and a story already told by another item of the list (keep only the most informative one).",
+  "You screen the latest news and filings for an equity analyst who follows one listed company among 50. He reads your picks in a two-minute morning email, so the bar is high: pick an item only when it tells him a NEW FACT that can change what this business earns or is worth.",
+  "Material, on the company: results, guidance, a profit warning or alert, a large contract or customer won or lost, an acquisition or disposal, a capital raise, buyback or dividend change, a management or board change, a regulatory or legal decision on it, a filing with such content.",
+  "Material, on its industry (items marked industry): a new fact from a DIRECT competitor, supplier or customer (their results, guidance, capacity, prices, a big contract) or a regulation, subsidy or ban decided for the company's own market.",
+  "Not material: macro news (interest rates, oil, currencies, inflation, war, stock indexes, trade policy in general), share price recaps or technical analysis, opinion pieces, previews, explainers and analyses that add no new fact, stock promotion and listicles, routine filings with no business content (a monthly share count return, a meeting notice), product promotions and sales events, articles about a different company with a similar name, old facts re-told, and any story already in the list or in the already-told list (one story = one item, whichever outlet).",
+  `Keep at most ${MAX_PER_COMPANY} material items for this company: the ones that matter most to its business. Every other item is not material.`,
   "For each item answer: material (true or false); summary = what happened, ONE plain sentence of at most 25 words with the figure when the item gives one; why = for a material item why it matters for this company's business in at most 20 words, else why it is left out in at most 10 words.",
   "Plain English, never a dash, never a price target, upside or advice.",
   'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "..."}, ...]} with every id of the list exactly once.',
@@ -68,7 +71,8 @@ export function judgePrompt(b: Batch): string {
     const summary = c.summary ? ` | ${c.summary.replace(/\s+/g, " ").slice(0, 300)}` : "";
     return `i${i + 1} | ${what} | ${isoDay(c.at)} | ${c.publisher ?? "unknown source"} | ${c.title}${summary}`;
   });
-  return [`Company: ${b.company} (${b.symbol})`, b.about ? `What it does: ${b.about.slice(0, ABOUT_CHARS)}` : null, "", "Items:", ...lines].filter((l) => l !== null).join("\n");
+  const told = b.told.length ? ["", "Already told to the analyst in the last days (never pick the same story again):", ...b.told.map((t) => `- ${t}`)] : [];
+  return [`Company: ${b.company} (${b.symbol})`, b.about ? `What it does: ${b.about.slice(0, ABOUT_CHARS)}` : null, ...told, "", "Items:", ...lines].filter((l) => l !== null).join("\n");
 }
 
 /** Claude's answer -> one verdict per item, in the list's order. Throws on an id missing, extra or malformed. */
@@ -141,11 +145,14 @@ export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()
       .where(and(inArray(goldNewsLinks.symbol, symbols), sql`coalesce(${goldNewsItems.publishedAt}, ${goldNewsItems.firstSeenAt}) >= ${new Date(now.getTime() - NEWS_WINDOW_MS).toISOString()}::timestamptz`)),
     db.select().from(goldFilings).where(and(inArray(goldFilings.symbol, symbols), gte(goldFilings.filedAt, new Date(now.getTime() - FILING_WINDOW_MS)))),
     db
-      .select({ symbol: dailyItemVerdicts.symbol, kind: dailyItemVerdicts.kind, itemId: dailyItemVerdicts.itemId })
+      .select({ symbol: dailyItemVerdicts.symbol, kind: dailyItemVerdicts.kind, itemId: dailyItemVerdicts.itemId, material: dailyItemVerdicts.material, summary: dailyItemVerdicts.summary, createdAt: dailyItemVerdicts.createdAt })
       .from(dailyItemVerdicts)
       .where(gte(dailyItemVerdicts.createdAt, new Date(now.getTime() - 4 * FILING_WINDOW_MS))),
   ]);
   const done = new Set(judged.map((j) => `${j.symbol}|${j.kind}|${j.itemId}`));
+  const toldSince = now.getTime() - DIGEST_MAX_MS;
+  const told = new Map<string, string[]>();
+  for (const j of judged) if (j.material && j.summary && j.createdAt.getTime() >= toldSince) told.set(j.symbol, [...(told.get(j.symbol) ?? []), j.summary]);
   const per = new Map<string, Candidate[]>();
   const add = (symbol: string, c: Candidate) => {
     if (done.has(`${symbol}|${c.kind}|${c.itemId}`)) return;
@@ -171,14 +178,14 @@ export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()
     const items = (per.get(t.symbol) ?? []).sort((a, b) => (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0));
     for (let i = 0; i < items.length; i += BATCH) {
       const key = `${t.symbol}|${i / BATCH + 1}`;
-      planned.set(key, { symbol: t.symbol, company: t.name ?? t.symbol, about: t.about, items: items.slice(i, i + BATCH) });
+      planned.set(key, { symbol: t.symbol, company: t.name ?? t.symbol, about: t.about, items: items.slice(i, i + BATCH), told: told.get(t.symbol) ?? [] });
       subjects.push(key);
     }
   }
   return subjects;
 }
 
-type JudgePayload = { batch: Omit<Batch, "items"> & { items: (Omit<Candidate, "at"> & { at: string | null })[] }; model: string; verdicts: Verdict[] };
+type JudgePayload = { batch: Omit<Batch, "items" | "told"> & { items: (Omit<Candidate, "at"> & { at: string | null })[] }; model: string; verdicts: Verdict[] };
 
 export type Recipient = { email: string; role: string };
 /** The MAIL_RECIPIENTS secret: [{email, role}]. Every role asked must have a recipient (never a silent half-send). */
