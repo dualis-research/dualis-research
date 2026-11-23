@@ -46,7 +46,9 @@ export function moveArrows(
 
 /** The words beside an arrow's number: the candidates that changed, then what happened; « No known cause » when neither. */
 export function arrowWords(a: Pick<MoveArrow, "candidates" | "fact">): string {
-  const parts = [a.candidates.length ? `${a.candidates.join(", ")} changed` : null, a.fact].filter((x): x is string => !!x);
+  // A few words (Thierry: « what happened here »): two candidates by name, the rest counted.
+  const named = a.candidates.length > 2 ? `${a.candidates.slice(0, 2).join(", ")} and ${a.candidates.length - 2} more` : a.candidates.join(" and ");
+  const parts = [a.candidates.length ? `${named} changed` : null, a.fact].filter((x): x is string => !!x);
   return parts.length ? parts.join(". ") : NO_KNOWN_CAUSE;
 }
 

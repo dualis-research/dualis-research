@@ -24,6 +24,8 @@ describe("MOVE-ARROWS-1123: what happened at each unusual move, read from what i
     expect(arrowWords(arrows[0])).toBe("Services revenue growth changed. Interim results showed services revenue up 9.6%.");
     expect(arrowWords(arrows[1])).toBe(NO_KNOWN_CAUSE);
     expect(arrowWords(arrows[2])).toBe("Services revenue growth changed");
+    expect(arrowWords({ candidates: ["A", "B", "C", "D"], fact: null })).toBe("A, B and 2 more changed");
+    expect(arrowWords({ candidates: ["A", "B"], fact: null })).toBe("A and B changed");
   });
 
   it("merges same-direction arrows days apart into one mark, never an up with a down", () => {
