@@ -138,7 +138,7 @@ export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()
       .select({ symbol: goldNewsLinks.symbol, kinds: goldNewsLinks.matchKinds, terms: goldNewsLinks.matchedTerms, item: goldNewsItems })
       .from(goldNewsLinks)
       .innerJoin(goldNewsItems, eq(goldNewsItems.id, goldNewsLinks.newsItemId))
-      .where(and(inArray(goldNewsLinks.symbol, symbols), sql`coalesce(${goldNewsItems.publishedAt}, ${goldNewsItems.firstSeenAt}) >= ${new Date(now.getTime() - NEWS_WINDOW_MS)}`)),
+      .where(and(inArray(goldNewsLinks.symbol, symbols), sql`coalesce(${goldNewsItems.publishedAt}, ${goldNewsItems.firstSeenAt}) >= ${new Date(now.getTime() - NEWS_WINDOW_MS).toISOString()}::timestamptz`)),
     db.select().from(goldFilings).where(and(inArray(goldFilings.symbol, symbols), gte(goldFilings.filedAt, new Date(now.getTime() - FILING_WINDOW_MS)))),
     db
       .select({ symbol: dailyItemVerdicts.symbol, kind: dailyItemVerdicts.kind, itemId: dailyItemVerdicts.itemId })
