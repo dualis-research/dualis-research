@@ -8,6 +8,9 @@ import { CanvasRenderer } from "echarts/renderers";
 
 import { type ExhibitPeriod, type ExhibitUnit, formatExhibitValue, formatUnit, monthYear, periodLabel } from "./exhibit-format";
 import { FitWidth } from "./fit-width";
+import { nearestIndex, useChartSource } from "./chart-source";
+import { itemHref } from "./item-href";
+import { sourceItemId } from "./sourced";
 import { usePageDark } from "./use-page-dark";
 import { COLOR } from "@/design/tokens";
 
@@ -16,18 +19,12 @@ echarts.use([BarChart, LineChart, GridComponent, TooltipComponent, MarkLineCompo
 /**
  * A driver's data as a sell-side research exhibit (the look of a bank research note or an Excel chart):
  * numbered title, unit line, flat navy columns for reported periods or a thin line for market prices,
- * black baseline, light horizontal gridlines only, value labels on columns, source line underneath.
+ * black baseline, light horizontal gridlines only, value labels on columns. No source line (SOURCES-ONE-CLICK-1123):
+ * with a `symbol`, a click on the chart opens the source of the point under the pointer.
  */
 
 export const INK = { light: { navy: COLOR["brand-chart"].light, text: "#1f2328", muted: "#6b7280", grid: "#e3e5e8", axis: "#1f2328" }, dark: { navy: COLOR["brand-chart"].dark, text: "#e6e8eb", muted: "#9aa1ab", grid: "#2b3038", axis: "#c9ced6" } };
 export const FONT = "Arial, Helvetica, sans-serif";
-
-export const SOURCE_LABEL: Record<string, string> = {
-  "yahoo-fundamentals": "company reports via Yahoo Finance",
-  fred: "FRED, Federal Reserve Bank of St. Louis",
-  "yahoo-chart": "Yahoo Finance",
-  worldbank: "World Bank",
-};
 
 export type { ExhibitPeriod };
 
@@ -38,6 +35,7 @@ export function DriverExhibit({
   period,
   points,
   sources,
+  symbol,
 }: {
   number: number;
   title: string;
@@ -45,6 +43,8 @@ export function DriverExhibit({
   period: ExhibitPeriod;
   points: { date: string; value: number }[];
   sources: string[];
+  /** The ticker whose Analysis page opens a point's source; none = the chart is not clickable. */
+  symbol?: string;
 }) {
   const dark = usePageDark();
   const ink = dark ? INK.dark : INK.light;
@@ -52,6 +52,15 @@ export function DriverExhibit({
   const fmt = (v: number) => formatExhibitValue(v, unit);
   const hasNegative = points.some((p) => p.value < 0);
   const text = { fontFamily: FONT, fontSize: 11, color: ink.muted };
+  const times = points.map((p) => Date.parse(`${p.date}T00:00:00Z`));
+  const source = useChartSource(
+    symbol
+      ? (x) => {
+          const p = points[bars ? Math.round(x) : nearestIndex(times, x)];
+          return p ? itemHref(symbol, sourceItemId({ l: title, v: fmt(p.value), d: periodLabel(p.date, period), s: sources })) : null;
+        }
+      : null,
+  );
 
   const options = {
     animation: false,
@@ -105,7 +114,7 @@ export function DriverExhibit({
           }
         : {
             type: "line",
-            data: points.map((p) => [Date.parse(`${p.date}T00:00:00Z`), p.value]),
+            data: points.map((p, i) => [times[i], p.value]),
             showSymbol: false,
             lineStyle: { color: ink.navy, width: 1.5 },
             itemStyle: { color: ink.navy },
@@ -128,12 +137,9 @@ export function DriverExhibit({
           {first && last ? `, ${periodLabel(first.date, period)} to ${periodLabel(last.date, period)}` : ""}
         </span>
       </figcaption>
-      <div className="border-t border-kumo-line pt-1">
-        <FitWidth><Chart echarts={echarts} options={options as never} height={200} isDarkMode={dark} /></FitWidth>
+      <div className={`border-t border-kumo-line pt-1 ${source.clickable ? "cursor-pointer" : ""}`} onClick={source.onClick}>
+        <FitWidth><Chart echarts={echarts} options={options as never} height={200} isDarkMode={dark} onEvents={source.onEvents as never} /></FitWidth>
       </div>
-      <p className="border-t border-kumo-hairline pt-1 text-[10px] text-kumo-subtle">
-        Source: {sources.map((s) => SOURCE_LABEL[s] ?? s).join("; ") || "not collected"}; Dualis Research.
-      </p>
     </figure>
   );
 }
@@ -152,6 +158,7 @@ export function ExhibitChart({
   points,
   sources,
   height = 220,
+  symbol,
 }: {
   number: number;
   title: string;
@@ -160,6 +167,8 @@ export function ExhibitChart({
   points: { period: string; values: Record<string, number | null> }[];
   sources: string[];
   height?: number;
+  /** The ticker whose Analysis page opens a point's source; none = the chart is not clickable. */
+  symbol?: string;
 }) {
   const dark = usePageDark();
   const ink = dark ? INK.dark : INK.light;
@@ -168,6 +177,20 @@ export function ExhibitChart({
   const fmt = (v: number) => (lead ? formatUnit(v, lead.unit, lead.currency) : String(v));
   const text = { fontFamily: FONT, fontSize: 11, color: ink.muted };
   const bars = chart === "bar";
+  // A click opens the point's source: every series at that period, each value with its own providers.
+  const source = useChartSource(
+    symbol
+      ? (x) => {
+          const p = points[Math.round(x)];
+          if (!p) return null;
+          const shown = series.filter((s) => p.values[s.key] !== null && p.values[s.key] !== undefined);
+          if (shown.length === 0) return null;
+          const v = shown.map((s) => `${series.length > 1 ? `${s.label}: ` : ""}${formatUnit(p.values[s.key]!, s.unit, s.currency)}`).join(" · ");
+          const tags = [...new Set(shown.flatMap((s) => (s.sources.length ? s.sources : sources)))];
+          return itemHref(symbol, sourceItemId({ l: series.length === 1 ? series[0].label : title, v, d: p.period, s: tags }));
+        }
+      : null,
+  );
   const options = {
     animation: false,
     textStyle: { fontFamily: FONT },
@@ -216,8 +239,8 @@ export function ExhibitChart({
           </span>
         )}
       </figcaption>
-      <div className="border-t border-kumo-line pt-1">
-        <FitWidth><Chart echarts={echarts} options={options as never} height={height} isDarkMode={dark} /></FitWidth>
+      <div className={`border-t border-kumo-line pt-1 ${source.clickable ? "cursor-pointer" : ""}`} onClick={source.onClick}>
+        <FitWidth><Chart echarts={echarts} options={options as never} height={height} isDarkMode={dark} onEvents={source.onEvents as never} /></FitWidth>
       </div>
       {series.length > 1 && (
         <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-kumo-default">
@@ -229,9 +252,6 @@ export function ExhibitChart({
           ))}
         </ul>
       )}
-      <p className="border-t border-kumo-hairline pt-1 text-[10px] text-kumo-subtle">
-        Source: {sources.map((s) => SOURCE_LABEL[s] ?? s).join("; ") || "not collected"}; Dualis Research.
-      </p>
     </figure>
   );
 }

@@ -10,7 +10,10 @@ import { useMemo, useState } from "react";
 import type { MoveMarker } from "./analysis-queries";
 import { openPanel } from "./item-nav";
 import PanelLink from "./link";
-import { FONT, INK, SOURCE_LABEL } from "./driver-chart";
+import { FONT, INK } from "./driver-chart";
+import { nearestIndex, useChartSource } from "./chart-source";
+import { itemHref } from "./item-href";
+import { sourceItemId } from "./sourced";
 import { monthYear } from "./exhibit-format";
 import { numberFormat } from "./format";
 import { FitWidth } from "./fit-width";
@@ -66,6 +69,12 @@ export function PriceFairValueChart({
   // 5Y only when the history goes past one year (it shows as far as the closes go).
   const ranges: Range[] = last && bars[0].date < startOf(last.date, 13) ? ["6M", "1Y", "5Y"] : ["6M", "1Y"];
   const shown = useMemo(() => (last ? bars.filter((b) => b.date >= startOf(last.date, MONTHS[range])) : []), [bars, last, range]);
+  // A click on the chart opens the close under the pointer: its day, the providers of the price history (SOURCES-ONE-CLICK-1123).
+  const times = shown.map((b) => Date.parse(`${b.date}T00:00:00Z`));
+  const source = useChartSource((x) => {
+    const b = shown[nearestIndex(times, x)];
+    return b ? itemHref(symbol, sourceItemId({ l: `${symbol} close`, v: `${fmtNum(b.close)}${currency ? ` ${currency}` : ""}`, d: b.date, s: sources })) : null;
+  });
   if (!last) return null;
 
   const ink = dark ? INK.dark : INK.light;
@@ -146,7 +155,7 @@ export function PriceFairValueChart({
       {
         name: "Close",
         type: "line",
-        data: shown.map((b) => [Date.parse(`${b.date}T00:00:00Z`), b.close]),
+        data: shown.map((b, i) => [times[i], b.close]),
         showSymbol: false,
         lineStyle: { color: ink.navy, width: 1.5 },
         itemStyle: { color: ink.navy },
@@ -187,25 +196,24 @@ export function PriceFairValueChart({
         </span>
         <Tabs variant="segmented" size="sm" value={range} onValueChange={(v) => setRange(v as Range)} tabs={ranges.map((r) => ({ value: r, label: r }))} />
       </figcaption>
-      <div className="border-t border-kumo-line pt-1">
+      <div className="cursor-pointer border-t border-kumo-line pt-1" onClick={source.onClick}>
         <FitWidth><Chart
           echarts={echarts}
           options={options as never}
           height={240}
           isDarkMode={dark}
           onEvents={{
-            click: (p) => {
+            ...source.onEvents,
+            click: (p: { seriesName?: string; data?: unknown }) => {
               const id = (p.data as { id?: string } | undefined)?.id;
               if (p.seriesName !== "Significant move" || !id) return;
+              source.skip();
               const href = moveHref(id);
               if (!openPanel(href)) router.push(href, { scroll: false });
             },
           }}
         /></FitWidth>
       </div>
-      <p className="border-t border-kumo-hairline pt-1 text-[10px] text-kumo-subtle">
-        Source: {sources.map((s) => SOURCE_LABEL[s] ?? s).join("; ") || "not collected"}; Dualis Research.
-      </p>
     </figure>
   );
 }

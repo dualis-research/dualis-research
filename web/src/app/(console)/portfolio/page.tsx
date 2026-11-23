@@ -7,22 +7,20 @@ import { type PortfolioRow, portfolioView } from "@/console/portfolio-queries";
 import { ReturnChart } from "@/console/return-chart";
 import { Card, ComingNext, PageHeader } from "@/console/ui";
 import { TableSearch } from "@/console/table-search";
+import { SOURCED_CLASS } from "@/console/sourced";
 
 export const metadata = { title: "Portfolio" };
 
-/** A value a post stated links to the sentence that says it. */
-function Cite({ row, field }: { row: PortfolioRow; field: string }) {
+/**
+ * A value one of his posts stated: the value itself is the link to that post (SOURCES-ONE-CLICK-1123: one click on the
+ * figure, dotted underline, no « his post » line beside it).
+ */
+function Cited({ row, field, children }: { row: PortfolioRow; field: string; children: React.ReactNode }) {
   const cite = row.provenance[field]?.cite;
-  if (!cite) return null;
+  if (!cite) return <>{children}</>;
   return (
-    <a
-      href={cite.post}
-      target="_blank"
-      rel="noreferrer"
-      title={`“${cite.quote}” (${cite.title}, ${day(cite.date)})`}
-      className="text-sm text-kumo-subtle underline decoration-kumo-line underline-offset-2 hover:text-kumo-link"
-    >
-      his post
+    <a href={cite.post} target="_blank" rel="noreferrer" className={SOURCED_CLASS}>
+      {children}
     </a>
   );
 }
@@ -36,10 +34,10 @@ function ReturnCell({ row }: { row: PortfolioRow }) {
   if (row.reportedReturn !== null) {
     return (
       <span className="flex flex-col items-end">
-        <span className={`font-mono tabular ${row.reportedReturn >= 0 ? "text-dualis-long" : "text-dualis-short"}`}>{signedPct(row.reportedReturn)}</span>
-        <span className="text-sm text-kumo-subtle">
-          on {day(row.reportedReturnAsOf!)}, <Cite row={row} field="reportedReturn" />
-        </span>
+        <Cited row={row} field="reportedReturn">
+          <span className={`font-mono tabular ${row.reportedReturn >= 0 ? "text-dualis-long" : "text-dualis-short"}`}>{signedPct(row.reportedReturn)}</span>
+        </Cited>
+        <span className="text-sm text-kumo-subtle">on {day(row.reportedReturnAsOf!)}</span>
       </span>
     );
   }
@@ -99,12 +97,11 @@ export default async function PortfolioPage() {
                 </KTableCell>
                 <KTableCell className="py-4">
                   {p.direction ? (
-                    <span className="flex flex-col items-start gap-1">
+                    <Cited row={p} field="direction">
                       <Badge variant="secondary" className={p.direction === "long" ? "bg-dualis-long-soft text-dualis-long" : "bg-dualis-short-soft text-dualis-short"}>
                         {p.direction === "long" ? "Long" : "Short"}
                       </Badge>
-                      <Cite row={p} field="direction" />
-                    </span>
+                    </Cited>
                   ) : (
                     empty
                   )}

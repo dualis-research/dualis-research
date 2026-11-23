@@ -12,7 +12,7 @@ describe("Rich", () => {
     expect(renderToStaticMarkup(h(Rich, { text: "a cut **mid" }))).toBe("a cut mid");
   });
 
-  it("places a quote chip on bold text and keeps the bold", () => {
+  it("underlines a quote on bold text as its link and keeps the bold", () => {
     const html = renderToStaticMarkup(
       h(ExplanationWithCitations, {
         text: "Management said **orders doubled** in the year.",
@@ -20,9 +20,11 @@ describe("Rich", () => {
         hrefFor: (i: string) => `/x?item=${i}`,
       }),
     );
-    expect(html).toContain("<strong");
-    expect(html).toMatch(/p\. (<!-- -->)?3/);
+    expect(html).toContain('<a href="/x?item=doc:d1:3:orders doubled"><strong class="font-semibold text-kumo-strong">orders doubled</strong></a>');
     expect(html).not.toContain("**");
-    expect(html.indexOf("orders doubled</strong>")).toBeLessThan(html.indexOf("Annual report"));
+    expect(html).not.toContain("Annual report");
+    expect(html.startsWith("<p")).toBe(true);
+    expect(html).toContain("Management said ");
+    expect(html).toContain(" in the year.");
   });
 });

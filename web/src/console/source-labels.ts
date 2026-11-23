@@ -1,6 +1,7 @@
 /**
- * Source tags as an equity research note prints them under a chart or a figure: "Source: Company filings (DART),
- * Yahoo Finance, Dualis Research." Thierry reads providers by name, never a tag, table or layer name (Kevin 2026-11-06).
+ * Source tags as providers by name: Thierry reads « Company filings (DART) », « Yahoo Finance », never a tag, table or
+ * layer name (Kevin 2026-11-06). The console shows them in the source panel a click on a figure opens (`sourced.tsx`);
+ * `sourceNote` is for published pictures only (the WhatsApp alert), never a line in the console (SOURCES-ONE-CLICK-1123).
  * Our own work (Claude's analysis, Thierry's edits) reads "Dualis Research", never labelled as Claude's.
  */
 const FILINGS: Record<string, string> = {
@@ -36,6 +37,8 @@ const PROVIDERS: Record<string, string> = {
   onedrive: "Analyst research files",
   "onedrive-filings": "Analyst research files",
   substack: "Substack",
+  fred: "FRED, Federal Reserve Bank of St. Louis",
+  worldbank: "World Bank",
   "substack-rss": "Substack",
   "substack-archive": "Substack",
 };
