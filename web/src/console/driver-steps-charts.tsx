@@ -71,7 +71,7 @@ export function EventsTimeline({ events, from, to }: { events: { day: string; ki
 
 /**
  * Step 4 in one sight: the KPI at each period (half years for a Hong Kong company), a column per period labelled with
- * its value and the stretch it covers; coloured when it changed at least twice its usual change on a year earlier.
+ * its value and the stretch it covers; coloured when its change on a year earlier was judged big enough to matter.
  */
 export function KpiPeriodsChart({ periods, unit, currency, label }: { periods: { date: string; period: string; value: number; significant: boolean }[]; unit: ExhibitUnit; currency: string | null; label: string }) {
   const dark = usePageDark();
@@ -102,8 +102,8 @@ export function KpiPeriodsChart({ periods, unit, currency, label }: { periods: {
       </FitWidth>
       <Legend
         items={[
-          { color: ink.navy, words: "Changed at least 2x its usual change on a year earlier" },
-          { color: ink.muted, words: "A usual change, or too short a history to say", opacity: 0.4 },
+          { color: ink.navy, words: "Moved enough to matter, on a year earlier" },
+          { color: ink.muted, words: "A small change, or no year earlier to compare", opacity: 0.4 },
         ]}
       />
     </figure>

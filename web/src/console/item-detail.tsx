@@ -496,12 +496,12 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
               <Drawer icon={<ChartBarIcon size={16} aria-hidden />} title={`Every period · ${k.periods.length}`}>
                 <ul className="flex flex-col">
                   {[...k.periods].reverse().map((p) => (
-                    <li key={p.period} className="grid grid-cols-[9rem_1fr_auto] gap-3 border-b border-kumo-hairline py-2 text-sm last:border-b-0">
+                    <li key={p.period} className="grid grid-cols-[9rem_12rem_1fr] gap-3 border-b border-kumo-hairline py-2 text-sm last:border-b-0">
                       <span className="text-kumo-subtle">{periodWords(p.periodType, p.period)}</span>
                       <span className="tabular text-kumo-default">
                         {value(p.prior)} → {figure(p)} <span className="text-kumo-subtle">({kpiChange(p.change, p.changeKind)})</span>
                       </span>
-                      <span className={`tabular ${p.significant ? "font-semibold text-kumo-strong" : "text-kumo-subtle"}`}>{p.ratio === null ? "Too short a history" : `${p.ratio.toFixed(1)}x its usual change`}</span>
+                      <span className={`tabular ${p.significant ? "font-semibold text-kumo-strong" : "text-kumo-subtle"}`}>{p.change === null ? "No year earlier to compare" : (p.why ?? (p.significant ? "Moved" : "Did not move"))}</span>
                     </li>
                   ))}
                 </ul>
@@ -525,7 +525,7 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
                       <span className="min-w-0">{`${c.number.get(r.eventId)}. ${day(r.day)} · ${KIND[r.kind]}: ${decodeEntities(r.title.replace(/\s+/g, " "))}`}</span>
                       <Badge variant={RESULT_BADGE[r.result]}>{RESULT_WORD[r.result]}</Badge>
                       <span className="col-span-2 flex flex-wrap gap-x-4 text-sm font-normal">
-                        <span>KPI moved? {yes(r.kpiMoved, p ? `${value(r.from)} → ${value(r.to)}, ${r.ratio?.toFixed(1)}x usual` : "Yes")}</span>
+                        <span>KPI moved? {yes(r.kpiMoved, p ? `${value(r.from)} → ${value(r.to)} (${kpiChange(r.change, p.changeKind)})` : "Yes")}</span>
                         <span>Price moved? {yes(r.priceMoved, `${pct(r.reaction)} beyond the market, ${r.z === null ? "" : `${Math.abs(r.z).toFixed(1)}x usual`}`)}</span>
                       </span>
                     </span>
@@ -545,6 +545,7 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
                     red={COLOR.short.light}
                     grey="#9aa1ab"
                   />
+                  {r.kpiWhy && <p className="text-base text-kumo-default"><Rich text={r.kpiWhy} /></p>}
                   {r.cite ? (
                     <Sourced symbol={symbol} item={docItemId(r.cite.documentId, r.cite.page, r.cite.quote)} className="text-base text-kumo-default">
                       « {r.cite.quote} »

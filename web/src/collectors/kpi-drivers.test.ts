@@ -39,25 +39,22 @@ describe("kpi drivers: steps 4 and 5 are code", () => {
     expect(measureKpi(catalog, { series: null, approximation: null }, "2023-01")).toBeNull();
   });
 
-  it("marks a period significant at twice its usual change on a year earlier, tied to the release that first reported it", () => {
+  it("computes each period's change on a year earlier and the release that first reported it; the size is not judged here", () => {
     const m = measureKpi(catalog, { series: "hmetric:operating-margin", approximation: null }, "2023-01")!;
     const periods = kpiPeriods(m.points, m.measure, [{ id: "R-int", day: "2025-05-28" }, { id: "R-report", day: "2025-05-30" }, { id: "R-final", day: "2025-12-15" }], "2023-01");
     const mar25 = periods.find((p) => p.period === "2025-03")!;
-    // -4.5 pts on Mar-24, the other changes ~0.2-0.5 pts.
-    expect(mar25).toMatchObject({ changeKind: "points", significant: true, releaseId: "R-int", releaseDay: "2025-05-28" });
+    expect(mar25).toMatchObject({ changeKind: "points", significant: false, why: null, releaseId: "R-int", releaseDay: "2025-05-28" });
     expect(mar25.change).toBeCloseTo(-0.045);
-    expect(mar25.ratio!).toBeGreaterThan(2);
-    expect(periods.find((p) => p.period === "2025-09")).toMatchObject({ significant: false, releaseId: "R-final" });
-    // No period a year earlier: no change, nothing to say.
-    expect(periods.find((p) => p.period === "2023-03")).toMatchObject({ change: null, ratio: null, significant: false });
+    expect(periods.find((p) => p.period === "2025-09")).toMatchObject({ releaseId: "R-final" });
+    expect(periods.find((p) => p.period === "2023-03")).toMatchObject({ change: null, prior: null });
   });
 
   it("crosses each event with the KPI and the price: confirms, invalidates, other cause, nothing", () => {
     const ev = (id: string, kind: "release" | "news" | "filing", day: string, moveId: string | null) => ({ id: `${SYMBOL}|${kind}:${id}`, symbol: SYMBOL, kind, sourceId: id, day, title: id, url: null, stock: -0.1, benchReturn: 0, beta: 1, reaction: -0.1, z: moveId ? -3 : -0.5, bench: "Hang Seng", moveId, rebuiltAt: new Date() });
     const periods = [
-      { period: "2025-03", periodType: "half" as const, value: 0.06, prior: 0.105, change: -0.045, changeKind: "points" as const, ratio: 5, significant: true, releaseId: `${SYMBOL}|release:A`, releaseDay: "2025-05-28", cite: null },
-      { period: "2025-09", periodType: "half" as const, value: 0.113, prior: 0.112, change: 0.001, changeKind: "points" as const, ratio: 0.2, significant: false, releaseId: `${SYMBOL}|release:B`, releaseDay: "2025-12-15", cite: null },
-      { period: "2026-03", periodType: "half" as const, value: 0.2, prior: 0.06, change: 0.14, changeKind: "points" as const, ratio: 9, significant: true, releaseId: `${SYMBOL}|release:C`, releaseDay: "2026-05-26", cite: null },
+      { period: "2025-03", periodType: "half" as const, value: 0.06, prior: 0.105, change: -0.045, changeKind: "points" as const, significant: true, why: "w", releaseId: `${SYMBOL}|release:A`, releaseDay: "2025-05-28", cite: null },
+      { period: "2025-09", periodType: "half" as const, value: 0.113, prior: 0.112, change: 0.001, changeKind: "points" as const, significant: false, why: "w", releaseId: `${SYMBOL}|release:B`, releaseDay: "2025-12-15", cite: null },
+      { period: "2026-03", periodType: "half" as const, value: 0.2, prior: 0.06, change: 0.14, changeKind: "points" as const, significant: true, why: "w", releaseId: `${SYMBOL}|release:C`, releaseDay: "2026-05-26", cite: null },
     ];
     const moves = [{ id: "M-down", direction: "down" as const }];
     const rows = eventRows([ev("A", "release", "2025-05-28", "M-down"), ev("W", "filing", "2024-05-17", "M-down"), ev("B", "release", "2025-12-15", null), ev("C", "release", "2026-05-26", null), ev("N", "news", "2026-01-02", null)], periods, "up", moves);
@@ -87,7 +84,7 @@ describe("kpi drivers end to end on stored steps", () => {
   let db: Db;
   let close: () => Promise<void>;
   const day = (d: number) => new Date(Date.UTC(2024, 0, 1) + d * 86_400_000).toISOString().slice(0, 10);
-  const PW = 400; // a profit warning (filing) on day 400, the stock falls 20% that week.
+  const PW = 500; // a profit warning (filing) on 2025-05-15, the stock falls 20% that week; the interim report follows on day 510.
   beforeEach(async () => {
     ({ db, close } = await testDb());
     const wob = (i: number) => 0.01 * Math.sin(i * 1.7) * Math.cos(i * 0.37);
@@ -100,22 +97,22 @@ describe("kpi drivers end to end on stored steps", () => {
     await db.insert(gold.priceBars).values(bars.map((b) => ({ symbol: "^HSI", date: b.date, close: 20000, sources: ["yahoo"], alternatives: [] })) as never);
     await db.insert(gold.priceBars).values(bars.map((b) => ({ symbol: "^GSPC", date: b.date, close: 5000, sources: ["yahoo"], alternatives: [] })) as never);
     await db.insert(gold.filings).values({ id: "00000000-0000-4000-8000-0000000000f1", symbol: SYMBOL, registry: "hkex", filingKey: "f1", form: null, title: "Profit Warning", filedAt: new Date(`${day(PW)}T09:00:00Z`), url: "https://example.com/pw", language: "en", sources: ["hkex"] } as never);
-    for (const [n, d, title] of [[1, 150, "Interim Results Announcement"], [2, 410, "Interim Report"]] as const) {
+    for (const [n, d, title] of [[1, 150, "Interim Results 2024"], [2, 510, "Interim Results 2025"]] as const) {
       await db.insert(documents).values({ id: DOC(n), symbol: SYMBOL, registry: "hkex", kind: "report", form: null, title, filedAt: new Date(`${day(d)}T06:00:00Z`), language: "en", viewUrl: null, format: "pdf", pageCount: 1, sources: ["hkex"] } as never);
       await db.insert(documentPages).values({ documentId: DOC(n), page: 1, text: `Service margin was ${n === 1 ? "30.0%" : "22.0%"} for the period.` });
     }
   });
   afterEach(async () => close());
 
-  it("stores steps 1 and 2 once, and every KPI reads the same move for the profit warning", async () => {
+  it("ties a profit warning to the period it announces, and every KPI reads the same price move for it", async () => {
     const ctx: SourceContext = { env: {}, fetch, db };
     const mr = await marketReactionSource.fetch(SYMBOL, ctx);
     expect(mr.error).toBeUndefined();
     await promoteMarketReactions(db, [{ id: "m", subject: SYMBOL, error: null, payload: mr.payload, fetchedAt: new Date() } as never]);
     const events = await db.select().from(driverEvents);
-    expect(events.map((e) => [e.kind, e.day])).toEqual([["release", day(150)], ["filing", day(PW)], ["release", day(410)]]);
+    expect(events.map((e) => [e.kind, e.day])).toEqual([["release", day(150)], ["filing", day(PW)], ["release", day(510)]]);
     const warning = events.find((e) => e.kind === "filing")!;
-    expect(warning.bench).toBe("Hang Seng");
+    expect(warning).toMatchObject({ bench: "Hang Seng" });
     expect(warning.moveId).not.toBeNull();
     const [move] = await db.select().from(priceMoves);
     expect(move).toMatchObject({ id: warning.moveId, direction: "down", bench: "Hang Seng" });
@@ -126,14 +123,27 @@ describe("kpi drivers end to end on stored steps", () => {
       if (system.includes("List every KPI")) {
         return { text: JSON.stringify({ kpis: [{ name: "Service margin", why: "Pricing power.", expected: "up", series: null, formula: null }, { name: "Store count", why: "Reach.", expected: "up", series: null, formula: null }] }), model: "fake" };
       }
+      if (system.includes("You read company announcements")) {
+        expect(prompt).toContain("E1 " + day(PW) + " Filing: Profit Warning. Next report: " + day(510));
+        return { text: JSON.stringify({ events: [{ event: "E1", announces: true, what: "profit for the six months expected to fall" }] }), model: "fake" };
+      }
       if (system.includes("You read ONE figure")) {
         if (prompt.includes("Store count")) return { text: JSON.stringify({ values: [] }), model: "fake" };
-        return { text: JSON.stringify({ values: [{ report: "R1", page: 1, period: "2024-03", periodType: "half", value: 30, unit: "percent", quote: "Service margin was 30.0%" }, { report: "R2", page: 1, period: "2025-03", periodType: "half", value: 22, unit: "percent", quote: "not printed there" }] }), model: "fake" };
+        return {
+          text: JSON.stringify({ values: [{ report: "R1", page: 1, period: "2024-03", periodType: "half", value: 30, unit: "percent", quote: "Service margin was 30.0%" }, { report: "R2", page: 1, period: "2025-03", periodType: "half", value: 22, unit: "percent", quote: "Service margin was 22.0%" }, { report: "R2", page: 1, period: "2024-09", periodType: "half", value: 25, unit: "percent", quote: "not printed there" }] }),
+          model: "fake",
+        };
+      }
+      if (system.includes("when ONE fundamental KPI")) {
+        // Step 4 sees the change and the announcement before the report, and names which disclosed it first.
+        expect(prompt).toContain("P1 6 months to Mar-25: 22.0% vs 30.0% a year earlier (-8.0 pts).");
+        expect(prompt).toContain("Announced before it: A1 " + day(PW) + " Filing: Profit Warning (it announces: profit for the six months expected to fall)");
+        return { text: JSON.stringify({ periods: [{ period: "P1", moved: true, why: "margin fell 8 points, its largest drop", first: "A1" }] }), model: "fake" };
       }
       if (system.startsWith("You shorten ONE verdict")) return { text: "Thin: the price moved on other facts.", model: "fake" };
-      // Step 6 reads the step-5 table only: the profit warning reads the same price move for both KPIs.
-      expect(prompt).toMatch(/Filing: Profit Warning\. KPI: not reported at this moment; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: other cause\./);
-      return { text: JSON.stringify({ level: "weak", reason: "Thin evidence: the price moved on other facts.", signal: "strong", signalWhy: "x" }), model: "fake" };
+      // Step 6 reads the step-5 table only.
+      expect(prompt).toMatch(/Filing: Profit Warning\. KPI.*; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: (confirms|other cause)\./);
+      return { text: JSON.stringify({ level: "weak", reason: "Thin evidence.", signal: "strong", signalWhy: "x" }), model: "fake" };
     };
     const kctx: SourceContext = { env: { CLAUDE_OAUTH_TOKEN: "x" }, fetch, db, complete: fake };
     const out = await kpiSource.fetch(SYMBOL, kctx);
@@ -141,21 +151,23 @@ describe("kpi drivers end to end on stored steps", () => {
     await promoteKpis(db, [{ id: "b", subject: SYMBOL, error: null, payload: out.payload, fetchedAt: new Date() } as never]);
     const ks = await db.select().from(kpiDrivers);
     expect(ks.map((k) => [k.name, k.expected, k.level, k.signal])).toEqual([["Service margin", "up", "weak", "weak"], ["Store count", "up", "weak", "weak"]]);
-    // A value whose quote is not on its page is dropped: one period left, nothing to compare, so not measured.
-    expect(ks[0].periods).toHaveLength(0);
-    // A stable id, from the name (a link to the panel survives a re-run that reorders the KPIs).
     expect(ks.map((k) => k.id)).toEqual([`${SYMBOL}:kpi:service-margin`, `${SYMBOL}:kpi:store-count`]);
-    expect(ks[0].measure).toBeNull();
+    // A value whose quote is not on its page is dropped; the Mar-25 margin drop is first disclosed by the warning.
+    expect(ks[0].periods.map((p) => p.period)).toEqual(["2024-03", "2025-03"]);
+    expect(ks[0].periods[1]).toMatchObject({ significant: true, releaseId: warning.id, why: "margin fell 8 points, its largest drop" });
     const pw = (k: (typeof ks)[number]) => k.rows.find((r) => r.kind === "filing")!;
-    expect(pw(ks[0])).toEqual(pw(ks[1]));
-    expect(pw(ks[0])).toMatchObject({ priceMoved: true, kpiMoved: null, result: "other-cause", moveId: warning.moveId });
-    expect(ks[0].invalidated).toBe(0);
+    expect(pw(ks[0])).toMatchObject({ kpiMoved: true, priceMoved: true, result: "confirms", period: "2025-03" });
+    expect(pw(ks[1])).toMatchObject({ kpiMoved: null, priceMoved: true, result: "other-cause" });
+    // The same price move under every KPI.
+    for (const f of ["reaction", "z", "moveId", "stock"] as const) expect(pw(ks[0])[f]).toEqual(pw(ks[1])[f]);
+    // The report after the warning no longer counts the same move twice.
+    expect(ks[0].rows.find((r) => r.day === day(510))).toMatchObject({ kpiMoved: null });
     expect(ks[0].reason).toBe("Thin: the price moved on other facts.");
     // Stored once: a second run asks nothing.
     const before = calls;
     await kpiSource.fetch(SYMBOL, kctx);
     expect(calls).toBe(before);
-    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["kpi-candidates", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-verdict", "kpi-verdict"]);
+    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["event-announces", "kpi-candidates", "kpi-moves", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-verdict", "kpi-verdict"]);
   });
 
   it("measures each stock against its OWN market's index", () => {
