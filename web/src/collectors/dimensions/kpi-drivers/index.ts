@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { driverEvents, KPI_LEVELS, kpiDrivers, priceMoves, type DocCitation, type GoldDriverEvent, type GoldPriceMove, type KpiEventRow, type KpiLevel, type KpiMeasure, type KpiPeriod } from "@/db/schema/analysis";
+import { CANDIDATE_KINDS, driverEvents, KPI_LEVELS, kpiDrivers, priceMoves, type CandidateKind, type DocCitation, type DriverTests, type GoldDriverEvent, type GoldPriceMove, type KpiEventRow, type KpiLevel, type KpiMeasure, type KpiPeriod } from "@/db/schema/analysis";
 import { documentPages } from "@/db/schema/documents";
 import * as gold from "@/db/schema/gold";
 import * as silver from "@/db/schema/silver";
@@ -13,11 +13,13 @@ import { seriesCatalog, type StoredSeries } from "../analysis/series";
 import { verifyQuote } from "../filing-documents/read";
 import { stripDashes } from "../thesis/structure";
 import { analysedSymbols } from "../watchlist";
-import { eventRows, kpiChange, kpiPeriods, kpiValue, measureKpi, parseFormula, periodEnd, periodWords } from "./steps";
+import { changeRows, driverTests, eventRows, kpiChange, kpiPeriods, kpiValue, measureKpi, parseFormula, periodEnd, periodWords, type CandidateChange } from "./steps";
 
 export * from "./steps";
 
 /**
+ * Price Drivers (named KPI Drivers until Kevin + Thierry 2026-11-23, private `docs/meeting-2026-11-23.md`): candidates
+ * are READ in the events that came with an unbiased move, and are a company KPI, a policy or a qualitative industry fact.
  * KPI Drivers in six stored steps (DRIVERS-SIX-STEPS-1123, Kevin 2026-11-23: « visible en étapes… pour qu'un humain
  * puisse voir tout de suite s'il y a une erreur à un endroit du raisonnement »). Steps 1 (events) and 2 (when the stock
  * moved) are code in `market-reaction` (gold.driver_events, gold.price_moves); here, per ticker:
@@ -30,8 +32,13 @@ export * from "./steps";
 
 export const KPI_DIMENSION = "kpi-drivers";
 export const KPI_YEARS = 3;
-/** v3 (DRIVERS-SIX-STEPS-1123): each KPI with its expected direction and a formula of stored keys when no series holds it. */
-export const CANDIDATES_QUESTION = "kpi-candidates@v3";
+/**
+ * v4 (meeting 2026-11-23): Price Driver Candidates read in the events that came with an unbiased move (each cites
+ * where it was read), of three kinds: kpi / policy / industry. v3 listed only the company's KPIs from its reports.
+ */
+export const CANDIDATES_QUESTION = "kpi-candidates@v4";
+/** Step 4 of a policy or industry candidate (no figure): which events carry a change of it, and which way. */
+export const CHANGES_QUESTION = "candidate-changes@v1";
 /** Step 4 when nothing stored measures the KPI: its value read in each report, the quote checked on its page. */
 export const READ_QUESTION = "kpi-read@v1";
 /** Step 6: the verdict from the step-5 table only (the AI decides, never a count rule: Kevin 2026-11-19). */
@@ -39,8 +46,8 @@ export const READ_QUESTION = "kpi-read@v1";
 export const ANNOUNCES_QUESTION = "event-announces@v1";
 /** Step 4: which periods' changes matter, and which event first disclosed each (the AI's assessment, never a threshold). */
 export const MOVES_QUESTION = "kpi-moves@v1";
-/** v2: step 4 is the AI's assessment of size, the first disclosure may be an announcement. */
-export const VERDICT_QUESTION = "kpi-verdict@v2";
+/** v3 (meeting 2026-11-23): the verdict weighs the two tests, A (each change -> a move?) and B (each move -> a change?). */
+export const VERDICT_QUESTION = "kpi-verdict@v3";
 /** Step 4 reads 5 years of the KPI (Kevin 2026-11-23); the events stay 3 years. */
 export const KPI_HISTORY_YEARS = 5;
 /** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). v2: v1 echoed its own instruction once (Water Oasis, Hong Kong and Macau revenue). */
@@ -51,7 +58,7 @@ const PAGES_PER_RELEASE = 2;
 const PAGE_CHARS = 3_500;
 const DAY = 86_400_000;
 
-export type KpiCandidate = { name: string; why: string; expected: "up" | "down"; series: string | null; approximation: string | null };
+export type KpiCandidate = { name: string; kind: CandidateKind; why: string; expected: "up" | "down"; series: string | null; approximation: string | null; foundIn: string[] };
 type Release = { id: string; documentId: string; label: string; day: string; title: string; pages: { page: number; text: string }[] };
 type Verdict = { level: KpiLevel; reason: string; signal: KpiLevel | null; signalWhy: string | null };
 
@@ -114,14 +121,14 @@ async function once<T>(db: Db, complete: Complete, kind: string, subjectId: stri
 const releasesText = (rs: Release[]) => rs.map((r) => [`${r.label} ${r.day}: ${r.title}`, ...r.pages.map((p) => `  [${r.label} page ${p.page}]\n${p.text}`)].join("\n")).join("\n\n");
 
 export const CANDIDATES_SYSTEM = [
-  "You are the equity research associate of a small-cap long/short analyst. He trusts only fundamental KPIs: figures about the business that the market trades the stock on.",
-  "List every KPI that drives THIS business, from its business model and from what management itself writes in its reports (the KPIs it reports, discusses and explains results with).",
-  "Know what drives each kind of business (capacity utilization for a manufacturer, same-store sales for a retailer, backlog for a contractor, net interest margin for a bank...). When the company does not report one, say how to compute it from what is stored (capacity utilization ~ revenue / PP&E).",
-  "Any number of KPIs: none when nothing fundamental drives it, twenty if there are twenty. Only the company's OWN figures (reported, or computed from what it reports): never an external series (a customer's or the industry's numbers, a commodity, a rate, a currency, an index), never a price or a valuation multiple.",
-  "expected = which way the share price should go when the KPI goes UP: up (revenue, margin) or down (costs, debt, inventory days).",
-  "series = the stored series key that holds it, copied exactly from the list (null when none does); formula = when no key holds it, a formula of stored keys copied exactly, operators / * + - between spaces, numbers allowed (« line:inventory / line:cost-of-revenue * 365 »), else null; both null = read in the reports.",
+  "You are the equity research associate of a small-cap long/short analyst. You look for the PRICE DRIVERS of one stock: the fundamental facts the market trades it on. Fundamental = the company AND its industry (competitors, suppliers, any material trend in its space); macro (oil, rates, currencies, war, the whole market) is not.",
+  "You are given every event of 3 years (results release, news, filing) that came with an unusual move of the share price once its market is taken out, labelled M1, M2... Read them: what fundamental fact changed at each, that the market reacted to? Each such fact is a Price Driver Candidate, not proven yet.",
+  "A candidate is one of three kinds: kpi = a figure of the company (reported, or computed from what it reports: capacity utilization ~ revenue / PP&E for a manufacturer, same-store sales for a retailer, backlog for a contractor); policy = a rule that bears on the business (a subsidy, a tariff, a licence, a regulation), generalizable beyond one event; industry = a qualitative fact of its industry (an overhang lifting, a competitor failing, demand shifting). Never a price, a valuation multiple, a commodity, a rate or an index.",
+  "Also add the KPIs its business model makes obvious, even when no event shows one (found = []). Any number: none when nothing fundamental drives it, twenty if there are twenty. One candidate per fact, named in a few words that stay true over years (« Hong Kong store revenue », never a dated event).",
+  "expected = which way the share price should go when the candidate goes UP (a KPI rises; a policy or industry fact turns more favourable): up, or down (costs, debt, inventory days).",
+  "found = the M labels where you read it, copied exactly. For a kpi: series = the stored series key that holds it, copied exactly from the list (null when none does); formula = when no key holds it, a formula of stored keys copied exactly, operators / * + - between spaces, numbers allowed (« line:inventory / line:cost-of-revenue * 365 »), else null; both null = read in the reports. For a policy or industry candidate: series and formula null.",
   "No em dash. JSON only, no prose, no code fence:",
-  '{"kpis": [{"name": "Operating margin", "why": "<at most 15 words: why it moves this business>", "expected": "up" | "down", "series": "metric:operating-margin" | null, "formula": string | null}]}',
+  '{"candidates": [{"name": "Operating margin", "kind": "kpi" | "policy" | "industry", "why": "<at most 15 words: why it moves this business>", "expected": "up" | "down", "found": ["M2"], "series": "metric:operating-margin" | null, "formula": string | null}]}',
 ].join("\n");
 
 export const READ_SYSTEM = [
@@ -133,26 +140,65 @@ export const READ_SYSTEM = [
 ].join("\n");
 
 export const VERDICT_SYSTEM = [
-  "You give the verdict on ONE hypothesis for a small-cap long/short analyst: « this fundamental KPI of the company moves this stock ».",
-  "You read ONLY the table you are given: every event of 3 years (results release, news, filing), whether the KPI moved significantly then (its change on the same period a year earlier, judged big enough to matter, at the event that first disclosed it: the report, or an announcement before it such as a profit warning), whether the share price moved significantly in the 5 trading days after (at least twice its usual 5-day move once its own market is taken out), and the result computed from both: confirms (both, the way the KPI should move the price), invalidates (the KPI moved, the price did not or went the other way), other cause (the price moved, the KPI did not: never against the KPI).",
-  "level: decide it yourself, as the analyst would, never by counting. Weigh each moment: how big the KPI move was, how clear the price move was, whether the event's title says another fact moved the price, how recent it is. A small cap's price is noisy: one contrary moment can be noise, a clean, large KPI move the price ignored says much more. strong = the market clearly trades the stock on this KPI; weak = it does sometimes, or the evidence is thin; none = it does not.",
-  "reason = ONE plain sentence, at most 15 words, a reader understands at once: how the stock reacts to this KPI. When some moments went against it, the same sentence says whether that is normal (another fact moved the price those days) or a real doubt. No dates, no list of figures, no labels.",
-  "signal (only when level is strong or weak, else null): does the KPI turn NOW, at the latest release, by enough to change the story, with the price not reacting yet? strong (only for a strong KPI) / weak / none. signalWhy = one sentence with the figure.",
+  "You give the verdict on ONE hypothesis for a small-cap long/short analyst: « this candidate (a company KPI, a policy or a qualitative industry fact) drives this stock's price ».",
+  "You read ONLY what you are given: the table of every event of 3 years (results release, news, filing), whether the candidate changed significantly then (for a KPI: its change on the same period a year earlier, judged big enough to matter, at the event that first disclosed it; for a policy or industry fact: the event carries a change of it), whether the share price moved significantly in the 5 trading days after (at least twice its usual 5-day move once its own market is taken out), and the result computed from both: confirms (both, the way the candidate should move the price), invalidates (the candidate changed, the price did not or went the other way), other cause (the price moved, the candidate did not: never against it).",
+  "Then the two tests, counted for you. A) each big change of the candidate: did the price follow the expected way? A big change the price ignored says the market does not trade on it. B) each unusual price move of the 3 years: did the candidate change in it? A driver that explains several moves is worth more; many moves it does not explain only mean other drivers exist, never against it.",
+  "level: decide it yourself, as the analyst would, never by counting. Weigh each moment: how big the change was, how clear the price move was, whether the event's title says another fact moved the price, how recent it is. A small cap's price is noisy: one contrary moment can be noise, a clean, large change the price ignored says much more. strong = the market clearly trades the stock on this candidate; weak = it does sometimes, or the evidence is thin; none = it does not.",
+  "reason = ONE plain sentence, at most 15 words, a reader understands at once: how the stock reacts to this candidate. When some moments went against it, the same sentence says whether that is normal (another fact moved the price those days) or a real doubt. No dates, no list of figures, no labels.",
+  "signal (only when level is strong or weak, else null): does the candidate turn NOW, at the latest event that changed it, by enough to change the story, with the price not reacting yet? strong (only for a strong candidate) / weak / none. signalWhy = one sentence with the figure or the fact.",
   "No em dash. JSON only, no prose, no code fence:",
   '{"level": "strong" | "weak" | "none", "reason": string, "signal": "strong" | "weak" | "none" | null, "signalWhy": string | null}',
 ].join("\n");
 
-export function parseCandidates(text: string, catalog: Map<string, StoredSeries>): KpiCandidate[] {
-  const obj = JSON.parse(firstJsonObject(text)) as { kpis?: unknown };
-  if (!Array.isArray(obj.kpis)) throw new Error(`kpi-drivers: answer has no kpis array: ${text.slice(0, 200)}`);
-  return obj.kpis.flatMap((k) => {
+export function parseCandidates(text: string, catalog: Map<string, StoredSeries>, labels: Map<string, string> = new Map()): KpiCandidate[] {
+  const obj = JSON.parse(firstJsonObject(text)) as { candidates?: unknown };
+  if (!Array.isArray(obj.candidates)) throw new Error(`kpi-drivers: answer has no candidates array: ${text.slice(0, 200)}`);
+  return obj.candidates.flatMap((k) => {
     const x = k as Record<string, unknown>;
     if (typeof x.name !== "string" || !x.name.trim() || typeof x.why !== "string") return [];
     if (x.expected !== "up" && x.expected !== "down") throw new Error(`kpi-drivers: expected "${String(x.expected)}" for ${x.name}, not up or down`);
-    const series = typeof x.series === "string" && catalog.has(x.series) ? x.series : null;
-    const formula = !series && typeof x.formula === "string" && parseFormula(x.formula, catalog) ? stripDashes(x.formula.trim()) : null;
-    return [{ name: stripDashes(x.name.trim()), why: stripDashes(x.why.trim()), expected: x.expected, series, approximation: formula }];
+    if (!CANDIDATE_KINDS.includes(x.kind as CandidateKind)) throw new Error(`kpi-drivers: kind "${String(x.kind)}" for ${x.name}, not one of ${CANDIDATE_KINDS.join(", ")}`);
+    const kind = x.kind as CandidateKind;
+    const series = kind === "kpi" && typeof x.series === "string" && catalog.has(x.series) ? x.series : null;
+    const formula = kind === "kpi" && !series && typeof x.formula === "string" && parseFormula(x.formula, catalog) ? stripDashes(x.formula.trim()) : null;
+    // Unknown labels are dropped, never guessed.
+    const foundIn = Array.isArray(x.found) ? [...new Set(x.found.map((l) => labels.get(String(l))).filter((id): id is string => !!id))] : [];
+    return [{ name: stripDashes(x.name.trim()), kind, why: stripDashes(x.why.trim()), expected: x.expected, series, approximation: formula, foundIn }];
   });
+}
+
+export const CHANGES_SYSTEM = [
+  "You read a company's events of 3 years (results releases, news, filings) for an equity analyst, about ONE candidate price driver that is not a figure: a policy or a qualitative industry fact.",
+  "For each event that carries a CHANGE of that candidate (it is passed, dropped, eased, tightened, starts, ends, gets clearly better or worse), say which way: up = more favourable to the company, down = less. An event that only mentions it, or repeats what was known, carries no change: leave it out. Never use the share price.",
+  "why = at most 12 words: what changed.",
+  "No em dash. JSON only, no prose, no code fence:",
+  '{"changes": [{"event": "E4", "change": "up" | "down", "why": string}]}',
+].join("\n");
+
+/** Step 4 of a policy or industry candidate: one stored reading of which events change it (titles only, never the price). */
+export async function judgeChanges(db: Db, complete: Complete, symbol: string, company: string, k: KpiCandidate, events: GoldDriverEvent[]): Promise<Map<string, CandidateChange>> {
+  const lines = events.map((e, i) => `E${i + 1} ${e.day} ${KIND[e.kind]}: ${e.title.replace(/\s+/g, " ")}`);
+  const ids = new Map(events.map((e, i) => [`E${i + 1}`, e.id]));
+  const found = await once(
+    db,
+    complete,
+    "candidate-changes",
+    `${symbol}:${k.name}`,
+    `${CHANGES_QUESTION}:${fnv(`${k.name}|${k.kind}|${lines.join("\n")}`)}`,
+    `${CHANGES_QUESTION}: when did « ${k.name} » change for ${symbol}?`,
+    CHANGES_SYSTEM,
+    [`Company: ${company}`, `Candidate (${k.kind}): ${k.name}. ${k.why}`, "", "Every event, oldest first:", lines.join("\n")].join("\n"),
+    (text) => {
+      const obj = JSON.parse(firstJsonObject(text)) as { changes?: unknown };
+      if (!Array.isArray(obj.changes)) throw new Error(`kpi-drivers: changes answer has no changes array: ${text.slice(0, 200)}`);
+      return (obj.changes as Record<string, unknown>[]).flatMap((c) => {
+        const id = ids.get(String(c.event));
+        if (!id || (c.change !== "up" && c.change !== "down")) return [];
+        return [{ id, up: c.change === "up", why: typeof c.why === "string" && c.why.trim() ? stripDashes(c.why.trim()) : null }];
+      });
+    },
+  );
+  return new Map(found.map((c) => [c.id, { up: c.up, why: c.why }]));
 }
 
 /** Step 4 read in the reports: one value per report that prints it, kept only when its quote is printed on its page. */
@@ -222,11 +268,30 @@ export function tableText(rows: KpiEventRow[], measure: KpiMeasure | null, perio
       const kpi =
         p && measure
           ? `KPI ${periodWords(p.periodType, p.period)}: ${kpiValue(r.from, measure)} a year earlier -> ${kpiValue(r.to, measure)} (${kpiChange(r.change, p.changeKind)}), ${r.kpiMoved ? "moved" : "did not move"}${r.kpiWhy ? `: ${r.kpiWhy}` : ""}`
-          : "KPI: not reported at this moment";
+          : r.kpiMoved === true
+            ? `Candidate changed ${r.changeUp ? "up (more favourable)" : "down (less favourable)"}${r.kpiWhy ? `: ${r.kpiWhy}` : ""}`
+            : measure
+              ? "KPI: not reported at this moment"
+              : "Candidate: no change";
       const price = `price ${signedPct(r.reaction)} beyond the ${bench} over 5 trading days${r.z === null ? "" : ` (${Math.abs(r.z).toFixed(1)}x its usual move)`}, ${r.priceMoved ? "moved" : "did not move"}`;
       return `${r.day} ${KIND[r.kind]}: ${r.title.replace(/\s+/g, " ")}. ${kpi}; ${price}. Result: ${RESULT[r.result]}.`;
     })
     .join("\n");
+}
+
+/** Tests A and B as the verdict reads them, B listing each move and the event that changed the candidate in it. */
+export function testsText(tests: DriverTests, rows: KpiEventRow[], moves: GoldPriceMove[]): string {
+  const changedIn = new Map<string, KpiEventRow>();
+  for (const r of rows) if (r.kpiMoved === true && r.moveId && !changedIn.has(r.moveId)) changedIn.set(r.moveId, r);
+  const moveLines = moves.map((m) => {
+    const r = changedIn.get(m.id);
+    return `- ${m.startDay} to ${m.endDay}: ${signedPct(m.abnormal)} beyond the ${m.bench} (${Math.abs(m.z).toFixed(1)}x its usual move). Candidate changed in it: ${r ? `yes, ${r.day} ${r.title.replace(/\s+/g, " ")}` : "no"}.`;
+  });
+  return [
+    `A) ${tests.changes} big changes of the candidate: the price followed the expected way ${tests.followed} times, went against or ignored it ${tests.against} times.`,
+    `B) ${tests.moves} unusual price moves: the candidate changed in ${tests.explained} of them.`,
+    ...moveLines,
+  ].join("\n");
 }
 
 type Announcement = { announces: boolean; what: string | null };
@@ -336,8 +401,40 @@ export async function judgeKpiMoves(
   });
 }
 
-export type KpiDriverResult = KpiCandidate & Verdict & { measure: KpiMeasure | null; periods: KpiPeriod[]; rows: KpiEventRow[]; direction: "up" | "down" | null };
+export type KpiDriverResult = KpiCandidate & Verdict & { measure: KpiMeasure | null; periods: KpiPeriod[]; rows: KpiEventRow[]; tests: DriverTests; direction: "up" | "down" | null };
 export type KpiPayload = { symbol: string; drivers: KpiDriverResult[] };
+
+/** Step 6: the verdict from the step-5 table and tests A and B, then its sentence cut to 15 words. */
+async function verdictOf(db: Db, complete: Complete, symbol: string, k: KpiCandidate, table: string, tests: string): Promise<Verdict> {
+  const verdict = await once(
+    db,
+    complete,
+    "kpi-verdict",
+    `${symbol}:${k.name}`,
+    `${VERDICT_QUESTION}:${fnv(`${k.name}|${k.kind}|${k.expected}|${table}|${tests}`)}`,
+    `${VERDICT_QUESTION}: does « ${k.name} » move ${symbol}?`,
+    VERDICT_SYSTEM,
+    [`Candidate (${k.kind}): ${k.name}. When it goes up, the share price should go ${k.expected}.`, "", `Every event of the last ${KPI_YEARS} years, oldest first:`, table, "", "The two tests:", tests].join("\n"),
+    parseVerdict,
+  );
+  // The judge writes ~25 words against a 15-word ask (2026-11-23): a second call shortens the finished sentence.
+  verdict.reason = await once(
+    db,
+    complete,
+    "kpi-reason",
+    `${symbol}:${k.name}`,
+    `${REASON_QUESTION}:${fnv(verdict.reason)}`,
+    `${REASON_QUESTION}: the verdict on « ${k.name} » in 15 words`,
+    REASON_SYSTEM,
+    `Verdict to shorten: ${verdict.reason}`,
+    (text) => {
+      const t = stripDashes(text.trim().replace(/^["«\s]+|["»\s]+$/g, ""));
+      if (!t) throw new Error("kpi-drivers: empty short reason");
+      return t;
+    },
+  );
+  return verdict;
+}
 
 /** One ticker end to end, steps 3 to 6 on the stored steps 1 and 2. */
 export async function judgeKpis(db: Db, complete: Complete, symbol: string): Promise<KpiPayload> {
@@ -350,22 +447,44 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
   const docKey = fnv(releases.map((r) => r.id).join(","));
   const since = new Date(Date.now() - KPI_HISTORY_YEARS * 365.25 * DAY).toISOString().slice(0, 7);
   const bench = events[0]?.bench ?? moves[0]?.bench ?? "market";
-  // Step 3.
+  // Step 3: read in the events that came with an unbiased move (a release with its best pages, news and filings by title).
+  const moving = events.filter((e) => e.moveId !== null);
+  const labels = new Map(moving.map((e, i) => [`M${i + 1}`, e.id]));
+  const pagesOf = new Map(releases.map((r) => [r.id, r]));
+  const movingText = moving
+    .map((e, i) => {
+      const head = `M${i + 1} ${e.day} ${KIND[e.kind]}: ${e.title.replace(/\s+/g, " ")} (the stock moved ${signedPct(e.reaction)} beyond the ${e.bench} in 5 trading days)`;
+      const r = pagesOf.get(e.id);
+      return r ? [head, ...r.pages.map((p) => `  [M${i + 1} page ${p.page}]\n${p.text}`)].join("\n") : head;
+    })
+    .join("\n\n");
   const candidates = await once(
     db,
     complete,
     "kpi-candidates",
     symbol,
-    `${CANDIDATES_QUESTION}:${docKey}:${fnv(keys.join("|"))}`,
-    `${CANDIDATES_QUESTION}: which fundamental KPIs drive ${symbol}?`,
+    `${CANDIDATES_QUESTION}:${fnv(movingText)}:${fnv(keys.join("|"))}`,
+    `${CANDIDATES_QUESTION}: which price driver candidates for ${symbol}?`,
     CANDIDATES_SYSTEM,
-    [`Company: ${company}`, "", "Stored series:", keys.join("\n") || "none", "", "Its latest reports (best pages):", releasesText(releases.slice(-4))].join("\n"),
-    (text) => parseCandidates(text, catalog),
+    [`Company: ${company}`, "", "Stored series:", keys.join("\n") || "none", "", "Every event with an unusual price move, oldest first:", movingText || "none"].join("\n"),
+    (text) => parseCandidates(text, catalog, labels),
   );
   // Step 1b, once per event: the announcements that carry a period's figures before its report.
   const announced = await announcementsOf(db, complete, events);
   const drivers: KpiDriverResult[] = [];
+  const windowStart = events[0]?.day ?? since;
+  const windowMoves = moves.filter((m) => m.startDay >= windowStart);
   for (const k of candidates) {
+    if (k.kind !== "kpi") {
+      // Steps 4 and 5 of a policy or industry fact: the events that change it, crossed with the price.
+      const changes = await judgeChanges(db, complete, symbol, company, k, events);
+      const rows = changeRows(events, changes, k.expected, moves);
+      const tests = driverTests(rows, windowMoves);
+      const verdict = await verdictOf(db, complete, symbol, k, tableText(rows, null, [], bench), testsText(tests, rows, windowMoves));
+      const last = [...rows].reverse().find((r) => r.kpiMoved === true);
+      drivers.push({ ...k, ...verdict, measure: null, periods: [], rows, tests, direction: last ? (last.changeUp ? "up" : "down") : null });
+      continue;
+    }
     // Step 4: from what is stored, else read in the reports.
     let measured = measureKpi(catalog, k, since);
     let cites = new Map<string, DocCitation>();
@@ -390,37 +509,11 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
     const periods = measured ? await judgeKpiMoves(db, complete, symbol, company, k, computed, measured.measure, events, announced) : [];
     // Step 5.
     const rows = eventRows(events, periods, k.expected, moves);
-    // Step 6, from the table only.
-    const table = tableText(rows, measured?.measure ?? null, periods, bench);
-    const verdict = await once(
-      db,
-      complete,
-      "kpi-verdict",
-      `${symbol}:${k.name}`,
-      `${VERDICT_QUESTION}:${fnv(`${k.name}|${k.expected}|${table}`)}`,
-      `${VERDICT_QUESTION}: does « ${k.name} » move ${symbol}?`,
-      VERDICT_SYSTEM,
-      [`KPI: ${k.name}. When it goes up, the share price should go ${k.expected}.`, "", `Every event of the last ${KPI_YEARS} years, oldest first:`, table].join("\n"),
-      parseVerdict,
-    );
-    // The judge writes ~25 words against a 15-word ask (2026-11-23): a second call shortens the finished sentence.
-    verdict.reason = await once(
-      db,
-      complete,
-      "kpi-reason",
-      `${symbol}:${k.name}`,
-      `${REASON_QUESTION}:${fnv(verdict.reason)}`,
-      `${REASON_QUESTION}: the verdict on « ${k.name} » in 15 words`,
-      REASON_SYSTEM,
-      `Verdict to shorten: ${verdict.reason}`,
-      (text) => {
-        const t = stripDashes(text.trim().replace(/^["«\s]+|["»\s]+$/g, ""));
-        if (!t) throw new Error("kpi-drivers: empty short reason");
-        return t;
-      },
-    );
+    // Step 6, from the table and the two tests only.
+    const tests = driverTests(rows, windowMoves);
+    const verdict = await verdictOf(db, complete, symbol, k, tableText(rows, measured?.measure ?? null, periods, bench), testsText(tests, rows, windowMoves));
     const last = [...periods].reverse().find((p) => p.change !== null);
-    drivers.push({ ...k, ...verdict, measure: measured?.measure ?? null, periods, rows, direction: last ? (last.change! >= 0 ? "up" : "down") : null });
+    drivers.push({ ...k, ...verdict, measure: measured?.measure ?? null, periods, rows, tests, direction: last ? (last.change! >= 0 ? "up" : "down") : null });
   }
   return { symbol, drivers };
 }
@@ -461,6 +554,9 @@ export async function promoteKpis(db: Db, fetches: BronzeFetch[]): Promise<numbe
       symbol,
       rank: i + 1,
       name: d.name,
+      kind: d.kind ?? "kpi",
+      foundIn: d.foundIn ?? [],
+      tests: d.tests ?? null,
       why: d.why,
       expected: d.expected,
       series: d.series,
@@ -488,7 +584,7 @@ export async function promoteKpis(db: Db, fetches: BronzeFetch[]): Promise<numbe
 
 export const kpiDriversDim: Dimension = {
   name: KPI_DIMENSION,
-  description: "Fundamental KPIs that move each stock, in stored steps: candidates with their expected direction and how each is measured (AI), when each KPI moved (code), every event of 3 years crossed with the KPI's and the price's moves (code: confirms / invalidates / other cause / nothing), then the verdict from that table (AI) and whether it turns now.",
+  description: "Price drivers of each stock, in stored steps: candidates (a KPI, a policy or an industry fact) read in the events that came with an unusual move (AI), when each changed (code for a KPI, AI for the others), every event of 3 years crossed with the candidate's and the price's moves (code), tests A (each change -> a move?) and B (each move -> a change?), then the verdict (AI) and whether it turns now.",
   sources: [kpiSource],
   subjects: analysedSymbols,
   promote: async (db, fetches): Promise<PromoteResult> => ({ silverRowsBySource: { claude: await promoteKpis(db, fetches) } }),
