@@ -3,7 +3,7 @@ import type { BronzeFetch } from "@/db/schema/bronze";
 import { newsItems, newsMentions } from "@/db/schema/news";
 import type { Db } from "@/db/types";
 import type { Dimension, PromoteResult } from "../../types";
-import { analysedSymbols } from "../watchlist";
+import { activeSymbols } from "../watchlist";
 import { rebuildGoldNews } from "./gold";
 import { type ItemState, mergeArticles, type RawArticle } from "./parse";
 import { NEWS_SOURCES } from "./sources";
@@ -15,15 +15,17 @@ const MATCH_HORIZON_MS = 60 * 86400_000;
 const CHUNK = 200;
 
 /**
- * News flow: Finnhub (US), Google News (name + aliases, every market), Yahoo Finance RSS (by symbol)
+ * News flow: Finnhub (US), Google News (name + aliases + industry terms, every market), Yahoo Finance RSS (by symbol)
  * -> bronze.fetches -> silver.news_items + silver.news_mentions (one article, every source) -> gold feeds.
  * Runs after company-profile: Google News queries the resolved company name.
+ * Every ACTIVE ticker, not only the analysis scope (DAILY-EMAIL-1123): the morning email covers the whole watchlist,
+ * and a news fetch is a few HTTP calls; the heavy readers (evidence, move causes...) stay on the analysis scope.
  */
 export const news: Dimension = {
   name: NEWS_DIMENSION,
   description: "Articles about each ticker from Finnhub, Google News and Yahoo Finance, deduplicated across sources.",
   sources: NEWS_SOURCES,
-  subjects: analysedSymbols,
+  subjects: activeSymbols,
   promote: promoteNews,
 };
 

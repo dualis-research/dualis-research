@@ -16,8 +16,12 @@ import { marketEnum, silver, tickers } from "./silver";
  * tag kept, plus one row per (article, ticker, how it matched). Gold = what the News pages read.
  */
 
-/** How an article was tied to a ticker: the vendor's symbol feed, the company name query, or a watchlist alias. */
-export const newsMatchKindEnum = silver.enum("news_match_kind", ["symbol", "name", "alias"]);
+/**
+ * How an article was tied to a ticker: the vendor's symbol feed, the company name query, a watchlist alias, or one of
+ * the ticker's industry terms (competitors, suppliers, its product market; picked once per company profile by Claude,
+ * `news/industry.ts`): an industry hit is about the company's space, never about the company itself.
+ */
+export const newsMatchKindEnum = silver.enum("news_match_kind", ["symbol", "name", "alias", "industry"]);
 
 /** One article. `sources[i]` was last read from `bronzeIds[i]`. */
 export const newsItems = silver.table(
@@ -98,7 +102,7 @@ export const goldNewsItems = gold.table(
 );
 export type GoldNewsItem = typeof goldNewsItems.$inferSelect;
 
-export type NewsMatch = { kind: "symbol" | "name" | "alias"; term: string; sources: string[] };
+export type NewsMatch = { kind: "symbol" | "name" | "alias" | "industry"; term: string; sources: string[] };
 
 /** Per-ticker feed: one row per (article, ticker), with how the match was made. Catalysts read this. */
 export const goldNewsLinks = gold.table(
