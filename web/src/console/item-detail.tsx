@@ -1,4 +1,4 @@
-import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, StackIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import { Badge } from "@cloudflare/kumo";
 import Link from "@/console/link";
@@ -17,8 +17,9 @@ import { DriverExhibit, ExhibitChart } from "./driver-chart";
 import { formatUnit } from "./exhibit-format";
 import { day, numberFormat, price, utc } from "./format";
 import { Drawer, Drawers } from "./drawer";
-import { Fact, FactList, SourceTags } from "./ui";
-import { sourceNote } from "./source-labels";
+import { Fact, FactList } from "./ui";
+import { OWN_WORK, sourceLabel } from "./source-labels";
+import { parseSourceItem, SourcedFigure, type SourcePayload } from "./sourced";
 import { documentPageDetail } from "./document-queries";
 import { DocumentPageText, docItemId, openAt, parseDocItem } from "./document-page";
 import type { PeerRow } from "@/db/schema/valuation";
@@ -26,18 +27,22 @@ import type { ThesisSide } from "@/db/schema/analysis";
 import { Rich } from "./rich";
 
 /**
- * Level C: the detail of one item of the analysis (`?item=` on the Analysis page): what it says, its chart, and where
- * it comes from (a research-note "Source:" line naming the providers, the original document).
+ * Level C: the detail of one item of the analysis (`?item=` on the Analysis page): what it says and its chart. Where a
+ * figure or quote comes from is one click on it (SOURCES-ONE-CLICK-1123, `sourced.tsx`), never a « Source: » line.
  * Items: `fair-value`, `narrative` (its detail + Rationale), `news:<catalyst id>` (= its Evidence id), `driver:<id>`, `exhibit:<id>`, `kpi:<metric>`, `price`, `move:<move id>` (a significant price move and its cause),
- * `doc:<document id>:<page>[:<quote>]` (one page of a company document, the quote highlighted).
+ * `doc:<document id>:<page>[:<quote>]` (one page of a company document, the quote highlighted), `src:<payload>` (a data
+ * figure's source: series, providers by name, date).
  */
 
 export type ItemView = { title: string; subtitle?: React.ReactNode; body: React.ReactNode };
 
-/** Where an item comes from, as a research note prints it: "Source: Company filings (DART), Yahoo Finance, Dualis Research." */
+/**
+ * Retired (SOURCES-ONE-CLICK-1123): no « Source: » line at the bottom of a panel. Renders nothing; kept only because the
+ * KPI driver panel (`kpiDriverItem`, rebuilt on another branch) still names it. Delete with that rebuild.
+ */
 function SourceNote({ sources }: { sources: string[] }) {
-  const note = sourceNote(sources);
-  return note ? <p className="text-sm text-kumo-subtle">{note}</p> : null;
+  void sources;
+  return null;
 }
 
 /** A news verdict's weight: a turn before a continuation before noise, strong before weak. */
@@ -134,7 +139,6 @@ async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
                 <span className="flex flex-wrap items-center gap-2 text-sm text-kumo-subtle">
                   {a.publisher && <span>{a.publisher}</span>}
                   {a.publishedAt && <time title={utc(a.publishedAt)}>{day(a.publishedAt)}</time>}
-                  <SourceTags sources={a.sources} />
                 </span>
               </li>
             ))}
@@ -150,14 +154,12 @@ async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
                 <span className="flex flex-wrap items-center gap-2 text-sm text-kumo-subtle">
                   <span>{[f.registry, f.form].filter(Boolean).join(" ")}</span>
                   <time title={utc(f.filedAt)}>{day(f.filedAt)}</time>
-                  <SourceTags sources={f.sources} />
                 </span>
               </li>
             ))}
           </ul>
         </Drawer>
         </Drawers>
-        <SourceNote sources={c.sources} />
       </>
     ),
   };
@@ -172,6 +174,19 @@ async function kpiItem(symbol: string, metric: string): Promise<ItemView | null>
   const fmt = (v: number | null) => (v === null ? "–" : metric === "eps" ? v.toFixed(2) : numberFormat({ notation: "compact", maximumFractionDigits: 1 }).format(v));
   const sources = [...new Set(rows.flatMap((r) => Object.values(r.provenance).flatMap((p) => p.sources)))];
   const currency = rows.find((r) => r.currency)?.currency ?? null;
+  // Each figure opens its own source (the providers behind that one value): no source line under the table.
+  const FIELD = { low: "Consensus low", mean: "Consensus mean", high: "Consensus high", actual: "Reported" } as const;
+  const cell = (r: (typeof rows)[number], field: keyof typeof FIELD) => {
+    const v = r[field];
+    const tags = r.provenance[field]?.sources ?? [];
+    if (v === null || tags.length === 0) return fmt(v);
+    const period = `${r.periodType === "year" ? "FY" : "Q"} ${r.periodEnd}`;
+    return (
+      <SourcedFigure symbol={symbol} source={{ l: `${metricLabel(metric)}, ${FIELD[field].toLowerCase()}`, v: `${fmt(v)}${r.currency ? ` ${r.currency}` : ""}`, d: period, s: tags }}>
+        {fmt(v)}
+      </SourcedFigure>
+    );
+  };
   return {
     title: `${metricLabel(metric)} vs consensus`,
     subtitle: currency ? `In ${currency}` : undefined,
@@ -185,6 +200,7 @@ async function kpiItem(symbol: string, metric: string): Promise<ItemView | null>
             period={period}
             points={series.map((r) => ({ date: `${r.periodEnd}-01`, value: r.actual! }))}
             sources={sources}
+            symbol={symbol}
           />
         )}
         <Drawers>
@@ -204,10 +220,10 @@ async function kpiItem(symbol: string, metric: string): Promise<ItemView | null>
               {[...rows].reverse().map((r) => (
                 <KTableRow key={`${r.periodType}|${r.periodEnd}`}>
                   <KTableCell className="pl-4 whitespace-nowrap">{`${r.periodType === "year" ? "FY" : "Q"} ${r.periodEnd}`}</KTableCell>
-                  <KTableCell className="text-right font-mono tabular">{fmt(r.low)}</KTableCell>
-                  <KTableCell className="text-right font-mono tabular">{fmt(r.mean)}</KTableCell>
-                  <KTableCell className="text-right font-mono tabular">{fmt(r.high)}</KTableCell>
-                  <KTableCell className="pr-4 text-right font-mono tabular text-kumo-strong">{fmt(r.actual)}</KTableCell>
+                  <KTableCell className="text-right font-mono tabular">{cell(r, "low")}</KTableCell>
+                  <KTableCell className="text-right font-mono tabular">{cell(r, "mean")}</KTableCell>
+                  <KTableCell className="text-right font-mono tabular">{cell(r, "high")}</KTableCell>
+                  <KTableCell className="pr-4 text-right font-mono tabular text-kumo-strong">{cell(r, "actual")}</KTableCell>
                 </KTableRow>
               ))}
             </KTableBody>
@@ -215,7 +231,6 @@ async function kpiItem(symbol: string, metric: string): Promise<ItemView | null>
         </div>
         </Drawer>
         </Drawers>
-        <SourceNote sources={sources} />
       </>
     ),
   };
@@ -232,9 +247,8 @@ async function priceItem(symbol: string): Promise<ItemView | null> {
     subtitle: `Close of ${day(last.date)}: ${price(last.close)}`,
     body: (
       <>
-        <DriverExhibit number={1} title={`${symbol} daily close`} unit={null} period="market" points={bars.map((b) => ({ date: b.date, value: b.close }))} sources={sources} />
+        <DriverExhibit number={1} title={`${symbol} daily close`} unit={null} period="market" points={bars.map((b) => ({ date: b.date, value: b.close }))} sources={sources} symbol={symbol} />
         {disagreements > 0 && <p className="text-base text-kumo-subtle">{`${disagreements} day${disagreements === 1 ? "" : "s"} where a source's close differs by more than 0.5%.`}</p>}
-        <SourceNote sources={sources} />
       </>
     ),
   };
@@ -256,7 +270,6 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
       : c.candidates === 0
         ? "No news or filing found around this move."
         : `None of the ${c.candidates} news items and filings around this move explains it.`;
-  const sources = [...new Set((c?.cites ?? []).flatMap((x) => x.sources)), "rules"];
   return {
     title: `${m.direction === "up" ? "Rise" : "Fall"} of ${signed(m.returnPct)}`,
     subtitle: span,
@@ -307,7 +320,6 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
           </Drawer>
         )}
         </Drawers>
-        <SourceNote sources={sources} />
       </>
     ),
   };
@@ -316,7 +328,6 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
 async function driverItem(symbol: string, id: string): Promise<ItemView | null> {
   const d = await driverDetail(symbol, id);
   if (!d) return null;
-  const sources = [...new Set(d.exhibits.flatMap((x) => x.sources))];
   return {
     title: d.driver.title,
     subtitle: d.driver.category,
@@ -340,7 +351,6 @@ async function driverItem(symbol: string, id: string): Promise<ItemView | null> 
             </Drawer>
           )}
         </DriverReason>
-        <SourceNote sources={sources} />
       </>
     ),
   };
@@ -429,7 +439,6 @@ async function confidenceItem(symbol: string, id: string): Promise<ItemView | nu
             <p className="text-base leading-relaxed text-kumo-default"><Rich text={d.driver.text} /></p>
           </Drawer>
         </Drawers>
-        <SourceNote sources={["claude"]} />
       </>
     ),
   };
@@ -538,7 +547,7 @@ async function exhibitItem(symbol: string, id: string): Promise<ItemView | null>
     subtitle: d.driver ? `${d.driver.category}: ${d.driver.title}` : undefined,
     body: (
       <>
-        <ExhibitChart number={x.number} title={x.title} chart={x.chart} series={x.series} points={x.points} sources={x.sources} height={280} />
+        <ExhibitChart number={x.number} title={x.title} chart={x.chart} series={x.series} points={x.points} sources={x.sources} height={280} symbol={symbol} />
         <p className="text-lg leading-relaxed text-kumo-strong"><Rich text={x.takeaway} /></p>
         <Drawers>
         <Drawer icon={<TableIcon size={16} aria-hidden />} title={`Data · ${x.points.length} periods`}>
@@ -558,30 +567,23 @@ async function exhibitItem(symbol: string, id: string): Promise<ItemView | null>
               {[...x.points].reverse().map((p) => (
                 <KTableRow key={p.period}>
                   <KTableCell className="pl-4 whitespace-nowrap">{p.period}</KTableCell>
-                  {x.series.map((s) => (
-                    <KTableCell key={s.key} className="pr-4 text-right font-mono tabular">
-                      {p.values[s.key] === null || p.values[s.key] === undefined ? "–" : formatUnit(p.values[s.key]!, s.unit, s.currency)}
-                    </KTableCell>
-                  ))}
+                  {x.series.map((s) => {
+                    const v = p.values[s.key];
+                    const shown = v === null || v === undefined ? null : formatUnit(v, s.unit, s.currency);
+                    const tags = s.sources.length ? s.sources : x.sources;
+                    return (
+                      <KTableCell key={s.key} className="pr-4 text-right font-mono tabular">
+                        {shown === null ? "–" : tags.length ? <SourcedFigure symbol={symbol} source={{ l: s.label, v: shown, d: p.period, s: tags }}>{shown}</SourcedFigure> : shown}
+                      </KTableCell>
+                    );
+                  })}
                 </KTableRow>
               ))}
             </KTableBody>
           </KTable>
         </div>
         </Drawer>
-        <Drawer icon={<StackIcon size={16} aria-hidden />} title={`Series · ${x.series.length}`}>
-          <ul className="flex flex-col gap-2">
-            {x.series.map((s) => (
-              <li key={s.key} className="flex flex-wrap items-center gap-2 text-base">
-                <span className="text-kumo-strong">{s.label}</span>
-                <span className="font-mono text-[12px] text-kumo-subtle">{s.key}</span>
-                <SourceTags sources={s.sources} />
-              </li>
-            ))}
-          </ul>
-        </Drawer>
         </Drawers>
-        <SourceNote sources={x.sources} />
       </>
     ),
   };
@@ -600,7 +602,11 @@ async function fairValueItem(symbol: string): Promise<ItemView | null> {
         {r && <RangeCards low={r.low} base={r.base} high={r.high} currency={r.currency} baseLabel="Fair value" />}
         {f.conversion && (
           <p className="text-base text-kumo-default">
-            Valued in {f.conversion.from} from the company&apos;s statements: {price(f.conversion.value)} {f.conversion.from}, shown in {f.conversion.to} at {f.conversion.rate.toFixed(4)} {f.conversion.to} per {f.conversion.from} ({f.conversion.date}).
+            Valued in {f.conversion.from} from the company&apos;s statements: {price(f.conversion.value)} {f.conversion.from}, shown in {f.conversion.to} at{" "}
+            <SourcedFigure symbol={symbol} source={{ l: `${f.conversion.to} per ${f.conversion.from}`, v: f.conversion.rate.toFixed(4), d: f.conversion.date, s: f.conversion.source.split(", ") }}>
+              {f.conversion.rate.toFixed(4)} {f.conversion.to} per {f.conversion.from}
+            </SourcedFigure>{" "}
+            ({f.conversion.date}).
           </p>
         )}
         <Drawers>
@@ -623,7 +629,6 @@ async function fairValueItem(symbol: string): Promise<ItemView | null> {
             </Drawer>
           )}
         </Drawers>
-        <SourceNote sources={["claude", ...new Set(v.methods.flatMap((m) => m.inputs.flatMap((i) => i.sources))), ...(f.conversion ? f.conversion.source.split(", ") : [])]} />
       </>
     ),
   };
@@ -673,6 +678,7 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
             series={[{ key: "h", label: m.history.label, unit: m.history.unit as "multiple", currency: m.currency, sources: [] }]}
             points={m.history.points.map((p) => ({ period: p.period, values: { h: p.value } }))}
             sources={[...new Set(m.inputs.flatMap((i) => i.sources))]}
+            symbol={symbol}
           />
           </Drawer>
         )}
@@ -778,9 +784,14 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
                 {m.inputs.map((i) => (
                   <Fact key={i.key} label={i.label}>
                     <span className="flex flex-wrap items-center gap-2">
-                      <span className="font-mono tabular">{i.reported === false ? "None reported" : unit(i.unit, i.value)}</span>
+                      {i.reported === false || i.sources.length === 0 ? (
+                        <span className="font-mono tabular">{i.reported === false ? "None reported" : unit(i.unit, i.value)}</span>
+                      ) : (
+                        <SourcedFigure symbol={symbol} className="font-mono tabular" source={{ l: i.label, v: unit(i.unit, i.value), d: i.period, s: i.sources }}>
+                          {unit(i.unit, i.value)}
+                        </SourcedFigure>
+                      )}
                       <span className="text-sm text-kumo-subtle">{i.period}</span>
-                      <SourceTags sources={i.sources} />
                     </span>
                   </Fact>
                 ))}
@@ -796,7 +807,6 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
           </Drawer>
         )}
         </Drawers>
-        <SourceNote sources={["claude", ...new Set(m.inputs.flatMap((i) => i.sources))]} />
       </>
     ),
   };
@@ -824,7 +834,6 @@ async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise
   const st = a.narrativeState;
   const driverByRank = new Map(a.drivers.map((d) => [d.rank, d]));
   const exhibitByNumber = new Map([...a.drivers.flatMap((d) => d.exhibits), ...(r?.exhibits ?? [])].map((x) => [String(x.number), x]));
-  const sources = [...new Set((r?.exhibits ?? []).flatMap((x) => x.sources))];
   const short = r?.summary ?? a.narrative.detail;
   return {
     title: "Why the market tells this story",
@@ -892,7 +901,6 @@ async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise
             </Drawer>
           )}
         </Drawers>
-        <SourceNote sources={sources.length ? sources : ["claude"]} />
       </>
     ),
   };
@@ -927,7 +935,37 @@ async function docItem(symbol: string, key: string): Promise<ItemView | null> {
             </a>
           )}
         </div>
-        <SourceNote sources={doc.sources} />
+      </>
+    ),
+  };
+}
+
+/**
+ * A data figure's source (`src:<payload>`, SOURCES-ONE-CLICK-1123): the figure as printed, then what it is, when, and
+ * who publishes it, providers by name (« Yahoo Finance », « Company filings (DART) »), never a table or layer name.
+ */
+function sourceItem(payload: SourcePayload): ItemView {
+  const from = [...new Set(payload.s.map(sourceLabel))];
+  const rank = (l: string) => (l.startsWith("Company filings") ? 0 : l === OWN_WORK ? 2 : 1);
+  from.sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+  return {
+    title: payload.l,
+    subtitle: payload.d,
+    body: (
+      <>
+        {payload.v && <p className="font-mono text-3xl tabular text-kumo-strong">{payload.v}</p>}
+        <div className="rounded-lg ring-1 ring-kumo-hairline">
+          <FactList>
+            <Fact label="Figure">{payload.l}</Fact>
+            {payload.d && <Fact label="Date">{payload.d}</Fact>}
+            <Fact label={from.length > 1 ? "Sources" : "Source"}>{from.length ? from.join(", ") : "Not recorded"}</Fact>
+          </FactList>
+        </div>
+        {payload.u && (
+          <a href={payload.u} target="_blank" rel="noreferrer" className={external}>
+            Open the original <ArrowSquareOutIcon size={14} className="mt-1 shrink-0" aria-label="opens the original" />
+          </a>
+        )}
       </>
     ),
   };
@@ -948,5 +986,9 @@ export async function itemView(symbol: string, item: string, thesis: ThesisSide 
   if (kind === "valuation") return methodItem(symbol, key);
   if (kind === "move") return moveItem(symbol, key);
   if (kind === "doc") return docItem(symbol, key);
+  if (kind === "src") {
+    const p = parseSourceItem(key);
+    return p ? sourceItem(p) : null;
+  }
   return null;
 }

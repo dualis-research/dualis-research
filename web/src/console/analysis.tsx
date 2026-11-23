@@ -24,15 +24,16 @@ import { consensusOf, getTicker } from "./queries";
 import { Section } from "./signal";
 import { PRICED_WORD } from "@/content/signal-words";
 import { Rich } from "./rich";
+import { SourcedFigure } from "./sourced";
 
 /**
  * Level B: one ticker's analysis. The SAME content renders in the right panel (`variant="panel"`, from a Signals row)
  * and as the full Analysis page (`/tickers/[symbol]`). Every item (a figure, a news) opens level C: a panel inside
- * the Analysis page (`?item=`) with its detail and sources.
+ * the Analysis page (`?item=`) with its detail; a dotted-underlined figure or quote opens its source (`sourced.tsx`).
  */
 
-/** An item of the Analysis page; `thesis` keeps the shown thesis behind the item's panel. */
-export const itemHref = (symbol: string, item: string, thesis?: ThesisSide | null) => `/tickers/${encodeURIComponent(symbol)}?item=${encodeURIComponent(item)}${thesis ? `&thesis=${thesis}` : ""}`;
+import { itemHref } from "./item-href";
+export { itemHref };
 
 export const parseThesis = (v: string | undefined): ThesisSide | null => (v === "long" || v === "short" ? v : null);
 
@@ -74,6 +75,18 @@ function Kpis({ symbol, rows }: { symbol: string; rows: GoldConsensus[] }) {
   if (latest.size === 0) return <p className="text-lg text-kumo-subtle">No free source publishes analyst estimates for this ticker.</p>;
   const fmt = (metric: string, v: number | null) =>
     v === null ? "–" : metric === "eps" ? v.toFixed(2) : numberFormat({ notation: "compact", maximumFractionDigits: 1 }).format(v);
+  // The figure itself opens its source (SOURCES-ONE-CLICK-1123); the rest of the row opens every period.
+  const figure = (r: GoldConsensus, field: "mean" | "actual") => {
+    const v = r[field];
+    const tags = r.provenance[field]?.sources ?? [];
+    if (v === null || tags.length === 0) return fmt(r.metric, v);
+    const label = `${metricLabel(r.metric)}, ${field === "mean" ? "consensus mean" : "reported"}`;
+    return (
+      <SourcedFigure symbol={symbol} source={{ l: label, v: `${fmt(r.metric, v)}${r.currency ? ` ${r.currency}` : ""}`, d: `${r.periodType === "year" ? "FY" : "Q"} ${r.periodEnd}`, s: tags }}>
+        {fmt(r.metric, v)}
+      </SourcedFigure>
+    );
+  };
   return (
     <div className="overflow-x-auto rounded-lg ring-1 ring-kumo-hairline">
       <KTable>
@@ -94,8 +107,8 @@ function Kpis({ symbol, rows }: { symbol: string; rows: GoldConsensus[] }) {
               <RowLink key={r.metric} href={itemHref(symbol, `kpi:${r.metric}`)} label={`Open ${metricLabel(r.metric)} vs consensus`}>
                 <KTableCell className="py-3 pl-4 font-medium text-kumo-strong">{metricLabel(r.metric)}</KTableCell>
                 <KTableCell className="py-3 whitespace-nowrap text-kumo-subtle">{`${r.periodType === "year" ? "FY" : "Q"} ${r.periodEnd}`}</KTableCell>
-                <KTableCell className="py-3 text-right font-mono tabular">{fmt(r.metric, r.mean)}</KTableCell>
-                <KTableCell className="py-3 text-right font-mono tabular text-kumo-strong">{fmt(r.metric, r.actual)}</KTableCell>
+                <KTableCell className="py-3 text-right font-mono tabular">{figure(r, "mean")}</KTableCell>
+                <KTableCell className="py-3 text-right font-mono tabular text-kumo-strong">{figure(r, "actual")}</KTableCell>
                 <KTableCell className={`py-3 text-right font-mono tabular ${vs === null ? "text-kumo-subtle" : vs >= 0 ? "text-dualis-long" : "text-dualis-short"}`}>
                   {vs === null ? "Not reported yet" : `${vs >= 0 ? "+" : "-"}${Math.abs(vs * 100).toFixed(1)}%`}
                 </KTableCell>
@@ -141,7 +154,7 @@ function SignalHistory({ changes }: { changes: Analysis["objects"]["signalChange
 
 /** One exhibit, its title opening the exhibit's own panel. */
 export function Exhibit({ symbol, exhibit, linked = true }: { symbol: string; exhibit: GoldExhibit; linked?: boolean }) {
-  const chart = <ExhibitChart number={exhibit.number} title={exhibit.title} chart={exhibit.chart} series={exhibit.series} points={exhibit.points} sources={exhibit.sources} />;
+  const chart = <ExhibitChart number={exhibit.number} title={exhibit.title} chart={exhibit.chart} series={exhibit.series} points={exhibit.points} sources={exhibit.sources} symbol={symbol} />;
   if (!linked) return chart;
   return (
     <div className="flex flex-col gap-2">

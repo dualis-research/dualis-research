@@ -197,7 +197,7 @@ describe("a driver's state reads only what that driver is about (PR-E, Kyungbang
 });
 
 describe("the driver panel: the reason first, then what changed with its quotes, then the moves", () => {
-  it("renders in that order, each quote a chip opening its page, each move opening its panel", async () => {
+  it("renders in that order, each quote's own words opening its page, each move opening its panel", async () => {
     const { DriverReason } = await import("@/console/driver-reason");
     const state = { effect: "reversal", strength: "weak", why: "A restocking.", reason: "Customer restocking doubled orders to JPY 8.3B.", durability: "temporary", magnitude: { figure: "Orders", from: "JPY 4.1B", to: "JPY 8.3B", change: "+102%", size: "material" }, explanation: "Management: Orders for 300mm wafer shippers doubled as two customers signed. It ends next year.", citations: [{ documentId: DOC, page: 2, quote: "Orders for 300mm wafer shippers doubled", title: "Summary of results" }] } as unknown as GoldNarrativeState;
     const moves = [{ id: `${SYMBOL}:2026-06-01`, startDay: "2026-06-01", direction: "up", returnPct: 0.2, cause: { fact: "First-half orders doubled." } }] as never;
@@ -207,10 +207,11 @@ describe("the driver panel: the reason first, then what changed with its quotes,
     expect(at("Customer restocking doubled orders")).toBeGreaterThan(-1);
     expect(at("Customer restocking doubled orders")).toBeLessThan(at("What changed"));
     expect(at("What changed")).toBeLessThan(at("What moved the stock"));
-    // The chip sits right after the words it quotes and opens the page with the quote highlighted.
+    // The quoted words themselves are the link (dotted underline): one click opens the page with the quote highlighted.
     expect(html).toContain(`href="/x?item=${encodeURIComponent(`doc:${DOC}:2:Orders for 300mm wafer shippers doubled`)}"`);
-    expect(at("shippers doubled")).toBeLessThan(at("p. 2"));
-    expect(at("p. 2")).toBeLessThan(at("as two customers signed"));
+    expect(html).toContain(">Orders for 300mm wafer shippers doubled</a>");
+    expect(html).not.toContain("p. 2");
+    expect(at("shippers doubled")).toBeLessThan(at("as two customers signed"));
     expect(html).toContain(`href="/x?item=${encodeURIComponent(`move:${SYMBOL}:2026-06-01`)}"`);
   });
 });

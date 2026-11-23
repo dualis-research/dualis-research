@@ -1,9 +1,10 @@
 import { Badge } from "@cloudflare/kumo";
-import { ArrowsClockwiseIcon, FileTextIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowsClockwiseIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
 import Link from "@/console/link";
 import { findQuote } from "@/collectors/dimensions/filing-documents/text";
 import type { DocCitation, GoldNarrativeState, GoldPriceMove, GoldPriceMoveCause, ThesisSide } from "@/db/schema/analysis";
 import { docItemId } from "./document-page";
+import { SOURCED_CLASS } from "./sourced";
 import { Drawer, Drawers } from "./drawer";
 import { TagBadge } from "./tag-badge";
 import { Rich } from "./rich";
@@ -11,51 +12,80 @@ import { Rich } from "./rich";
 /**
  * The top of a Narrative Driver panel (INFLECTION-1117, Kevin 2026-11-17: « la raison doit être résumée très clairement
  * et le plus concisément possible en haut… le détail est disponible en dessous »): the reason in one sentence with its
- * tag (« Weak inflection · Structural »), then What changed (management's words, each quote one click from its page),
+ * tag (« Weak inflection · Structural »), then What changed (management's words, each quote dotted-underlined, one click from its page),
  * then What moved the stock (the significant moves that made it a driver). Pure: the panel and its test render it.
  */
 
 const signed = (x: number | null) => (x === null ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
 const shortDay = (d: string) => new Date(`${d.slice(0, 10)}T00:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 
-/** A citation chip: the document and page, opening the page with the quote highlighted. */
-function CitationChip({ c, href }: { c: DocCitation; href: string }) {
-  return (
-    <Link href={href} scroll={false} title={c.quote} className="mx-0.5 inline-flex max-w-[18rem] items-center gap-1 rounded-md px-1.5 py-0.5 align-baseline text-sm text-kumo-link ring-1 ring-kumo-hairline hover:bg-kumo-tint">
-      <FileTextIcon size={13} className="shrink-0" aria-hidden />
-      <span className="truncate">{c.title ?? "Company document"}</span>
-      <span className="shrink-0 tabular">p. {c.page}</span>
-    </Link>
-  );
+/** The explanation's words without the bold marks, and where each bold run sits in them. */
+function boldRuns(shown: string): { text: string; bold: [number, number][] } {
+  const parts = shown.split("**");
+  let text = "";
+  const bold: [number, number][] = [];
+  parts.forEach((p, i) => {
+    // An odd part is inside a pair of marks; a lone last mark is dropped, never shown (as `Rich` does).
+    if (i % 2 === 1 && i < parts.length - 1) bold.push([text.length, text.length + p.length]);
+    text += p;
+  });
+  return { text, bold };
 }
 
-/** The explanation with each quote's chip right after the words it quotes; a quote not found in the text gets its chip at the end. */
+/**
+ * The explanation, each quoted passage dotted-underlined: a click opens the document page with the passage highlighted
+ * (SOURCES-ONE-CLICK-1123: the quote itself is the link, no chip). A quote not printed in the explanation follows it,
+ * in « », underlined the same way.
+ */
 export function ExplanationWithCitations({ text: shown, citations, hrefFor }: { text: string; citations: DocCitation[]; hrefFor: (item: string) => string }) {
-  // Quotes are found in the words without the bold marks; `at` maps a position there back to the shown text.
-  const at: number[] = [];
-  for (let i = 0; i < shown.length; i++) if (!(shown[i] === "*" && (shown[i + 1] === "*" || shown[i - 1] === "*"))) at.push(i);
-  at.push(shown.length);
-  const text = shown.replace(/\*\*/g, "");
-  const cut = (from: number, to: number) => <Rich key={`t${from}`} text={shown.slice(at[from], at[to])} />;
-  const placed = citations
+  const { text, bold } = boldRuns(shown);
+  const words = (from: number, to: number, key: string) => {
+    const out: React.ReactNode[] = [];
+    let at = from;
+    for (const [b, e] of bold) {
+      if (e <= at || b >= to) continue;
+      if (b > at) out.push(text.slice(at, b));
+      out.push(
+        <strong key={`${key}b${b}`} className="font-semibold text-kumo-strong">
+          {text.slice(Math.max(b, at), Math.min(e, to))}
+        </strong>,
+      );
+      at = Math.min(e, to);
+    }
+    if (at < to) out.push(text.slice(at, to));
+    return out;
+  };
+  const href = (c: DocCitation) => hrefFor(docItemId(c.documentId, c.page, c.quote));
+  const found = citations
     .map((c, i) => ({ c, i, at: findQuote(text, c.quote) }))
     .filter((x): x is { c: DocCitation; i: number; at: [number, number] } => x.at !== null)
-    .sort((a, b) => a.at[1] - b.at[1]);
-  const rest = citations.filter((_, i) => !placed.some((p) => p.i === i));
+    .sort((a, b) => a.at[0] - b.at[0]);
   const parts: React.ReactNode[] = [];
+  const placed = new Set<number>();
   let cursor = 0;
-  for (const p of placed) {
-    if (p.at[1] < cursor) continue;
-    parts.push(cut(cursor, p.at[1]));
-    parts.push(<CitationChip key={`c${p.i}`} c={p.c} href={hrefFor(docItemId(p.c.documentId, p.c.page, p.c.quote))} />);
+  for (const p of found) {
+    if (p.at[0] < cursor) continue;
+    parts.push(...words(cursor, p.at[0], `t${cursor}`));
+    parts.push(
+      <Link key={`c${p.i}`} href={href(p.c)} scroll={false} className={SOURCED_CLASS}>
+        {words(p.at[0], p.at[1], `q${p.i}`)}
+      </Link>,
+    );
+    placed.add(p.i);
     cursor = p.at[1];
   }
-  parts.push(cut(cursor, text.length));
+  parts.push(...words(cursor, text.length, `t${cursor}`));
+  const rest = citations.filter((_, i) => !placed.has(i));
   return (
     <p className="text-base leading-relaxed text-kumo-default">
       {parts}
       {rest.map((c, i) => (
-        <CitationChip key={`r${i}`} c={c} href={hrefFor(docItemId(c.documentId, c.page, c.quote))} />
+        <span key={`r${i}`}>
+          {" "}
+          <Link href={href(c)} scroll={false} className={SOURCED_CLASS}>
+            « {c.quote} »
+          </Link>
+        </span>
       ))}
     </p>
   );
