@@ -51,12 +51,15 @@ export function MovesChart({ symbol, price, indexName, arrows, height = 280 }: {
     const href = moveHref(id);
     if (!openPanel(href)) router.push(href, { scroll: false });
   };
+  const end = price.at(-1) ? Date.parse(price.at(-1)!.date) : 0;
+  // A mark near the right edge prints its numbers on its left, else they are cut off.
+  const nearEnd = (d: string) => (end - Date.parse(d)) / 86_400_000 < span * 0.08;
   const marks = groups.map((g) => ({
     value: [Date.parse(`${g.day}T00:00:00Z`), g.direction === "up" ? hi + pad * 0.5 : lo - pad * 0.5],
     id: g.arrows[0].id,
     symbol: g.direction === "up" ? UP : DOWN,
     itemStyle: { color: tone[g.direction] },
-    label: { show: true, position: "right", distance: 3, formatter: g.arrows.map((a) => a.n).join(", "), color: tone[g.direction], fontFamily: FONT, fontSize: 11, fontWeight: 700 },
+    label: { show: true, position: nearEnd(g.day) ? "left" : "right", distance: 3, formatter: g.arrows.map((a) => a.n).join(", "), color: tone[g.direction], fontFamily: FONT, fontSize: 11, fontWeight: 700 },
   }));
   const options = {
     animation: false,
@@ -117,7 +120,10 @@ export function MovesChart({ symbol, price, indexName, arrows, height = 280 }: {
           {`Down at least 2x its usual 5-day move, ${indexName} taken out`}
         </li>
         <li className="inline-flex items-center gap-1.5">
-          {swatch(ink.muted, 10, 10, 0.25)}
+          <span aria-hidden className="inline-flex">
+            {swatch(tone.up, 5, 10, 0.3)}
+            {swatch(tone.down, 5, 10, 0.3)}
+          </span>
           Days of the move
         </li>
         <li className="inline-flex items-center gap-1.5">
