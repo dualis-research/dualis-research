@@ -5,6 +5,7 @@ import { emphasis, goldEmphasis } from "@/db/schema/emphasis";
 import type { Db } from "@/db/types";
 import { emphasisKey, proseOf, sameWords, stringsOf, swapStrings } from "@/emphasis/emphasis";
 import type { Complete } from "@/llm/complete";
+import * as silver from "@/db/schema/silver";
 import { testDb } from "@/test/db";
 import { batchesOf, emphasisDim, emphasisSource, MAX_BATCHES_PER_RUN, pendingTexts, readAnswer } from "./dimensions/emphasis";
 
@@ -59,6 +60,7 @@ describe("emphasis dimension", () => {
   let close: () => Promise<void>;
   beforeEach(async () => {
     ({ db, close } = await testDb());
+    await db.insert(silver.tickers).values({ symbol: "1161.HK", market: "HK", sources: ["test"], bronzeIds: [] });
     await db.insert(narratives).values({ id: "1161.HK:long", symbol: "1161.HK", side: "long", text: NARRATIVE, detail: DETAIL, version: "v1", asOf: new Date() });
   });
   afterEach(async () => close());
@@ -81,5 +83,12 @@ describe("emphasis dimension", () => {
     // Nothing left to ask: the next run makes no call.
     expect(await pendingTexts(db)).toEqual([]);
     expect(await emphasisDim.subjects(db, ctx)).toEqual([]);
+  });
+
+  it("leaves the texts of a ticker outside the analysis scope for later", async () => {
+    await db.insert(narratives).values({ id: "ZZZZ:long", symbol: "ZZZZ", side: "long", text: "The market sees a ticker nobody analyses as a story of no interest at all.", version: "v1", asOf: new Date() });
+    const texts = (await pendingTexts(db)).map((x) => x.text);
+    expect(texts).toContain(NARRATIVE);
+    expect(texts.some((t) => t.includes("nobody analyses"))).toBe(false);
   });
 });
