@@ -1,0 +1,1 @@
+ALTER TABLE "silver"."daily_item_verdicts" ADD COLUMN "importance" integer;
