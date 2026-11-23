@@ -8,6 +8,7 @@ import type { Db } from "@/db/types";
 import { EMPHASIS_SYSTEM, EMPHASIS_VERSION, emphasisKey, emphasisPrompt, proseOf, sameWords } from "@/emphasis/emphasis";
 import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
+import { analysedSymbols } from "../watchlist";
 
 /**
  * Bold for skimming (Kevin 2026-11-23: « add bold wherever necessary to make the reading faster for the human »,
@@ -49,13 +50,19 @@ export const MAX_BATCHES_PER_RUN = 25;
 
 type Item = { key: string; text: string };
 
-/** Every prose text of the sources, once, first-sight first, that has no stored bold copy yet. */
+/**
+ * Every prose text of the sources, once, first-sight first, that has no stored bold copy yet. A row of a ticker outside
+ * the analysis scope waits (Kevin 2026-11-23: one ticker at a time, iterate fast); rows of no ticker (Ideas) always count.
+ */
 export async function pendingTexts(db: Db): Promise<Item[]> {
+  const scope = new Set(await analysedSymbols(db));
   const seen = new Set<string>();
   const items: Item[] = [];
   for (const s of EMPHASIS_SOURCES) {
     const fields = new Set(s.fields);
     for (const row of await db.select().from(s.table)) {
+      const symbol = (row as { symbol?: unknown }).symbol;
+      if (typeof symbol === "string" && !scope.has(symbol)) continue;
       for (const text of proseOf(row, fields)) {
         const key = emphasisKey(text);
         if (seen.has(key)) continue;
