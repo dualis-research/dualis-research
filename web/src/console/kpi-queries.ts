@@ -60,5 +60,12 @@ export async function kpiDriverChart(k: { symbol: string; series: string | null;
     return i === -1 ? d : shown[Math.min(shown.length - 1, i + 4)].date;
   };
   const markers = tested.map((r, i) => ({ n: i + 1, date: r.day, end: windowEnd(r.day), verdict: r.verdict as "confirms" | "invalidates" }));
-  return { kpi, unit, currency: top?.currency ?? null, price, beta, indexName: index.name, markers, number };
+  // The share price over each moment's 5 trading days, as traded (last close before the day -> the 5th close).
+  const stockMove = new Map<string, number>();
+  for (const r of k.rows) {
+    const i = shown.findIndex((x) => x.date >= r.day);
+    if (i > 0 && i + 4 < shown.length) stockMove.set(r.day, shown[i + 4].close / shown[i - 1].close - 1);
+  }
+  const quiet = k.rows.filter((r) => r.verdict === "neutral").map((r) => ({ n: 0, date: r.day, end: windowEnd(r.day), verdict: "neutral" as const }));
+  return { kpi, unit, currency: top?.currency ?? null, price, beta, indexName: index.name, markers, quiet, number, stockMove };
 }
