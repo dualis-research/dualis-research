@@ -115,6 +115,29 @@ describe("growth-brief dimension", () => {
     expect(await planBrief(db, undefined, new Date("2026-11-08T01:00:00Z"))).toEqual(["brief:2026-11-08"]);
   });
 
+  it("sends only when the rounded pace per day went up since the last brief (Kevin 2026-11-23)", async () => {
+    await seed();
+    const ctx = { env: {}, fetch };
+    const run = (at: string) => runDimension(db, { ...growthBriefDim, subjects: (d) => planBrief(d, undefined, new Date(at)) }, { trigger: "test", ctx });
+    // Nov 7: first brief ever, +4/day (7 over 2 days) -> sent.
+    await run("2026-11-07T01:00:00Z");
+    // Nov 8: count 161 on Nov 7 = 8 over 3 days, +3/day: lower, nothing.
+    await db.insert(goldGrowthAudience).values({ date: "2026-11-07", subscribers: 161, sources: ["substack-profile"] } as never);
+    expect(await planBrief(db, undefined, new Date("2026-11-08T01:00:00Z"))).toEqual([]);
+    // Nov 9: count 165 on Nov 8 = 12 over 4 days, +3/day: still below the last SENT +4, nothing.
+    await db.insert(goldGrowthAudience).values({ date: "2026-11-08", subscribers: 165, sources: ["substack-profile"] } as never);
+    expect(await planBrief(db, undefined, new Date("2026-11-09T01:00:00Z"))).toEqual([]);
+    // Nov 10: count 177 on Nov 9 = 24 over 5 days, +5/day: up on +4, sent to both.
+    await db.insert(goldGrowthAudience).values({ date: "2026-11-09", subscribers: 177, sources: ["substack-profile"] } as never);
+    await run("2026-11-10T01:00:00Z");
+    const rows = await db.select().from(whatsappOutbox);
+    expect(rows).toHaveLength(4);
+    expect(rows.filter((r) => r.text?.includes("+5/day"))).toHaveLength(2);
+    // Nov 11: same +5/day (count 182 on Nov 10 = 29 over 6 days, 4.8): equal, nothing.
+    await db.insert(goldGrowthAudience).values({ date: "2026-11-10", subscribers: 182, sources: ["substack-profile"] } as never);
+    expect(await planBrief(db, undefined, new Date("2026-11-11T01:00:00Z"))).toEqual([]);
+  });
+
   it("queues nothing while the device is unlinked", async () => {
     await db.insert(whatsappLink).values({ id: "default", status: "waiting-for-scan" });
     expect(await planBrief(db, undefined, new Date("2026-11-07T01:00:00Z"))).toEqual([]);

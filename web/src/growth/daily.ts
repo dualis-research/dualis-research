@@ -69,12 +69,17 @@ export function growthBrief(audience: { date: string; subscribers: number }[], l
 
 export const GROWTH_PAGE_URL = `${CONSOLE_URL}/growth`;
 
+/** Subscribers gained per day since the goal's start, rounded to the unit: the « +N/day » of the brief. */
+export function perDaySoFar(b: Pick<GrowthBrief, "countedOn" | "date" | "gained">): number {
+  const since = b.countedOn ?? b.date;
+  const days = Math.max(1, Math.round((Date.parse(`${since}T00:00:00Z`) - Date.parse(`${GOAL.startDate}T00:00:00Z`)) / 86_400_000));
+  return Math.round(b.gained / days);
+}
+
 /** The WhatsApp caption under the chart. Short lines, figures first. */
 export function briefText(b: GrowthBrief): string {
   // Kevin's own layout, 2026-11-09: the brand + day as title, the win first, then what each day needs from now on.
-  const since = b.countedOn ?? b.date;
-  const days = Math.max(1, Math.round((Date.parse(`${since}T00:00:00Z`) - Date.parse(`${GOAL.startDate}T00:00:00Z`)) / 86_400_000));
-  const perDay = Math.round(b.gained / days);
+  const perDay = perDaySoFar(b);
   return [
     `*Dualis Research - ${dayLabel(b.date)}*`,
     "",

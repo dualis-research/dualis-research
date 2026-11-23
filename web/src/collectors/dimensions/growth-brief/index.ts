@@ -1,9 +1,9 @@
-import { and, asc, eq, gte, lt } from "drizzle-orm";
-import type { BronzeFetch } from "@/db/schema/bronze";
+import { and, asc, desc, eq, gte, isNull, lt, ne } from "drizzle-orm";
+import { type BronzeFetch, fetches } from "@/db/schema/bronze";
 import { goldGrowthAudience, goldGrowthOutreach } from "@/db/schema/growth";
 import { whatsappLink, whatsappOutbox } from "@/db/schema/whatsapp";
 import type { Db } from "@/db/types";
-import { astanaDay, briefText, type GrowthBrief, growthBrief } from "@/growth/daily";
+import { astanaDay, briefText, type GrowthBrief, growthBrief, perDaySoFar } from "@/growth/daily";
 import { allowlist } from "@/whatsapp/allowlist";
 import { enqueue } from "@/whatsapp/outbox";
 import type { Dimension, PromoteResult, Source } from "../../types";
@@ -13,6 +13,8 @@ import type { Dimension, PromoteResult, Source } from "../../types";
  * figures + its subscribers chart as an image. Same gold rows and formulas as the page (`growth/daily.ts`).
  * Sent to Kevin AND Thierry (call 2026-11-06, Kevin: « a daily update to both of us so we can track subscribers »):
  * every allowlisted contact of `RECIPIENT_ROLES`, one outbox row each, once per Astana day per recipient.
+ * Only when the pace went up (Kevin 2026-11-23): the rounded « +N/day since Nov 4 » must beat the last brief sent's,
+ * else nothing goes out that day. The first brief ever always goes.
  */
 
 const nodeImport = (href: string): Promise<unknown> => import(/* webpackIgnore: true */ href);
@@ -68,6 +70,17 @@ async function queuedFor(db: Db, day: string): Promise<Set<string>> {
   return new Set(rows.map((r) => r.recipient));
 }
 
+/** The last brief planned on an earlier day (bronze keeps each one; a skipped day plans nothing, so leaves no row). */
+async function lastBrief(db: Db, todayKey: string): Promise<GrowthBrief | null> {
+  const [row] = await db
+    .select({ payload: fetches.payload })
+    .from(fetches)
+    .where(and(eq(fetches.dimension, GROWTH_BRIEF_DIMENSION), eq(fetches.source, BRIEF_SOURCE), isNull(fetches.error), ne(fetches.subject, todayKey)))
+    .orderBy(desc(fetches.fetchedAt))
+    .limit(1);
+  return row ? (row.payload as Planned).brief : null;
+}
+
 /** Today's brief (Astana day) for every recipient not queued yet, unless the device is unlinked (a queue would burst once linked). */
 export async function planBrief(db: Db, _ctx?: unknown, now = new Date()): Promise<string[]> {
   planned.clear();
@@ -85,6 +98,8 @@ export async function planBrief(db: Db, _ctx?: unknown, now = new Date()): Promi
   ]);
   const brief = growthBrief(audience, outreach.map((o) => ({ outreach: o })), today);
   const key = `brief:${today}`;
+  const previous = await lastBrief(db, key);
+  if (previous && perDaySoFar(brief) <= perDaySoFar(previous)) return [];
   planned.set(key, { recipients: todo, scheduledAt: new Date(Math.max(sendAt(today).getTime(), now.getTime())).toISOString(), text: briefText(brief), brief });
   return [key];
 }
