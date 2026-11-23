@@ -99,9 +99,11 @@ describe("daily-email dimension", () => {
 
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toEqual(["kevin@example.test", "thierry@example.test"]);
-    expect(sent[0].subject).toMatch(/^Your watchlist, \w{3} \d+: 2 companies with news$/);
+    expect(sent[0].subject).toMatch(/^Your watchlist, \w{3} \d+$/);
+    expect(sent[0].html).toContain('src="cid:dualis-mark"');
+    expect((sent[0] as Sent & { inline: { cid: string; data: string }[] }).inline[0]).toMatchObject({ cid: "dualis-mark", mime: "image/png" });
+    expect(sent[0].html).toContain("🏭");
     expect(sent[0].html).toContain("https://sec.test/8k");
-    expect(sent[0].html).toContain("Industry:");
     expect(sent[0].text).not.toContain("Fed holds rates");
     expect(sent[0].text).not.toMatch(/[—–]/);
     expect(sent[0].text).toContain("Not investment advice.");
@@ -162,6 +164,14 @@ describe("daily-email dimension", () => {
 });
 
 describe("daily-email parsing and words", () => {
+  it("bold key words in HTML, plain in text, never a dash", () => {
+    const { html, text } = renderEmail("2026-11-24", [
+      { symbol: "X", company: "X Co", kind: "industry", title: "t", url: null, publisher: null, at: null, summary: "**Rival** cuts prices — **10%**.", why: "" },
+    ]);
+    expect(html).toContain("<strong>Rival</strong> cuts prices, <strong>10%</strong>.");
+    expect(text).toContain("🏭 Rival cuts prices, 10%.");
+  });
+
   it("refuses an answer that skips an item", () => {
     expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: false, why: "x" }] }), 2)).toThrow("misses i2");
     expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: true }] }), 1)).toThrow("no summary");
@@ -169,10 +179,10 @@ describe("daily-email parsing and words", () => {
 
   it("one company, a filing line, the disclaimer last", () => {
     const { subject, text } = renderEmail("2026-11-24", [
-      { symbol: "1161.HK", company: "Water Oasis Group", kind: "filing", title: "Interim results", url: "https://hkex.test/a.pdf", publisher: "hkex", at: null, summary: "Half-year revenue rose 9%.", why: "Services keep growing." },
+      { symbol: "1161.HK", company: "Water Oasis Group", kind: "filing", title: "Interim results", url: "https://hkex.test/a.pdf", publisher: "hkex", at: null, summary: "Half-year **revenue rose 9%**.", why: "Services keep growing." },
     ]);
-    expect(subject).toBe("Your watchlist, Nov 24: 1 company with news");
+    expect(subject).toBe("Your watchlist, Nov 24");
     expect(text.split("\n").at(-1)).toMatch(/^Not investment advice\./);
-    expect(text).toContain("- Filing: Half-year revenue rose 9%. Services keep growing. https://hkex.test/a.pdf");
+    expect(text).toContain("📄 Half-year revenue rose 9%. https://hkex.test/a.pdf");
   });
 });
