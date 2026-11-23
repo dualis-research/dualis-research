@@ -130,7 +130,7 @@ describe("kpi drivers end to end on stored steps", () => {
         if (prompt.includes("Store count")) return { text: JSON.stringify({ values: [] }), model: "fake" };
         return { text: JSON.stringify({ values: [{ report: "R1", page: 1, period: "2024-03", periodType: "half", value: 30, unit: "percent", quote: "Service margin was 30.0%" }, { report: "R2", page: 1, period: "2025-03", periodType: "half", value: 22, unit: "percent", quote: "not printed there" }] }), model: "fake" };
       }
-      if (system.startsWith("Rewrite this sentence")) return { text: "Thin: the price moved on other facts.", model: "fake" };
+      if (system.startsWith("You shorten ONE verdict")) return { text: "Thin: the price moved on other facts.", model: "fake" };
       // Step 6 reads the step-5 table only: the profit warning reads the same price move for both KPIs.
       expect(prompt).toMatch(/Filing: Profit Warning\. KPI: not reported at this moment; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: other cause\./);
       return { text: JSON.stringify({ level: "weak", reason: "Thin evidence: the price moved on other facts.", signal: "strong", signalWhy: "x" }), model: "fake" };
