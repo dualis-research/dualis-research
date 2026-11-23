@@ -17,6 +17,7 @@ const RECIPIENTS = JSON.stringify([
   { email: "kevin@example.test", role: "test" },
   { email: "thierry@example.test", role: "client" },
 ]);
+const MARK = "https://mark.test/m.png";
 const hoursAgo = (h: number) => new Date(Date.now() - h * 3_600_000);
 
 type Sent = { to: string[]; subject: string; text: string; html: string };
@@ -62,8 +63,8 @@ beforeEach(async () => {
   prompts = [];
   await runDimension(db, watchlist, { trigger: "test", ctx: { env: { REPO_ROOT }, fetch: (() => { throw new Error("no network"); }) as unknown as typeof fetch } });
   for (const p of [
-    { symbol: "MNRO", name: "Monro, Inc.", description: "Auto service and tire shops." },
-    { symbol: "PAL", name: "Proficient Auto Logistics", description: null },
+    { symbol: "MNRO", name: "Monro, Inc.", description: "Auto service and tire shops.", logoUrl: "https://logos.test/MNRO.png" },
+    { symbol: "PAL", name: "Proficient Auto Logistics", description: null, logoUrl: null },
   ]) {
     await db.insert(companyProfiles).values({ ...p, provenance: {} }).onConflictDoUpdate({ target: companyProfiles.symbol, set: p });
   }
@@ -83,11 +84,13 @@ describe("daily-email dimension", () => {
     await addNews("MNRO", "Fed holds rates", ["name"], hoursAgo(6));
     await addNews("MNRO", "Tire chains start a price war", ["industry"], hoursAgo(7));
     await addNews("PAL", "Old results from last month", ["name"], hoursAgo(24 * 10));
+    await addNews("PAL", "Results from the day before yesterday", ["name"], hoursAgo(30));
     await db.insert(goldFilings).values({ id: crypto.randomUUID(), symbol: "PAL", registry: "sec", filingKey: "k1", form: "8-K", title: "Results of operations", filedAt: hoursAgo(20), url: "https://sec.test/8k", language: "en", sources: ["sec-edgar"] });
 
     const report = await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
     expect(report.status).toBe("succeeded");
-    expect(claudeCalls).toBe(2); // MNRO and PAL, the 10-day-old item never asked
+    expect(claudeCalls).toBe(2); // MNRO and PAL; news older than 24 h never asked
+    expect(prompts.join("\n")).not.toContain("day before yesterday");
 
     const verdicts = await db.select().from(dailyItemVerdicts);
     expect(verdicts.map((v) => [v.symbol, v.kind, v.material]).sort()).toEqual([
@@ -100,9 +103,9 @@ describe("daily-email dimension", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0].to).toEqual(["kevin@example.test", "thierry@example.test"]);
     expect(sent[0].subject).toMatch(/^Your watchlist, \w{3} \d+$/);
-    expect(sent[0].html).toContain('src="cid:dualis-mark"');
-    expect((sent[0] as Sent & { inline: { cid: string; data: string }[] }).inline[0]).toMatchObject({ cid: "dualis-mark", mime: "image/png" });
+    expect(sent[0].html).toContain('src="https://mailer.dualisresearch.com/mark-white.png"');
     expect(sent[0].html).toContain("🏭");
+    expect(sent[0].html).toContain('src="https://logos.test/MNRO.png"');
     expect(sent[0].html).toContain("https://sec.test/8k");
     expect(sent[0].text).not.toContain("Fed holds rates");
     expect(sent[0].text).not.toMatch(/[—–]/);
@@ -167,7 +170,7 @@ describe("daily-email parsing and words", () => {
   it("bold key words in HTML, plain in text, never a dash", () => {
     const { html, text } = renderEmail("2026-11-24", [
       { symbol: "X", company: "X Co", kind: "industry", title: "t", url: null, publisher: null, at: null, summary: "**Rival** cuts prices — **10%**.", why: "" },
-    ]);
+    ], MARK);
     expect(html).toContain("<strong>Rival</strong> cuts prices, <strong>10%</strong>.");
     expect(text).toContain("🏭 Rival cuts prices, 10%.");
   });
@@ -180,7 +183,7 @@ describe("daily-email parsing and words", () => {
   it("one company, a filing line, the disclaimer last", () => {
     const { subject, text } = renderEmail("2026-11-24", [
       { symbol: "1161.HK", company: "Water Oasis Group", kind: "filing", title: "Interim results", url: "https://hkex.test/a.pdf", publisher: "hkex", at: null, summary: "Half-year **revenue rose 9%**.", why: "Services keep growing." },
-    ]);
+    ], MARK);
     expect(subject).toBe("Your watchlist, Nov 24");
     expect(text.split("\n").at(-1)).toMatch(/^Not investment advice\./);
     expect(text).toContain("📄 Half-year revenue rose 9%. https://hkex.test/a.pdf");
