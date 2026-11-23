@@ -1,0 +1,1 @@
+ALTER TYPE "silver"."news_match_kind" ADD VALUE 'industry';

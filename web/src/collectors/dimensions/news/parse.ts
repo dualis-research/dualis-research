@@ -4,7 +4,7 @@
  * Ported from Thierry's legacy digest and the reverted Python collector (PR #16).
  */
 
-export type MatchKind = "symbol" | "name" | "alias";
+export type MatchKind = "symbol" | "name" | "alias" | "industry";
 
 /** One article as one source returned it for one ticker, before dedup. */
 export type RawArticle = {
@@ -62,7 +62,7 @@ export function cleanCompanyName(name: string): string {
   return out || name.trim();
 }
 
-export type NewsQuery = { kind: "name" | "alias"; term: string; q: string };
+export type NewsQuery = { kind: "name" | "alias" | "industry"; term: string; q: string };
 
 /**
  * Exact-phrase Google News queries: the company name, then each alias. A one-word Latin alias is too broad alone
@@ -84,6 +84,14 @@ export function googleQueries(symbol: string, name: string, aliases: readonly st
     out.push({ kind: "alias", term: a, q });
   }
   return out;
+}
+
+/**
+ * One exact-phrase query per industry term, always over the last 2 days (the news runs at least daily): an industry
+ * term matches far more articles than a company name, and its history is not the company's.
+ */
+export function industryQueries(terms: readonly string[], window = "when:2d"): NewsQuery[] {
+  return terms.map((term) => ({ kind: "industry" as const, term, q: `"${term}" ${window}` }));
 }
 
 // ---------------------------------------------------------------------------
