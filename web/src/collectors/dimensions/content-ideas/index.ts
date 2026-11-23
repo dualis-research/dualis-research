@@ -21,7 +21,7 @@ import {
   type TickerBrief,
 } from "./prompt";
 
-import { publicSide } from "../analysis/sides";
+import { publicSide } from "../analysis/thesis";
 export const IDEAS_DIMENSION = "content-ideas";
 export const CLAUDE_SOURCE = "claude";
 /** What the Ideas read: Signal Changes and Evidence of the last two weeks, the publication history of three months. */
@@ -62,7 +62,7 @@ export async function tickerBriefs(db: Db, now = new Date()): Promise<TickerBrie
     const n = narrs.find((x) => x.symbol === t.symbol && x.side === side);
     if (s) {
       const call = s.signal === "none" ? "no signal" : `${s.signal}, ${s.strength}`;
-      offered.push({ ref: `signal:${t.symbol}`, kind: "signal", symbol: t.symbol, label: `${who}: ${call}`, detail: `Signal: ${call}. Narrative: ${n?.text ?? (side === null && narrs.some((x) => x.symbol === t.symbol) ? "two stories compete, neither signals" : "not written yet")}` });
+      offered.push({ ref: `signal:${t.symbol}`, kind: "signal", symbol: t.symbol, label: `${who}: ${call}`, detail: `Signal: ${call}. Narrative: ${n?.text ?? "not written yet"}` });
     }
     for (const c of changes.filter((x) => x.symbol === t.symbol)) {
       const label = `${who}: signal ${c.fromSignal} ${c.fromStrength} to ${c.toSignal} ${c.toStrength} on ${utcDay(c.at)}`;

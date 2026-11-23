@@ -1,17 +1,15 @@
-import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon } from "@phosphor-icons/react/ssr";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import { Badge } from "@cloudflare/kumo";
 import Link from "@/console/link";
 import { getPriceMove, getTickerAnalysis, getValuation } from "./analysis-queries";
 import { ArticleBody } from "./article";
 import { MethodsTable, RangeCards, ValuationField } from "./valuation-ui";
-import { confidenceDetail, driverDetail, evidenceDetail, exhibitDetail, fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
-import { ConfidenceBadge } from "./confidence-badge";
+import { driverDetail, evidenceDetail, exhibitDetail, fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
 import { kpiDriver } from "./kpi-queries";
 import { DriverProof } from "./proof";
 import { StrengthBadge } from "./board";
 import { TagBadge } from "./tag-badge";
-import { DriverReason } from "./driver-reason";
 import { EvidenceRows, Exhibit, itemHref, metricLabel, PRICED_WORD } from "./analysis";
 import { reactionLine } from "@/collectors/dimensions/market-reaction/compute";
 import { DriverExhibit, ExhibitChart } from "./driver-chart";
@@ -24,7 +22,6 @@ import { parseSourceItem, Sourced, SourcedFigure, type SourcePayload } from "./s
 import { documentPageDetail } from "./document-queries";
 import { DocumentPageText, docItemId, openAt, parseDocItem } from "./document-page";
 import type { PeerRow } from "@/db/schema/valuation";
-import type { ThesisSide } from "@/db/schema/analysis";
 import { Rich } from "./rich";
 
 /**
@@ -316,16 +313,21 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
   };
 }
 
+/**
+ * A Narrative Driver's panel: what the market believes about ONE Price Driver (its sentence on top), then that Price
+ * Driver's confidence and its reversal against the narrative (the same blocks as the Analysis page), its charts, its news.
+ */
 async function driverItem(symbol: string, id: string): Promise<ItemView | null> {
   const d = await driverDetail(symbol, id);
   if (!d) return null;
   return {
     title: d.driver.title,
-    subtitle: d.driver.category,
+    subtitle: d.priceDriver ? `${d.driver.category} · ${d.priceDriver.name}` : d.driver.category,
     body: (
       <>
-        {/* The reason first, in one sentence (Kevin 2026-11-17), then what changed with its quotes, then the moves. */}
-        <DriverReason state={d.state} side={d.side} moves={d.moves} hrefFor={(item) => itemHref(symbol, item)}>
+        {d.driver.summary && <p className="text-xl leading-snug text-kumo-strong"><Rich text={d.driver.summary} /></p>}
+        {d.priceDriver && <DriverProof symbol={symbol} k={d.priceDriver} />}
+        <Drawers>
           <Drawer icon={<LightbulbIcon size={16} aria-hidden />} title="Why the market holds it">
             <p className="text-base leading-relaxed text-kumo-default"><Rich text={d.driver.text} /></p>
           </Drawer>
@@ -341,94 +343,6 @@ async function driverItem(symbol: string, id: string): Promise<ItemView | null> 
               <EvidenceRows symbol={symbol} rows={d.evidence} driverId={d.driver.id} side={d.side} />
             </Drawer>
           )}
-        </DriverReason>
-      </>
-    ),
-  };
-}
-
-const FIT: Record<string, { mark: string; word: string; tone: string }> = {
-  explains: { mark: "✓", word: "Explains", tone: "text-dualis-long" },
-  contradicts: { mark: "✗", word: "Contradicts", tone: "text-dualis-short" },
-  unrelated: { mark: "–", word: "Unrelated", tone: "text-kumo-subtle" },
-};
-const figureOf = (m: { label: string; from: string | null; to: string; change: string | null } | null | undefined) => (m ? `${m.label}: ${m.from ? `${m.from} → ` : ""}${m.to}${m.change ? ` (${m.change})` : ""}` : null);
-
-/**
- * Driver Temporal Confidence (Kevin 2026-11-19, « pourquoi cette évaluation est fiable aux yeux d'un expert »): the verdict
- * and its one-sentence reason, the count of later business moves it explains, then drawers: the moves it was found from,
- * every later move tested with ✓ / ✗ and why, and the reason itself.
- */
-async function confidenceItem(symbol: string, id: string): Promise<ItemView | null> {
-  const d = await confidenceDetail(symbol, id);
-  if (!d) return null;
-  const c = d.confidence;
-  const row = (href: string, on: string, ret: number, fact: string | null, figure: string | null, right?: React.ReactNode) => (
-    <li key={href}>
-      <Link href={href} scroll={false} className="-mx-3 flex items-start justify-between gap-4 rounded-lg px-3 py-2.5 transition-colors hover:bg-kumo-tint">
-        <span className="flex min-w-0 flex-col gap-0.5">
-          <span className="text-sm text-kumo-subtle tabular">
-            {day(on)} · {`${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%`}
-          </span>
-          <span className="text-base text-kumo-strong"><Rich text={fact ?? "No fact written."} /></span>
-          {figure && <span className="text-sm text-kumo-default"><Rich text={figure} /></span>}
-        </span>
-        {right}
-      </Link>
-    </li>
-  );
-  return {
-    title: d.driver.title,
-    subtitle: `${d.driver.category} · how far it can be trusted`,
-    body: (
-      <>
-        <div className="flex flex-col gap-3">
-          {c && (
-            <span>
-              <ConfidenceBadge level={c.level} />
-            </span>
-          )}
-          <p className="text-xl leading-snug text-kumo-strong"><Rich text={c?.reason ?? "Not tested yet: the next run checks the business moves that followed its origin."} /></p>
-          {c && (
-            <p className="text-sm text-kumo-subtle">
-              Explains {c.explained} of {c.tested} later business {c.tested === 1 ? "move" : "moves"}
-              {c.contradicted ? `, ${c.contradicted} against it` : ""}. Market-wide and unexplained moves left out.
-            </p>
-          )}
-        </div>
-        <Drawers>
-          <Drawer icon={<TrendUpIcon size={16} aria-hidden />} title={`Where it comes from · ${d.origin.length}`}>
-            {d.origin.length ? (
-              <ul className="flex flex-col">{d.origin.map((m) => row(itemHref(symbol, `move:${m.id}`), m.startDay, m.returnPct, m.cause?.fact ?? null, figureOf(m.cause?.metric)))}</ul>
-            ) : (
-              <p className="text-base text-kumo-subtle">No past move cites it: it was read from the figures, then tested on every business move.</p>
-            )}
-          </Drawer>
-          {c && (
-            <Drawer icon={<TableIcon size={16} aria-hidden />} title={`Later moves tested · ${c.tested}`}>
-              {c.rows.length ? (
-                <ul className="flex flex-col">
-                  {c.rows.map((r) =>
-                    row(
-                      itemHref(symbol, `move:${r.moveId}`),
-                      r.day,
-                      r.returnPct,
-                      r.fact,
-                      [figureOf(r.metric), r.why].filter(Boolean).join(" · ") || null,
-                      <span className={`shrink-0 text-sm font-medium ${FIT[r.fit].tone}`}>
-                        {FIT[r.fit].mark} {FIT[r.fit].word}
-                      </span>,
-                    ),
-                  )}
-                </ul>
-              ) : (
-                <p className="text-base text-kumo-subtle">No business move came after its origin yet.</p>
-              )}
-            </Drawer>
-          )}
-          <Drawer icon={<LightbulbIcon size={16} aria-hidden />} title="Why the market holds it">
-            <p className="text-base leading-relaxed text-kumo-default"><Rich text={d.driver.text} /></p>
-          </Drawer>
         </Drawers>
       </>
     ),
@@ -736,14 +650,13 @@ export function leadSentence(text: string): { lead: string; rest: string } {
 
 /**
  * Why the market tells this story (Kevin 2026-11-18: the intro and the Rationale told the same thing twice, everything
- * was open at once): the narrative is the panel's subtitle; under it only drawers: where the story stands now, the
- * rationale in short, then one drawer per claim (its first sentence as the title, its drivers and sources inside).
+ * was open at once): the narrative is the panel's subtitle; under it only drawers: why the story reads pessimistic or
+ * optimistic (the analysis' call), the rationale in short, then one drawer per claim (its first sentence as the title, its drivers and sources inside).
  */
-async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise<ItemView | null> {
-  const a = await getTickerAnalysis(symbol, thesis);
+async function narrativeItem(symbol: string): Promise<ItemView | null> {
+  const a = await getTickerAnalysis(symbol);
   if (!a.narrative) return null;
   const r = a.rationale;
-  const st = a.narrativeState;
   const driverByRank = new Map(a.drivers.map((d) => [d.rank, d]));
   const exhibitByNumber = new Map([...a.drivers.flatMap((d) => d.exhibits), ...(r?.exhibits ?? [])].map((x) => [String(x.number), x]));
   const short = r?.summary ?? a.narrative.detail;
@@ -753,21 +666,9 @@ async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise
     body: (
       <>
         <Drawers>
-          {st && a.side && (
-            <Drawer
-              icon={<GaugeIcon size={16} aria-hidden />}
-              title={
-                <span className="flex flex-wrap items-center gap-2">
-                  <span>Where it stands</span>
-                  <TagBadge effect={st.effect} strength={st.strength} side={a.side} />
-                </span>
-              }
-            >
-              {st.why && <p className="text-base leading-relaxed text-kumo-default"><Rich text={st.why} /></p>}
-              <span className="flex flex-wrap items-center gap-3 text-sm text-kumo-subtle">
-                {st.since && st.effect !== "noise" && <span className="tabular">Since {day(st.since)}</span>}
-                {st.pricedIn && st.effect !== "noise" && <span>{PRICED_WORD[st.pricedIn]}</span>}
-              </span>
+          {a.side && a.narrative.sideWhy && (
+            <Drawer icon={<GaugeIcon size={16} aria-hidden />} title={a.side === "long" ? "A pessimistic story" : "An optimistic story"}>
+              <p className="text-base leading-relaxed text-kumo-default"><Rich text={a.narrative.sideWhy} /></p>
             </Drawer>
           )}
           {short && (
@@ -881,16 +782,15 @@ function sourceItem(payload: SourcePayload): ItemView {
   };
 }
 
-export async function itemView(symbol: string, item: string, thesis: ThesisSide | null = null): Promise<ItemView | null> {
+export async function itemView(symbol: string, item: string): Promise<ItemView | null> {
   if (item === "price") return priceItem(symbol);
   if (item === "fair-value") return fairValueItem(symbol);
-  if (item === "narrative") return narrativeItem(symbol, thesis);
+  if (item === "narrative") return narrativeItem(symbol);
   const [kind, ...rest] = item.split(":");
   const key = rest.join(":");
   if (kind === "news") return newsItem(symbol, key);
   if (kind === "kpi") return kpiItem(symbol, key);
   if (kind === "driver") return driverItem(symbol, key);
-  if (kind === "confidence") return confidenceItem(symbol, key);
   if (kind === "kdriver") return kpiDriverItem(symbol, key);
   if (kind === "exhibit") return exhibitItem(symbol, key);
   if (kind === "valuation") return methodItem(symbol, key);

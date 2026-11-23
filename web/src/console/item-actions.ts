@@ -11,6 +11,6 @@ import { itemView } from "./item-detail";
 export async function loadItemPanel(symbol: string, item: string, thesis: "long" | "short" | null) {
   const { userId } = await auth();
   if (!userId) throw new Error("Signed out");
-  const view = await itemView(symbol, item, thesis);
+  const view = await itemView(symbol, item);
   return view && { title: view.title, subtitle: view.subtitle ?? null, body: view.body };
 }

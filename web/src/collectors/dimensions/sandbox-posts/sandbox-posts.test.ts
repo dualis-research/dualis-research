@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { exhibits, narrativeStates } from "@/db/schema/analysis";
+import { exhibits } from "@/db/schema/analysis";
+import { reversal, setReversal } from "@/test/price-drivers";
 import * as content from "@/db/schema/content";
 import * as gold from "@/db/schema/gold";
 import * as sandbox from "@/db/schema/sandbox";
@@ -297,10 +298,10 @@ describe("sandbox-posts", () => {
     expect(await sandboxPostSubjects(db)).toEqual([]);
   }, 60_000);
 
-  it("story-break frame: a company with a driver reversing now gets the narrative + one reported-figure chart per reversing driver, on every account; no fair value anywhere", async () => {
+  it("story-break frame: a company with a Price Driver turning against its narrative now gets the narrative + one reported-figure chart per reversing driver, on every account; no fair value anywhere", async () => {
     const day = (i: number) => new Date(Date.now() - (8 - i) * 91 * 86400_000).toISOString().slice(0, 10);
     await db.insert(exhibits).values({ id: "CCLD:long:1:1", symbol: "CCLD", driverId: "CCLD:long:1", rank: 1, number: 1, title: "Revenue per quarter, $", chart: "line", series: [{ key: "revenue", label: "Revenue", unit: "usd", currency: "USD" } as never], points: Array.from({ length: 8 }, (_, i) => ({ period: day(i), values: { revenue: (40 + i) * 1e6 } })), takeaway: "t", sources: ["Company filings (SEC EDGAR)"] });
-    await db.insert(narrativeStates).values({ id: "CCLD:long:driver:1", symbol: "CCLD", side: "long", level: "driver", driverId: "CCLD:long:1", effect: "reversal", strength: "strong", why: "w", probability: 0.9, evidenceIds: [], headline: "Revenue up 7% in Q3", judgmentId: crypto.randomUUID(), asOf: new Date() });
+    await setReversal(db, "CCLD", reversal("long", { headline: "Revenue up 7% in Q3" }));
     const story = await storyBreak(db, "CCLD");
     expect(story?.signal).toEqual({ signal: "BUY", strength: "strong" });
     expect(story?.drivers.map((d) => [d.title, d.tag, d.headline])).toEqual([["Client loss", "STRONG INFLECTION", "Revenue up 7% in Q3"]]);

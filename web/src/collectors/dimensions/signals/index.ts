@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
 import type { BronzeFetch } from "@/db/schema/bronze";
-import { evidence, fairValues, liveBenchmark, livePositions, narrativeStates, signalChanges, signalEvents, signalStates, signals, type GoldNarrativeState, type SignalKind, type Strength, type ThesisReading, type ThesisSide } from "@/db/schema/analysis";
+import { evidence, fairValues, liveBenchmark, livePositions, narrativeDrivers, signalChanges, signalEvents, signalStates, signals, type GoldEvidence, type GoldKpiDriver, type SignalKind, type Strength, type ThesisReading, type ThesisSide } from "@/db/schema/analysis";
 import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
@@ -8,7 +8,8 @@ import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } fr
 import { majorUnit } from "../financials/derive";
 import { stripDashes } from "../thesis/structure";
 import { analysedSymbols } from "../watchlist";
-import { SIDE } from "../analysis/sides";
+import { trustedDrivers } from "../analysis/price-drivers";
+import { narrativeOf, SIDE } from "../analysis/thesis";
 import { latestPrice, positionsFromReadings, priceKnownAt } from "@/console/live-test";
 import { BENCHMARK } from "../../benchmark";
 import { latestTicks, mergeTicks, ticksKnownAt } from "../intraday-price/read";
@@ -25,6 +26,8 @@ export type SignalReading = {
   why: string | null;
   theses: ThesisReading[];
   evidenceIds: string[];
+  /** The Price Driver whose reversal against the narrative gives the signal (`gold.kpi_drivers.id`), null when none. */
+  kpiDriverId?: string | null;
   fairValue: number | null;
   fairValueMethod: string | null;
   fairValueLabel?: string | null;
@@ -34,44 +37,55 @@ export type SignalReading = {
   gapPct: number | null;
 };
 
-type ThesisState = Pick<GoldNarrativeState, "side" | "effect" | "strength" | "signal" | "why" | "since" | "evidenceIds">;
+/** What the signal reads of a trusted Price Driver: its reversal against the narrative (kpi-reversal). */
+export type ReversingDriver = Pick<GoldKpiDriver, "id" | "name" | "rank" | "reversal">;
 
-/**
- * The surfacing rule (Kevin 2026-11-09): each thesis' judge already decided whether it signals now (narrative-state,
- * level `thesis`). One thesis (price outside the fair value range): its signal. Two (inside the range, in competition):
- * the one that signals ALONE surfaces; both signalling, or neither, = no signal. A long signals a BUY, a short a SELL.
- */
-export function combineTheses(states: ThesisState[]): { signal: SignalKind; strength: Strength; side: ThesisSide | null; why: string | null; evidenceIds: string[] } {
-  const signalling = states.filter((s) => s.signal === "strong" || s.signal === "weak");
-  if (signalling.length !== 1) {
-    const why = signalling.length > 1 ? "Both the long and the short thesis signal: the two stories cancel out." : (states.length === 1 ? states[0].why : null);
-    return { signal: "none", strength: "noise", side: null, why, evidenceIds: [] };
-  }
-  const s = signalling[0];
-  return { signal: SIDE[s.side].signal, strength: s.signal as Strength, side: s.side, why: s.why, evidenceIds: s.evidenceIds.slice(0, MAX_EVIDENCE) };
+const STRENGTH_RANK = { strong: 0, weak: 1, none: 2 } as const;
+/** The trusted Price Drivers whose reversal the judge read as going AGAINST the narrative of this side, strongest first. */
+export function driversAgainst<T extends ReversingDriver>(side: ThesisSide, drivers: T[]): (T & { reversal: NonNullable<T["reversal"]> })[] {
+  return drivers
+    .filter((k): k is T & { reversal: NonNullable<T["reversal"]> } => !!k.reversal && k.reversal.stance === "against" && k.reversal.side === side && (k.reversal.strength === "strong" || k.reversal.strength === "weak"))
+    .sort((a, b) => STRENGTH_RANK[a.reversal.strength] - STRENGTH_RANK[b.reversal.strength] || a.rank - b.rank);
 }
 
 /**
- * The gap rule (CLAUDE.md « SELL only above, BUY only below », Kevin 2026-11-09 on MNRO: a SELL 21% under the fair
- * value): a BUY needs the price below the fair value, a SELL above it. Otherwise no signal, the judge's why kept.
+ * The signal (Kevin 2026-11-24), from the narrative's side (the analysis decided it) and each trusted Price Driver's
+ * reversal (kpi-reversal decided whether it goes against the narrative, and how strongly): the strongest one against it
+ * IS the signal, a pessimistic story giving a BUY and an optimistic one a SELL, at that reversal's strength. None
+ * against it = no signal. No rule on the price or the fair value: both judges read them.
  */
-export function onFairValueSide<T extends { signal: SignalKind; strength: Strength; side: ThesisSide | null; why: string | null; evidenceIds: string[] }>(r: T, gapPct: number | null): T {
-  if (gapPct === null) return r;
-  const wrong = (r.signal === "BUY" && gapPct >= 0) || (r.signal === "SELL" && gapPct <= 0);
-  if (!wrong) return r;
-  return { ...r, signal: "none", strength: "noise", side: null, evidenceIds: [] };
+export function signalFrom(side: ThesisSide | null, drivers: ReversingDriver[]): { signal: SignalKind; strength: Strength; side: ThesisSide | null; why: string | null; kpiDriverId: string | null; effect: ThesisReading["effect"] } {
+  if (!side) return { signal: "none", strength: "noise", side: null, why: null, kpiDriverId: null, effect: "noise" };
+  const [top] = driversAgainst(side, drivers);
+  if (top) return { signal: SIDE[side].signal, strength: top.reversal.strength as Strength, side, why: `${top.name}: ${top.reversal.why}`, kpiDriverId: top.id, effect: "reversal" };
+  const withIt = drivers.find((k) => k.reversal?.stance === "with" && k.reversal.side === side);
+  return { signal: "none", strength: "noise", side: null, why: drivers.length ? "No price driver is turning against the narrative." : null, kpiDriverId: null, effect: withIt ? "continuation" : "noise" };
 }
 
 export function readingOf(
   fv: { value: number; currency: string | null; method: string | null; label?: string | null } | null,
   quote: { close: number; currency: string | null; date: string } | null,
-  states: ThesisState[],
+  side: ThesisSide | null,
+  drivers: ReversingDriver[],
+  evidenceIds: string[] = [],
 ): SignalReading {
   const q = quote ? majorUnit(quote.close, quote.currency) : null;
   const comparable = !!fv && !!q && (!fv.currency || !q.currency || fv.currency === q.currency);
   const gapPct = comparable && fv!.value > 0 ? q!.price / fv!.value - 1 : null;
-  const theses: ThesisReading[] = states.map((s) => ({ side: s.side, signal: s.signal ?? "noise", effect: s.effect, strength: s.strength, why: s.why, since: s.since }));
-  return { ...onFairValueSide(combineTheses(states), gapPct), theses, fairValue: fv?.value ?? null, fairValueMethod: fv?.method ?? null, fairValueLabel: fv?.label ?? null, currency: fv?.currency ?? null, quote: q?.price ?? null, quoteDate: quote?.date ?? null, gapPct };
+  const { effect, ...s } = signalFrom(side, drivers);
+  const theses: ThesisReading[] = side ? [{ side, signal: s.strength, effect, strength: s.strength, why: s.why, since: null }] : [];
+  return { ...s, evidenceIds: s.signal === "none" ? [] : evidenceIds.slice(0, MAX_EVIDENCE), theses, fairValue: fv?.value ?? null, fairValueMethod: fv?.method ?? null, fairValueLabel: fv?.label ?? null, currency: fv?.currency ?? null, quote: q?.price ?? null, quoteDate: quote?.date ?? null, gapPct };
+}
+
+/** A tag's rank: strong before weak (the news behind a signal, strongest first). */
+const tagRank = (s: string) => (s === "strong" ? 0 : s === "weak" ? 1 : 2);
+/** The news and filings judged as a reversal of the Narrative Driver that speaks of this Price Driver, strongest then newest first. */
+export function evidenceBehind(rows: GoldEvidence[], narrativeDriverId: string | null): string[] {
+  if (!narrativeDriverId) return [];
+  return rows
+    .flatMap((e) => e.verdicts.filter((v) => v.driverId === narrativeDriverId && v.effect === "reversal").map((v) => ({ e, v })))
+    .sort((a, b) => tagRank(a.v.strength) - tagRank(b.v.strength) || b.e.eventAt.getTime() - a.e.eventAt.getTime())
+    .map((x) => x.e.id);
 }
 
 export const rulesSource: Source = {
@@ -80,17 +94,30 @@ export const rulesSource: Source = {
   covers: () => true,
   async fetch(symbol: string, ctx: SourceContext): Promise<FetchOutcome> {
     if (!ctx.db) throw new Error("signals: needs the database");
-    const [fv] = await ctx.db.select().from(fairValues).where(eq(fairValues.symbol, symbol));
-    const [quote] = await ctx.db.select().from(gold.quotes).where(eq(gold.quotes.symbol, symbol));
-    const states = await ctx.db.select().from(narrativeStates).where(and(eq(narrativeStates.symbol, symbol), eq(narrativeStates.level, "thesis")));
-    const reading = readingOf(fv ?? null, quote ? { close: quote.close, currency: quote.currency, date: quote.date } : null, states);
-    return { request: { symbol, rule: "the thesis that signals alone surfaces; both or neither = none", theses: states.map((s) => `${s.side} ${s.signal ?? "noise"}`) }, httpStatus: null, payload: reading };
+    const [[fv], [quote], narrative, drivers] = await Promise.all([
+      ctx.db.select().from(fairValues).where(eq(fairValues.symbol, symbol)),
+      ctx.db.select().from(gold.quotes).where(eq(gold.quotes.symbol, symbol)),
+      narrativeOf(ctx.db, symbol),
+      trustedDrivers(ctx.db, symbol),
+    ]);
+    const side = narrative?.side ?? null;
+    const top = signalFrom(side, drivers);
+    let evidenceIds: string[] = [];
+    if (top.kpiDriverId) {
+      const [[nd], rows] = await Promise.all([
+        ctx.db.select({ id: narrativeDrivers.id }).from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.kpiDriverId, top.kpiDriverId))),
+        ctx.db.select().from(evidence).where(eq(evidence.symbol, symbol)),
+      ]);
+      evidenceIds = evidenceBehind(rows, nd?.id ?? null);
+    }
+    const reading = readingOf(fv ?? null, quote ? { close: quote.close, currency: quote.currency, date: quote.date } : null, side, drivers, evidenceIds);
+    return { request: { symbol, rule: "the strongest trusted Price Driver whose reversal goes against the narrative is the signal; none = no signal", side, drivers: drivers.map((k) => `${k.name}: ${k.reversal ? `${k.reversal.stance ?? "not read against the narrative"} ${k.reversal.strength}` : "no reversal read"}`) }, httpStatus: null, payload: reading };
   },
 };
 
 export const signalsDim: Dimension = {
   name: SIGNALS_DIMENSION,
-  description: "Signal per ticker from its theses' judged signals: one thesis = its signal; two in competition = the one that signals alone, else none. Each change after the first reading = a Signal Change with an Update Note.",
+  description: "Signal per ticker from its narrative's side and its trusted Price Drivers' reversals: the strongest one going against the narrative is the signal (a pessimistic story gives a BUY, an optimistic one a SELL), at its strength; none = no signal. Each change after the first reading = a Signal Change with an Update Note.",
   sources: [rulesSource],
   subjects: analysedSymbols,
   promote: (db, fetches, ctx) => promoteSignals(db, fetches, ctx.complete),
@@ -106,16 +133,13 @@ import { signalWords } from "@/content/signal-words";
 
 export const NOTE_SYSTEM = "You write one-line signal notes for a small-cap long/short analyst. Plain English, subject verb complement, one sentence, at most 20 words. No em dash.";
 
-async function updateNote(db: Db, complete: Complete, symbol: string, from: { signal: string; strength: string }, to: { signal: string; strength: string; evidenceIds: string[] }): Promise<{ text: string; model: string }> {
+async function updateNote(db: Db, complete: Complete, symbol: string, from: { signal: string; strength: string }, to: { signal: string; strength: string; evidenceIds: string[]; why?: string | null }): Promise<{ text: string; model: string }> {
   const items = to.evidenceIds.length ? (await db.select().from(evidence).where(eq(evidence.symbol, symbol))).filter((e) => to.evidenceIds.includes(e.id)) : [];
-  const [[profile], states] = await Promise.all([
-    db.select({ name: gold.companyProfiles.name }).from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol)),
-    db.select().from(narrativeStates).where(and(eq(narrativeStates.symbol, symbol), eq(narrativeStates.level, "thesis"))),
-  ]);
-  const state = states.find((s) => s.side === (to.signal === "SELL" ? "short" : "long")) ?? states[0];
+  const [profile] = await db.select({ name: gold.companyProfiles.name }).from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol));
   const prompt = [
     `${profile?.name ?? symbol} (${symbol}): the signal moved from ${signalWords(from.signal, from.strength)} to ${signalWords(to.signal, to.strength)}.`,
-    state?.why ? `Where the narrative stands: ${state.why}` : null,
+    // The reading's own why: the Price Driver turning against the narrative (absent when an old note is written again).
+    to.why ? `The price driver behind it: ${to.why}` : null,
     "The news behind it:",
     ...(items.length ? items.slice(0, 5).map((e) => `- ${e.eventDay}: ${e.headline}`) : ["- none"]),
     "",

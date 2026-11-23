@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { AnalysisBody, analysisData, parseThesis } from "@/console/analysis";
+import { AnalysisBody, analysisData } from "@/console/analysis";
 import { itemView } from "@/console/item-detail";
 import { ItemPanelHost } from "@/console/item-panel-host";
 
@@ -7,8 +7,8 @@ import { ItemPanelHost } from "@/console/item-panel-host";
 export default async function AnalysisPage({ params, searchParams }: { params: Promise<{ symbol: string }>; searchParams: Promise<{ item?: string; thesis?: string }> }) {
   const symbol = decodeURIComponent((await params).symbol);
   const { item, thesis: t } = await searchParams;
-  const thesis = parseThesis(t);
-  const [analysis, view] = await Promise.all([analysisData(symbol, thesis, true), item ? itemView(symbol, item, thesis) : null]);
+  // `?thesis=` of old links is ignored: a ticker has ONE narrative since 2026-11-24.
+  const [analysis, view] = await Promise.all([analysisData(symbol, true), item ? itemView(symbol, item) : null]);
   if (!analysis) notFound();
   const base = `/tickers/${encodeURIComponent(symbol)}`;
   return (
@@ -19,7 +19,7 @@ export default async function AnalysisPage({ params, searchParams }: { params: P
         symbol={symbol}
         base={base}
         shown={analysis.objects.side}
-        competing={analysis.objects.theses.length > 1}
+        competing={false}
         initial={item ? { item, thesis: t ?? null, view: view && { title: view.title, subtitle: view.subtitle ?? null, body: view.body } } : null}
       />
     </div>

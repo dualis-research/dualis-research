@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { CANDIDATE_KINDS, driverEvents, KPI_LEVELS, kpiDrivers, priceMoveCauses, priceMoves, weekVerdict, type CandidateKind, type DocCitation, type DriverReversal, type DriverTests, type GoldDriverEvent, type GoldPriceMove, type KpiEventRow, type KpiLevel, type KpiMeasure, type KpiPeriod, type WeekVerdict } from "@/db/schema/analysis";
+import { CANDIDATE_KINDS, driverEvents, KPI_LEVELS, kpiDrivers, priceMoveCauses, priceMoves, weekVerdict, type CandidateKind, type DocCitation, type DriverTests, type GoldDriverEvent, type GoldPriceMove, type KpiEventRow, type KpiLevel, type KpiMeasure, type KpiPeriod, type WeekVerdict } from "@/db/schema/analysis";
 import { documentPages } from "@/db/schema/documents";
 import * as gold from "@/db/schema/gold";
 import * as silver from "@/db/schema/silver";
@@ -24,8 +24,8 @@ export * from "./steps";
  * 5) Price Driver Candidates (AI) READ in the events of the unusual weeks: a company KPI, a policy or an industry fact;
  * when each changed (code for a KPI, its moves judged by the AI; the AI for a policy or industry fact);
  * confidence (AI, `kpi-verdict@v4`) from tests A (each big change -> a fundamental week?), B (each unusual week -> did it
- * change?) and C (the events where both moved), every event's row beside them;
- * reversal (AI, `kpi-reversal@v1`) of each trusted Price Driver: on its own latest value, through a leading indicator, bottom line.
+ * change?) and C (the events where both moved), every event's row beside them.
+ * The narrative (`analysis`) is then written on the trusted ones, and each one's reversal is read against it (`kpi-reversal`).
  */
 
 export const KPI_DIMENSION = "kpi-drivers";
@@ -45,10 +45,6 @@ export const ANNOUNCES_QUESTION = "event-announces@v1";
 export const MOVES_QUESTION = "kpi-moves@v1";
 /** v4 (PROOF-STRUCTURE-1123): the confidence weighs tests A, B and C, on the weeks step 4 judged fundamental; no turn (section 3 owns it). */
 export const VERDICT_QUESTION = "kpi-verdict@v4";
-/** Section 3: is a trusted Price Driver reversing, on its own value or through a leading indicator, and how strongly. */
-export const REVERSAL_QUESTION = "kpi-reversal@v1";
-/** The recent events a leading indicator is read in (news, filings, industry included). */
-export const LEADING_DAYS = 180;
 /** Step 4 reads 5 years of the KPI (Kevin 2026-11-23); the events stay 3 years. */
 export const KPI_HISTORY_YEARS = 5;
 /** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). v2: v1 echoed its own instruction once (Water Oasis, Hong Kong and Macau revenue). */
@@ -57,7 +53,7 @@ export const REASON_SYSTEM = "You shorten ONE verdict an analyst wrote about a c
 /** Pages of each report the AI reads (the results discussion first) and how much of each page. */
 const PAGES_PER_RELEASE = 2;
 const PAGE_CHARS = 3_500;
-const DAY = 86_400_000;
+export const DAY = 86_400_000;
 
 export type KpiCandidate = { name: string; kind: CandidateKind; why: string; expected: "up" | "down"; series: string | null; approximation: string | null; foundIn: string[] };
 type Release = { id: string; documentId: string; label: string; day: string; title: string; pages: { page: number; text: string }[] };
@@ -153,16 +149,6 @@ export const VERDICT_SYSTEM = [
   '{"level": "strong" | "weak" | "none", "reason": string}',
 ].join("\n");
 
-export const REVERSAL_SYSTEM = [
-  "You are the equity research associate of a small-cap long/short analyst. A Price Driver is a fundamental fact the market has been shown to trade this stock on (a company KPI, a policy, or a qualitative industry fact). The analyst's edge: catch the moment it TURNS (an inflection when the story is bad, a crack when it is good) before the price reacts.",
-  "Three readings, in order.",
-  "1) intrinsic: on its OWN latest reported value, is the driver reversing (its latest change breaks the direction of the periods before it, or swings by a size that changes the story), continuing (it keeps going the same way), or flat (no change that matters)? period = the period label you read it on (copied exactly), null for a policy or industry fact. why = at most 20 words, with the figures.",
-  "2) leading: among the recent events listed (news, filings, the industry included), is there a leading indicator that the driver will change SOON, before the next report prints it (bookings full ahead of the next half's revenue; a competitor closing stores ahead of market share; a policy under consideration)? probability = high / medium / low that the driver turns within the next report, none when no event says anything about it. events = the labels you read it in, copied exactly ([] when none). why = at most 20 words, naming the event's fact.",
-  "3) bottom line: strength = strong (the driver is clearly turning, by its own value or a leading indicator the analyst would act on), weak (some sign, unproven), none. direction = which way the driver itself goes (up = the KPI rises, or the policy or industry fact turns more favourable; down = the opposite), null when none. why = ONE plain sentence of at most 15 words a reader understands at once.",
-  "Decide yourself, as the analyst would; never a fixed threshold. No em dash. JSON only, no prose, no code fence:",
-  '{"intrinsic": {"state": "reversing" | "continuing" | "flat", "period": string | null, "why": string}, "leading": {"probability": "high" | "medium" | "low" | "none", "events": ["L3"], "why": string}, "strength": "strong" | "weak" | "none", "direction": "up" | "down" | null, "why": string}',
-].join("\n");
-
 export function parseCandidates(text: string, catalog: Map<string, StoredSeries>, labels: Map<string, string> = new Map()): KpiCandidate[] {
   const obj = JSON.parse(firstJsonObject(text)) as { candidates?: unknown };
   if (!Array.isArray(obj.candidates)) throw new Error(`kpi-drivers: answer has no candidates array: ${text.slice(0, 200)}`);
@@ -249,32 +235,6 @@ export function parseVerdict(text: string): Verdict {
   return { level: obj.level as KpiLevel, reason: stripDashes(obj.reason.trim()) };
 }
 
-const words = (x: unknown, what: string) => {
-  if (typeof x !== "string" || !x.trim()) throw new Error(`kpi-drivers: reversal has no ${what}`);
-  return stripDashes(x.trim());
-};
-
-/** Section 3's answer; a strong turn needs a driver the market has shown it trades on (a weak driver's turn is weak at most). */
-export function parseReversal(text: string, level: KpiLevel, labels: Map<string, GoldDriverEvent>, periods: Set<string>): DriverReversal {
-  const obj = JSON.parse(firstJsonObject(text)) as Record<string, unknown>;
-  const i = (obj.intrinsic ?? {}) as Record<string, unknown>;
-  const l = (obj.leading ?? {}) as Record<string, unknown>;
-  if (i.state !== "reversing" && i.state !== "continuing" && i.state !== "flat") throw new Error(`kpi-drivers: intrinsic state "${String(i.state)}"`);
-  if (l.probability !== "high" && l.probability !== "medium" && l.probability !== "low" && l.probability !== "none") throw new Error(`kpi-drivers: leading probability "${String(l.probability)}"`);
-  if (!KPI_LEVELS.includes(obj.strength as KpiLevel)) throw new Error(`kpi-drivers: reversal strength "${String(obj.strength)}"`);
-  const asked = obj.strength as KpiLevel;
-  const strength: KpiLevel = asked === "strong" && level !== "strong" ? "weak" : asked;
-  // Unknown labels are dropped, never guessed.
-  const events = (Array.isArray(l.events) ? l.events : []).map((x) => labels.get(String(x))).filter((e): e is GoldDriverEvent => !!e);
-  return {
-    intrinsic: { state: i.state, why: words(i.why, "intrinsic why"), period: typeof i.period === "string" && periods.has(i.period) ? i.period : null },
-    leading: { probability: l.probability, why: words(l.why, "leading why"), events: [...new Map(events.map((e) => [e.id, { id: e.id, day: e.day, kind: e.kind, title: e.title, sourceId: e.sourceId, url: e.url }])).values()] },
-    strength,
-    direction: strength !== "none" && (obj.direction === "up" || obj.direction === "down") ? obj.direction : null,
-    why: words(obj.why, "bottom line"),
-  };
-}
-
 export const ANNOUNCES_SYSTEM = [
   "You read company announcements for an equity analyst. For each one, say whether it discloses, BEFORE the report named beside it, figures of the period that report covers: a profit warning or positive profit alert, inside information on the results, a dividend announcement carrying the period's result, a business update with the period's sales.",
   "announces = true only when the announcement itself carries figures or a direction of that period's results; a board meeting date, a share buyback, a monthly return of equity, a change of director announce nothing. what = at most 12 words, the figure or direction it gives (« net profit for the six months expected to fall about 30% »), null when it announces nothing.",
@@ -291,7 +251,7 @@ export const MOVES_SYSTEM = [
   '{"periods": [{"period": "P1", "moved": boolean, "why": string, "first": "R3" | "A2"}]}',
 ].join("\n");
 
-const KIND = { release: "Results release", news: "News", filing: "Filing" } as const;
+export const KIND = { release: "Results release", news: "News", filing: "Filing" } as const;
 const RESULT = { confirms: "confirms", invalidates: "invalidates", "other-cause": "other cause", nothing: "nothing moved" } as const;
 
 /** The step-5 table as the verdict reads it: one line per event, the KPI and the price measured, the result. */
@@ -437,7 +397,7 @@ export async function judgeKpiMoves(
   });
 }
 
-export type KpiDriverResult = KpiCandidate & Verdict & { measure: KpiMeasure | null; periods: KpiPeriod[]; rows: KpiEventRow[]; tests: DriverTests; direction: "up" | "down" | null; reversal: DriverReversal | null };
+export type KpiDriverResult = KpiCandidate & Verdict & { measure: KpiMeasure | null; periods: KpiPeriod[]; rows: KpiEventRow[]; tests: DriverTests; direction: "up" | "down" | null };
 export type KpiPayload = { symbol: string; drivers: KpiDriverResult[] };
 
 /** The confidence from the event table and tests A, B and C, then its sentence cut to 15 words. */
@@ -472,37 +432,7 @@ async function verdictOf(db: Db, complete: Complete, symbol: string, k: KpiCandi
   return verdict;
 }
 
-/**
- * Section 3 of a trusted Price Driver: its recent values (a KPI) or changes (a policy or industry fact) and the events of
- * the last 180 days (industry news included), labelled L1..; one stored reading per input.
- */
-export async function reversalOf(db: Db, complete: Complete, symbol: string, company: string, k: KpiCandidate, level: KpiLevel, measure: KpiMeasure | null, periods: KpiPeriod[], rows: KpiEventRow[], events: GoldDriverEvent[], now = new Date()): Promise<DriverReversal> {
-  const since = new Date(now.getTime() - LEADING_DAYS * DAY).toISOString().slice(0, 10);
-  const recent = events.filter((e) => e.day >= since);
-  const labels = new Map(recent.map((e, i) => [`L${i + 1}`, e]));
-  const recentText = recent.map((e, i) => `L${i + 1} ${e.day} ${KIND[e.kind]}: ${e.title.replace(/\s+/g, " ")}`).join("\n");
-  const shown = periods.slice(-8);
-  const own = measure
-    ? shown.length
-      ? shown.map((p) => `${periodWords(p.periodType, p.period)} [${p.period}]: ${kpiValue(p.value, measure)} (${kpiChange(p.change, p.changeKind)} on a year earlier)${p.significant ? `, judged a change that matters${p.why ? `: ${p.why}` : ""}` : ""}; first disclosed ${p.releaseDay ?? "in no stored event"}`).join("\n")
-      : "No reported value."
-    : rows.filter((r) => r.kpiMoved === true).slice(-8).map((r) => `${r.day}: ${r.changeUp ? "more favourable" : "less favourable"}${r.kpiWhy ? `, ${r.kpiWhy}` : ""} (${r.title.replace(/\s+/g, " ")})`).join("\n") || "No change found in 3 years.";
-  const prompt = [
-    `Company: ${company}`,
-    `Today: ${now.toISOString().slice(0, 10)}`,
-    `Price Driver (${k.kind}, ${level} confidence): ${k.name}. ${k.why} When it goes up, the share price should go ${k.expected}.`,
-    measure ? `Measured as: ${measure.label}.` : "No figure: a policy or an industry fact.",
-    "",
-    measure ? "Its latest reported values, oldest first:" : "When it changed, oldest first:",
-    own,
-    "",
-    `Events of the last ${LEADING_DAYS} days, oldest first:`,
-    recentText || "none",
-  ].join("\n");
-  return once(db, complete, "kpi-reversal", `${symbol}:${k.name}`, `${REVERSAL_QUESTION}:${fnv(prompt.replace(/^Today: .*$/m, ""))}`, `${REVERSAL_QUESTION}: is « ${k.name} » of ${symbol} turning?`, REVERSAL_SYSTEM, prompt, (text) => parseReversal(text, level, labels, new Set(periods.map((p) => p.period))));
-}
-
-/** One ticker end to end, steps 3 to 6 on the stored steps 1 and 2. */
+/** One ticker end to end: candidates, when each changed, the event table, tests A, B and C and the confidence, on the stored steps 1 to 4. */
 export async function judgeKpis(db: Db, complete: Complete, symbol: string): Promise<KpiPayload> {
   const { events, moves } = await storedEvents(db, symbol);
   const releases = await releasesWithPages(db, events);
@@ -540,7 +470,6 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
   const drivers: KpiDriverResult[] = [];
   const windowStart = events[0]?.day ?? since;
   const windowMoves = moves.filter((m) => m.startDay >= windowStart);
-  const turning = async (k: KpiCandidate, v: Verdict, measure: KpiMeasure | null, periods: KpiPeriod[], rows: KpiEventRow[]) => (v.level === "none" ? null : reversalOf(db, complete, symbol, company, k, v.level, measure, periods, rows, events));
   for (const k of candidates) {
     if (k.kind !== "kpi") {
       // When a policy or industry fact changed: the events that change it, crossed with the price.
@@ -549,7 +478,7 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
       const tests = driverTests(rows, windowMoves);
       const verdict = await verdictOf(db, complete, symbol, k, tableText(rows, null, [], bench), testsText(tests, rows, windowMoves));
       const last = [...rows].reverse().find((r) => r.kpiMoved === true);
-      drivers.push({ ...k, ...verdict, measure: null, periods: [], rows, tests, direction: last ? (last.changeUp ? "up" : "down") : null, reversal: await turning(k, verdict, null, [], rows) });
+      drivers.push({ ...k, ...verdict, measure: null, periods: [], rows, tests, direction: last ? (last.changeUp ? "up" : "down") : null });
       continue;
     }
     // Step 4: from what is stored, else read in the reports.
@@ -580,7 +509,7 @@ export async function judgeKpis(db: Db, complete: Complete, symbol: string): Pro
     const tests = driverTests(rows, windowMoves);
     const verdict = await verdictOf(db, complete, symbol, k, tableText(rows, measured?.measure ?? null, periods, bench), testsText(tests, rows, windowMoves));
     const last = [...periods].reverse().find((p) => p.change !== null);
-    drivers.push({ ...k, ...verdict, measure: measured?.measure ?? null, periods, rows, tests, direction: last ? (last.change! >= 0 ? "up" : "down") : null, reversal: await turning(k, verdict, measured?.measure ?? null, periods, rows) });
+    drivers.push({ ...k, ...verdict, measure: measured?.measure ?? null, periods, rows, tests, direction: last ? (last.change! >= 0 ? "up" : "down") : null });
   }
   return { symbol, drivers };
 }
@@ -609,39 +538,47 @@ export function stableId(symbol: string, name: string, taken: Set<string>): stri
   return id;
 }
 
-/** gold.kpi_drivers of every ticker answered in this run, from its latest payload. */
+/**
+ * gold.kpi_drivers of every ticker answered in this run, from its latest payload. A driver's reversal is `kpi-reversal`'s
+ * (it runs after the narrative): a trusted driver keeps the one it had until that stage reads it again; one that is no
+ * longer trusted loses it.
+ */
 export async function promoteKpis(db: Db, fetches: BronzeFetch[]): Promise<number> {
   const latest = new Map<string, KpiPayload>();
   for (const f of fetches.filter((x) => !x.error).sort((a, b) => a.fetchedAt.getTime() - b.fetchedAt.getTime())) latest.set(f.subject, f.payload as KpiPayload);
   let n = 0;
   for (const [symbol, p] of latest) {
+    const before = new Map((await db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol))).map((k) => [k.id, k]));
     const ids = new Set<string>();
-    const rows = p.drivers.map((d, i) => ({
-      id: stableId(symbol, d.name, ids),
-      symbol,
-      rank: i + 1,
-      name: d.name,
-      kind: d.kind ?? "kpi",
-      foundIn: d.foundIn ?? [],
-      tests: d.tests ?? null,
-      why: d.why,
-      expected: d.expected,
-      series: d.series,
-      approximation: d.approximation,
-      measure: d.measure,
-      periods: d.periods,
-      level: d.level,
-      reason: d.reason,
-      rows: d.rows,
-      confirmed: d.rows.filter((r) => r.result === "confirms").length,
-      invalidated: d.rows.filter((r) => r.result === "invalidates").length,
-      // Section 3's bottom line, kept beside its detail so every reader of « turning now » reads the same verdict.
-      signal: d.reversal?.strength ?? null,
-      signalWhy: d.reversal?.why ?? null,
-      reversal: d.reversal ?? null,
-      direction: d.reversal?.direction ?? d.direction,
-      asOf: new Date(),
-    }));
+    const rows = p.drivers.map((d, i) => {
+      const id = stableId(symbol, d.name, ids);
+      const kept = d.level === "none" ? undefined : before.get(id);
+      return {
+        id,
+        symbol,
+        rank: i + 1,
+        name: d.name,
+        kind: d.kind ?? "kpi",
+        foundIn: d.foundIn ?? [],
+        tests: d.tests ?? null,
+        why: d.why,
+        expected: d.expected,
+        series: d.series,
+        approximation: d.approximation,
+        measure: d.measure,
+        periods: d.periods,
+        level: d.level,
+        reason: d.reason,
+        rows: d.rows,
+        confirmed: d.rows.filter((r) => r.result === "confirms").length,
+        invalidated: d.rows.filter((r) => r.result === "invalidates").length,
+        signal: kept?.signal ?? null,
+        signalWhy: kept?.signalWhy ?? null,
+        reversal: kept?.reversal ?? null,
+        direction: kept?.reversal?.direction ?? d.direction,
+        asOf: new Date(),
+      };
+    });
     await db.transaction(async (tx) => {
       await tx.delete(kpiDrivers).where(eq(kpiDrivers.symbol, symbol));
       if (rows.length) await tx.insert(kpiDrivers).values(rows);
@@ -653,7 +590,7 @@ export async function promoteKpis(db: Db, fetches: BronzeFetch[]): Promise<numbe
 
 export const kpiDriversDim: Dimension = {
   name: KPI_DIMENSION,
-  description: "Price drivers of each stock (PROOF-STRUCTURE-1123): candidates (a KPI, a policy or an industry fact) read in the events of the unusual weeks (AI), when each changed (code for a KPI, AI for the others), every event of 3 years crossed with the candidate and the weeks judged fundamental (code), confidence from tests A, B and C (AI), then each trusted driver's reversal: on its own value, through a leading indicator, bottom line (AI).",
+  description: "Price drivers of each stock (PROOF-STRUCTURE-1123): candidates (a KPI, a policy or an industry fact) read in the events of the unusual weeks (AI), when each changed (code for a KPI, AI for the others), every event of 3 years crossed with the candidate and the weeks judged fundamental (code), confidence from tests A, B and C (AI). The narrative is written on the trusted ones (analysis), then each one's reversal is read against it (kpi-reversal).",
   sources: [kpiSource],
   subjects: analysedSymbols,
   promote: async (db, fetches): Promise<PromoteResult> => ({ silverRowsBySource: { claude: await promoteKpis(db, fetches) } }),
