@@ -1,4 +1,4 @@
-import type { DocCitation, GoldDriverEvent, GoldPriceMove, KpiEventRow, KpiMeasure, KpiPeriod, KpiResult } from "@/db/schema/analysis";
+import type { DocCitation, DriverTests, GoldDriverEvent, GoldPriceMove, KpiEventRow, KpiMeasure, KpiPeriod, KpiResult } from "@/db/schema/analysis";
 import type { StoredSeries } from "../analysis/series";
 
 /**
@@ -145,6 +145,37 @@ export function eventRows(events: GoldDriverEvent[], periods: KpiPeriod[], expec
       cite: p?.cite ?? null,
     };
   });
+}
+
+/** A candidate change at one event: up = the candidate stronger / more favourable, and why (step 4 of a policy or industry fact). */
+export type CandidateChange = { up: boolean; why: string | null };
+
+/**
+ * Step 5 for a candidate with no figure (a policy, a qualitative industry fact): the events step 4 says carry a change
+ * of it, crossed with the price exactly like a KPI (confirms / invalidates / other cause / nothing).
+ */
+export function changeRows(events: GoldDriverEvent[], changes: Map<string, CandidateChange>, expected: "up" | "down", moves: Pick<GoldPriceMove, "id" | "direction">[]): KpiEventRow[] {
+  const direction = new Map(moves.map((m) => [m.id, m.direction]));
+  return events.map((e) => {
+    const c = changes.get(e.id);
+    const priceMoved = e.moveId !== null;
+    let result: KpiResult = priceMoved ? "other-cause" : "nothing";
+    if (c) {
+      const priceUp = direction.get(e.moveId ?? "") === "up";
+      result = priceMoved && c.up === (expected === "up" ? priceUp : !priceUp) ? "confirms" : "invalidates";
+    }
+    return { eventId: e.id, day: e.day, kind: e.kind, title: e.title, sourceId: e.sourceId, url: e.url, period: null, from: null, to: null, change: null, kpiWhy: c?.why ?? null, kpiMoved: c ? true : null, stock: e.stock, reaction: e.reaction, z: e.z, moveId: e.moveId, priceMoved, result, cite: null, changeUp: c ? c.up : null };
+  });
+}
+
+/**
+ * Tests A and B (meeting 2026-11-23): A = each big change of the candidate, did the price follow the expected way?
+ * B = each unbiased move of the window, did the candidate change in it? Counted from the rows, the verdict is the AI's.
+ */
+export function driverTests(rows: KpiEventRow[], moves: Pick<GoldPriceMove, "id">[]): DriverTests {
+  const changed = rows.filter((r) => r.kpiMoved === true);
+  const explained = [...new Set(changed.filter((r) => r.moveId !== null).map((r) => r.moveId!))].filter((id) => moves.some((m) => m.id === id)).sort();
+  return { changes: changed.length, followed: changed.filter((r) => r.result === "confirms").length, against: changed.filter((r) => r.result === "invalidates").length, moves: moves.length, explained: explained.length, explainedMoveIds: explained };
 }
 
 /** How a KPI value reads in a prompt or a row: 8.0% for a ratio, 1.2x for a multiple, 345.6M HKD for an amount. */

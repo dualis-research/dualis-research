@@ -90,6 +90,9 @@ function WeekList({ symbol, moves, events }: { symbol: string; moves: GoldPriceM
   );
 }
 
+/** How a candidate's kind reads on screen (meeting 2026-11-23: a KPI, a policy, or a qualitative industry fact). */
+export const CANDIDATE_KIND_WORD = { kpi: "KPI", policy: "Policy", industry: "Industry" } as const;
+
 const measured = (k: GoldKpiDriver) => k.measure?.label ?? "Not measured: no stored figure, none printed in the reports";
 
 function CandidateList({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriver[] }) {
@@ -100,7 +103,10 @@ function CandidateList({ symbol, kpis }: { symbol: string; kpis: GoldKpiDriver[]
           <Link href={itemHref(symbol, `kdriver:${k.id}`)} scroll={false} className="-mx-3 grid grid-cols-[1fr_auto] items-center gap-x-6 gap-y-1 rounded-lg px-3 py-3 transition-colors hover:bg-kumo-tint">
             <span className="flex min-w-0 flex-col gap-0.5">
               <span className="text-base font-semibold text-kumo-strong">{k.name}</span>
-              <span className="text-sm text-kumo-subtle">{`${k.name} up → price ${k.expected} · ${measured(k)}`}</span>
+              <span className="text-sm text-kumo-subtle">
+                {k.kind === "kpi" ? `KPI · ${k.name} up → price ${k.expected} · ${measured(k)}` : `${CANDIDATE_KIND_WORD[k.kind]} · more favourable → price ${k.expected}`}
+                {k.foundIn.length > 0 && ` · read in ${k.foundIn.length} ${k.foundIn.length === 1 ? "event" : "events"} that moved the stock`}
+              </span>
             </span>
             <span className="flex items-center gap-2">
               <ConfidenceBadge level={k.level === "none" || !k.level ? "noise" : k.level} />

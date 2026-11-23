@@ -69,14 +69,29 @@ describe("kpi drivers: steps 4 and 5 are code", () => {
     expect(eventRows([ev("A", "release", "2025-05-28", "M-down")], periods, "down", moves)[0].result).toBe("invalidates");
   });
 
-  it("keeps any number of KPIs, each with its expected direction; a series or a formula only when stored", () => {
-    expect(parseCandidates(JSON.stringify({ kpis: [] }), catalog)).toEqual([]);
+  it("keeps any number of candidates of three kinds, where each was read; a series or a formula only for a stored KPI", () => {
+    expect(parseCandidates(JSON.stringify({ candidates: [] }), catalog)).toEqual([]);
+    const labels = new Map([["M1", "ev-1"], ["M2", "ev-2"]]);
     const got = parseCandidates(
-      JSON.stringify({ kpis: [{ name: "Operating margin", why: "w", expected: "up", series: "metric:operating-margin" }, { name: "Asset turn", why: "w", expected: "up", series: "made-up", formula: "line:revenue / line:ppe" }, { name: "Utilization", why: "w", expected: "up", series: null, formula: "revenue / PP&E" }] }),
+      JSON.stringify({
+        candidates: [
+          { name: "Operating margin", kind: "kpi", why: "w", expected: "up", found: ["M1", "M9"], series: "metric:operating-margin" },
+          { name: "Asset turn", kind: "kpi", why: "w", expected: "up", found: [], series: "made-up", formula: "line:revenue / line:ppe" },
+          { name: "Utilization", kind: "kpi", why: "w", expected: "up", series: null, formula: "revenue / PP&E" },
+          { name: "Beauty subsidy", kind: "policy", why: "w", expected: "up", found: ["M2"], series: "metric:operating-margin" },
+        ],
+      }),
       catalog,
+      labels,
     );
-    expect(got.map((k) => [k.name, k.series, k.approximation])).toEqual([["Operating margin", "metric:operating-margin", null], ["Asset turn", null, "line:revenue / line:ppe"], ["Utilization", null, null]]);
-    expect(() => parseCandidates(JSON.stringify({ kpis: [{ name: "X", why: "w", expected: "sideways" }] }), catalog)).toThrow(/sideways/);
+    expect(got.map((k) => [k.name, k.kind, k.series, k.approximation, k.foundIn])).toEqual([
+      ["Operating margin", "kpi", "metric:operating-margin", null, ["ev-1"]],
+      ["Asset turn", "kpi", null, "line:revenue / line:ppe", []],
+      ["Utilization", "kpi", null, null, []],
+      ["Beauty subsidy", "policy", null, null, ["ev-2"]],
+    ]);
+    expect(() => parseCandidates(JSON.stringify({ candidates: [{ name: "X", kind: "kpi", why: "w", expected: "sideways" }] }), catalog)).toThrow(/sideways/);
+    expect(() => parseCandidates(JSON.stringify({ candidates: [{ name: "X", kind: "macro", why: "w", expected: "up" }] }), catalog)).toThrow(/macro/);
   });
 });
 
@@ -120,8 +135,25 @@ describe("kpi drivers end to end on stored steps", () => {
     let calls = 0;
     const fake: Complete = async ({ system, prompt }) => {
       calls++;
-      if (system.includes("List every KPI")) {
-        return { text: JSON.stringify({ kpis: [{ name: "Service margin", why: "Pricing power.", expected: "up", series: null, formula: null }, { name: "Store count", why: "Reach.", expected: "up", series: null, formula: null }] }), model: "fake" };
+      if (system.includes("PRICE DRIVERS of one stock")) {
+        // Read in the events that came with an unusual move only: the profit warning, not the quiet reports.
+        expect(prompt).toContain(`M1 ${day(PW)} Filing: Profit Warning (the stock moved -`);
+        expect(prompt).not.toContain("M2 ");
+        return {
+          text: JSON.stringify({
+            candidates: [
+              { name: "Service margin", kind: "kpi", why: "Pricing power.", expected: "up", found: ["M1"], series: null, formula: null },
+              { name: "Store count", kind: "kpi", why: "Reach.", expected: "up", found: [], series: null, formula: null },
+              { name: "Beauty licence rules", kind: "policy", why: "Who may operate.", expected: "up", found: ["M1"], series: null, formula: null },
+            ],
+          }),
+          model: "fake",
+        };
+      }
+      if (system.includes("ONE candidate price driver that is not a figure")) {
+        // Titles only, never the price.
+        expect(prompt).not.toMatch(/beyond the/);
+        return { text: JSON.stringify({ changes: [{ event: "E2", change: "down", why: "rules tightened" }, { event: "E99", change: "up", why: "x" }] }), model: "fake" };
       }
       if (system.includes("You read company announcements")) {
         expect(prompt).toContain("E1 " + day(PW) + " Filing: Profit Warning. Next report: " + day(510));
@@ -141,8 +173,9 @@ describe("kpi drivers end to end on stored steps", () => {
         return { text: JSON.stringify({ periods: [{ period: "P1", moved: true, why: "margin fell 8 points, its largest drop", first: "A1" }] }), model: "fake" };
       }
       if (system.startsWith("You shorten ONE verdict")) return { text: "Thin: the price moved on other facts.", model: "fake" };
-      // Step 6 reads the step-5 table only.
-      expect(prompt).toMatch(/Filing: Profit Warning\. KPI.*; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: (confirms|other cause)\./);
+      // Step 6 reads the step-5 table and the two tests only.
+      expect(prompt).toContain("B) 1 unusual price moves: the candidate changed in ");
+      expect(prompt).toMatch(/Filing: Profit Warning\. (KPI|Candidate).*; price -\d+\.\d% beyond the Hang Seng over 5 trading days \(\d+\.\dx its usual move\), moved\. Result: (confirms|other cause)\./);
       return { text: JSON.stringify({ level: "weak", reason: "Thin evidence.", signal: "strong", signalWhy: "x" }), model: "fake" };
     };
     const kctx: SourceContext = { env: { CLAUDE_OAUTH_TOKEN: "x" }, fetch, db, complete: fake };
@@ -150,12 +183,20 @@ describe("kpi drivers end to end on stored steps", () => {
     expect(out.error).toBeUndefined();
     await promoteKpis(db, [{ id: "b", subject: SYMBOL, error: null, payload: out.payload, fetchedAt: new Date() } as never]);
     const ks = await db.select().from(kpiDrivers);
-    expect(ks.map((k) => [k.name, k.expected, k.level, k.signal])).toEqual([["Service margin", "up", "weak", "weak"], ["Store count", "up", "weak", "weak"]]);
-    expect(ks.map((k) => k.id)).toEqual([`${SYMBOL}:kpi:service-margin`, `${SYMBOL}:kpi:store-count`]);
+    const pw = (k: (typeof ks)[number]) => k.rows.find((r) => r.kind === "filing")!;
+    expect(ks.map((k) => [k.name, k.kind, k.expected, k.level, k.signal])).toEqual([["Service margin", "kpi", "up", "weak", "weak"], ["Store count", "kpi", "up", "weak", "weak"], ["Beauty licence rules", "policy", "up", "weak", "weak"]]);
+    expect(ks.map((k) => k.id)).toEqual([`${SYMBOL}:kpi:service-margin`, `${SYMBOL}:kpi:store-count`, `${SYMBOL}:kpi:beauty-licence-rules`]);
+    expect(ks[0].foundIn).toEqual([warning.id]);
+    // Tests A and B, counted by code: the margin drop came with the one move, the store count never changed.
+    expect(ks[0].tests).toMatchObject({ changes: 1, followed: 1, against: 0, moves: 1, explained: 1 });
+    expect(ks[1].tests).toMatchObject({ changes: 0, moves: 1, explained: 0 });
+    // A policy changes at the events the AI names (an unknown label dropped), crossed with the price like a KPI.
+    expect(pw(ks[2])).toMatchObject({ kpiMoved: true, changeUp: false, priceMoved: true, result: "confirms", kpiWhy: "rules tightened" });
+    expect(ks[2]).toMatchObject({ measure: null, periods: [], direction: "down" });
+    expect(ks[2].tests).toMatchObject({ changes: 1, followed: 1, explained: 1 });
     // A value whose quote is not on its page is dropped; the Mar-25 margin drop is first disclosed by the warning.
     expect(ks[0].periods.map((p) => p.period)).toEqual(["2024-03", "2025-03"]);
     expect(ks[0].periods[1]).toMatchObject({ significant: true, releaseId: warning.id, why: "margin fell 8 points, its largest drop" });
-    const pw = (k: (typeof ks)[number]) => k.rows.find((r) => r.kind === "filing")!;
     expect(pw(ks[0])).toMatchObject({ kpiMoved: true, priceMoved: true, result: "confirms", period: "2025-03" });
     expect(pw(ks[1])).toMatchObject({ kpiMoved: null, priceMoved: true, result: "other-cause" });
     // The same price move under every KPI.
@@ -167,7 +208,7 @@ describe("kpi drivers end to end on stored steps", () => {
     const before = calls;
     await kpiSource.fetch(SYMBOL, kctx);
     expect(calls).toBe(before);
-    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["event-announces", "kpi-candidates", "kpi-moves", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-verdict", "kpi-verdict"]);
+    expect((await db.select().from(silver.judgments)).map((j) => j.subjectKind).sort()).toEqual(["candidate-changes", "event-announces", "kpi-candidates", "kpi-moves", "kpi-read", "kpi-read", "kpi-reason", "kpi-reason", "kpi-reason", "kpi-verdict", "kpi-verdict", "kpi-verdict"]);
   });
 
   it("measures each stock against its OWN market's index", () => {
