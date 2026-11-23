@@ -1,5 +1,7 @@
 import { ArrowsDownUpIcon, CalendarDotsIcon, CaretRightIcon } from "@phosphor-icons/react/ssr";
-import type { GoldDriverEvent, GoldKpiDriver, GoldPriceMove } from "@/db/schema/analysis";
+import { inArray } from "drizzle-orm";
+import { getDb } from "@/db/client";
+import { priceMoveCauses, type GoldDriverEvent, type GoldKpiDriver } from "@/db/schema/analysis";
 import { decodeEntities } from "@/collectors/dimensions/content-posts/parse";
 import { ConfidenceBadge } from "./confidence-badge";
 import { docItemId } from "./document-page";
@@ -7,9 +9,10 @@ import { Drawer, Drawers } from "./drawer";
 import { EventsTimeline } from "./driver-steps-charts";
 import { day } from "./format";
 import { itemHref } from "./item-href";
-import { KpiDriverChart } from "./kpi-driver-chart";
 import { driverFindings } from "./kpi-queries";
 import Link from "./link";
+import { moveArrows, type MoveArrow } from "./move-arrows";
+import { MovesChart } from "./moves-chart";
 import { Sourced, sourceItemId } from "./sourced";
 import { Section } from "./signal";
 
@@ -20,8 +23,6 @@ import { Section } from "./signal";
  */
 
 const KIND = { release: "Results", news: "News", filing: "Filing" } as const;
-const signed = (x: number | null) => (x === null ? "–" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
-const times = (z: number | null) => (z === null ? "" : `${Math.abs(z).toFixed(1)}x its usual move`);
 
 function Step({ n, title, children }: { n: number; title: string; children: React.ReactNode }) {
   return (
@@ -59,20 +60,17 @@ function EventList({ symbol, events }: { symbol: string; events: GoldDriverEvent
   );
 }
 
-function WeekList({ symbol, moves, events }: { symbol: string; moves: GoldPriceMove[]; events: GoldDriverEvent[] }) {
+/** The events dated in each move, by the move's number on the chart (its dates, size and words sit in the list under it). */
+function MoveEvents({ symbol, arrows, events }: { symbol: string; arrows: MoveArrow[]; events: GoldDriverEvent[] }) {
   return (
     <ul className="flex flex-col">
-      {[...moves].reverse().map((m) => {
-        const own = events.filter((e) => e.moveId === m.id);
+      {arrows.map((a) => {
+        const own = events.filter((e) => e.moveId === a.id);
         return (
-          <li key={m.id} className="flex flex-col gap-1 border-b border-kumo-hairline py-3 last:border-b-0">
-            <span className="flex flex-wrap items-baseline gap-x-3 text-sm">
-              <span className="tabular text-kumo-subtle">{`${day(m.startDay)} to ${day(m.endDay)}`}</span>
-              <span className={`font-semibold tabular ${m.direction === "up" ? "text-dualis-long" : "text-dualis-short"}`}>{`${signed(m.abnormal)} beyond the ${m.bench}`}</span>
-              <span className="text-kumo-subtle">{times(m.z)}</span>
-            </span>
+          <li key={a.id} className="grid grid-cols-[2rem_1fr] gap-x-3 border-b border-kumo-hairline py-2 text-sm last:border-b-0">
+            <span className={`font-semibold tabular ${a.direction === "up" ? "text-dualis-long" : "text-dualis-short"}`}>{a.n}</span>
             {own.length ? (
-              <ul className="flex flex-col gap-0.5 text-sm text-kumo-default">
+              <ul className="flex flex-col gap-0.5 text-kumo-default">
                 {own.map((e) => (
                   <li key={e.id}>
                     {`${KIND[e.kind]}: `}
@@ -81,7 +79,7 @@ function WeekList({ symbol, moves, events }: { symbol: string; moves: GoldPriceM
                 ))}
               </ul>
             ) : (
-              <span className="text-sm text-kumo-subtle">No known cause</span>
+              <span className="text-kumo-subtle">No event dated in it</span>
             )}
           </li>
         );
@@ -125,6 +123,9 @@ export async function DriversFound({ symbol }: { symbol: string }) {
   const from = chart.price[0]?.date ?? events[0]?.day ?? "";
   const to = chart.price.at(-1)?.date ?? events.at(-1)?.day ?? "";
   const weeks = moves.filter((m) => m.startDay >= from);
+  // What happened at each move, as stored (MOVE-ARROWS-1123): its cause, and the Price Driver Candidates that changed in it.
+  const causes = weeks.length ? await getDb().select({ id: priceMoveCauses.id, fact: priceMoveCauses.fact }).from(priceMoveCauses).where(inArray(priceMoveCauses.id, weeks.map((m) => m.id))) : [];
+  const arrows = moveArrows(weeks, causes, kpis);
   return (
     <Section title="How the price drivers were found">
       <div className="flex flex-col gap-12">
@@ -137,20 +138,10 @@ export async function DriversFound({ symbol }: { symbol: string }) {
           </Drawers>
         </Step>
         <Step n={2} title={`When the stock moved · ${weeks.length} ${weeks.length === 1 ? "week" : "weeks"}`}>
-          <KpiDriverChart
-            kpi={[]}
-            unit="ratio"
-            currency={null}
-            kpiLabel=""
-            price={chart.price}
-            indexName={chart.indexName}
-            markers={weeks.map((m, i) => ({ n: i + 1, date: m.startDay, end: m.endDay, verdict: m.direction === "up" ? "confirms" : "invalidates" }))}
-            legend={{ confirms: `Up at least 2x its usual 5-day move, ${chart.indexName} taken out`, invalidates: `Down at least 2x its usual 5-day move, ${chart.indexName} taken out`, neutral: "" }}
-            height={260}
-          />
+          <MovesChart symbol={symbol} price={chart.price} indexName={chart.indexName} arrows={arrows} />
           <Drawers>
-            <Drawer icon={<ArrowsDownUpIcon size={16} aria-hidden />} title={`Every week the stock moved · ${weeks.length}`}>
-              <WeekList symbol={symbol} moves={weeks} events={events} />
+            <Drawer icon={<ArrowsDownUpIcon size={16} aria-hidden />} title="The events dated in each move">
+              <MoveEvents symbol={symbol} arrows={arrows} events={events} />
             </Drawer>
           </Drawers>
         </Step>
