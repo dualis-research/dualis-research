@@ -10,6 +10,7 @@ import { runDimension } from "../../runner";
 import type { SourceContext } from "../../types";
 import { companyProfile } from "../company-profile";
 import { watchlist } from "../watchlist";
+import { localTerms } from "./local-terms";
 import { historyMonths, historyQuery, NEWS_HISTORY_DIMENSION, newsHistory, parseSubject } from "./history";
 
 const REPO_ROOT = resolve(__dirname, "../../../../..");
@@ -33,6 +34,11 @@ function fakeFetch(opts: Opts = {}) {
       const symbol = decodeURIComponent(url.pathname.split("/").pop()!);
       return json({ chart: { result: [{ meta: { longName: symbol === SYMBOL ? "Water Oasis Group Limited" : `${symbol} Corp`, fullExchangeName: "X", currency: "HKD" } }] } });
     }
+    if (url.host === "query.wikidata.org") {
+      if (!url.searchParams.get("query")!.includes('"1161"')) return json({ results: { bindings: [] } });
+      const row = (lang: string, value: string) => ({ item: { value: "http://www.wikidata.org/entity/Q10942607" }, exLabel: { value: "Hong Kong Stock Exchange" }, local: { value, "xml:lang": lang } });
+      return json({ results: { bindings: [row("zh", "奧思集團"), row("ja", "オアシス")] } });
+    }
     if (url.host.includes("financialmodelingprep")) return json([]);
     if (url.pathname === "/api/v1/stock/profile2") return json({});
     if (url.host === "news.google.com") {
@@ -55,9 +61,9 @@ function fakeFetch(opts: Opts = {}) {
   }) as typeof fetch;
 }
 
-const complete: Complete = async ({ system }) =>
-  system.includes("HOME-PRESS")
-    ? { text: JSON.stringify({ language: "zh-Hant", names: ["奧思集團"], industry: ["莎莎國際"], reason: "Hong Kong press." }), model: "fake" }
+const complete: Complete = async ({ system, prompt }) =>
+  system.includes("reads its home press")
+    ? { text: JSON.stringify({ industry: prompt.includes("奧思集團") ? ["莎莎國際"] : ["wrong"], reason: "Hong Kong press." }), model: "fake" }
     : { text: JSON.stringify({ terms: ["Hong Kong skincare retail"], reason: "Its space." }), model: "fake" };
 /** History runs on the one HK ticker (COLLECT_ONLY); the setup dimensions on the whole fixture watchlist. */
 const ctx = (opts?: Opts, only = SYMBOL): SourceContext => ({ env: { ...env, ...(only ? { COLLECT_ONLY: only } : {}) }, fetch: fakeFetch(opts), complete });
@@ -76,6 +82,11 @@ afterEach(async () => close());
 const months = () => historyMonths(new Date()).length;
 
 describe("news history", () => {
+  it("local names are the Wikidata labels of the market's language, never Claude's", async () => {
+    expect(await localTerms(db, SYMBOL, complete)).toEqual({ names: ["奧思集團"], industry: ["莎莎國際"] });
+    expect(await localTerms(db, "MNRO", complete)).toEqual({ names: [], industry: [] });
+  });
+
   it("months: whole calendar months that ended, 3 years back", () => {
     const m = historyMonths(new Date("2026-11-23T10:00:00Z"));
     expect(m.at(-1)).toEqual({ from: "2026-10-01", to: "2026-11-01" });
