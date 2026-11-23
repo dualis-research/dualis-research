@@ -1,4 +1,4 @@
-import { ArrowSquareOutIcon, ArrowsDownUpIcon, FunnelIcon, MinusCircleIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import { Badge } from "@cloudflare/kumo";
 import Link from "@/console/link";
@@ -7,14 +7,8 @@ import { ArticleBody } from "./article";
 import { MethodsTable, RangeCards, ValuationField } from "./valuation-ui";
 import { confidenceDetail, driverDetail, evidenceDetail, exhibitDetail, fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
 import { ConfidenceBadge } from "./confidence-badge";
-import { kpiDriver, kpiDriverChart } from "./kpi-queries";
-import { KpiDriverChart } from "./kpi-driver-chart";
-import { KpiPeriodsChart } from "./driver-steps-charts";
-import { CANDIDATE_KIND_WORD, EventTitle } from "./drivers-found";
-import { kpiChange, kpiValue, periodWords } from "@/collectors/dimensions/kpi-drivers/steps";
-import { MomentCard } from "./moment-card";
-import { decodeEntities } from "@/collectors/dimensions/content-posts/parse";
-import { COLOR } from "@/design/tokens";
+import { kpiDriver } from "./kpi-queries";
+import { DriverProof } from "./proof";
 import { StrengthBadge } from "./board";
 import { TagBadge } from "./tag-badge";
 import { DriverReason } from "./driver-reason";
@@ -441,208 +435,18 @@ async function confidenceItem(symbol: string, id: string): Promise<ItemView | nu
   };
 }
 
-
-const RESULT_WORD = { confirms: "Confirms", invalidates: "Invalidates", "other-cause": "Other cause", nothing: "Nothing moved" } as const;
-const RESULT_BADGE = { confirms: "success", invalidates: "error", "other-cause": "outline", nothing: "outline" } as const;
-
 /**
- * A KPI driver (DRIVERS-SIX-STEPS-1123): the verdict on top, then steps 4 to 6 each as its own section opening on a
- * picture, the detail in closed drawers. 4 = when the KPI moved (a column per period, the significant ones coloured);
- * 5 = event by event (the KPI over the price, a numbered line per event that moved something; one row per event:
- * KPI moved? price moved? result, its MomentCard and report quote one click away); 6 = how the verdict was reached
- * (the step-5 tally beside the AI's sentence).
+ * A Price Driver Candidate's panel (PROOF-STRUCTURE-1123): its confidence (section 2: tests A, B, C and the AI's level)
+ * then its reversal (section 3), the same blocks as the Analysis page, closed, each title carrying its conclusion.
  */
 async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | null> {
   const k = await kpiDriver(id);
   if (!k || k.symbol !== symbol) return null;
-  const c = await kpiDriverChart(k);
-  const m = k.measure;
-  const pct = (x: number | null) => (x === null ? "–" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
-  const KIND = { release: "Results", news: "News", filing: "Filing" } as const;
-  const value = (v: number | null) => (m ? kpiValue(v, m) : "–");
-  const periodOf = new Map(k.periods.map((p) => [p.period, p]));
-  const significant = k.periods.filter((p) => p.significant);
-  // A KPI figure opens its source: the report page it was read on, else the stored series and its providers.
-  const figure = (p: (typeof k.periods)[number]) => {
-    const text = value(p.value);
-    if (p.cite) return <Sourced symbol={symbol} item={docItemId(p.cite.documentId, p.cite.page, p.cite.quote)}>{text}</Sourced>;
-    return m ? <SourcedFigure symbol={symbol} source={{ l: m.label, v: text, d: periodWords(p.periodType, p.period), s: m.providers }}>{text}</SourcedFigure> : text;
-  };
-  const moved = k.rows.filter((r) => r.result !== "nothing").sort((a, b) => a.day.localeCompare(b.day) || a.eventId.localeCompare(b.eventId));
-  const quiet = k.rows.filter((r) => r.result === "nothing");
-  const tally = (["confirms", "invalidates", "other-cause", "nothing"] as const).map((r) => ({ r, n: k.rows.filter((x) => x.result === r).length }));
-  const yes = (b: boolean | null, words: string) => (b === null ? <span className="text-kumo-subtle">–</span> : b ? <span className="text-kumo-strong">{words}</span> : <span className="text-kumo-subtle">No</span>);
-  // A policy or industry candidate has no figure: its step 4 is the events that changed it (meeting 2026-11-23).
-  const isKpi = k.kind === "kpi";
-  const changed = k.rows.filter((r) => r.kpiMoved === true);
-  const readIn = k.foundIn.map((id) => k.rows.find((r) => r.eventId === id)).filter((r): r is (typeof k.rows)[number] => !!r);
   return {
     title: k.name,
     // A trusted one is a Price Driver, the rest stay candidates (Kevin 2026-11-23).
     subtitle: k.level === "strong" || k.level === "weak" ? "Price driver" : "Price driver candidate",
-    body: (
-      <>
-        <div className="flex flex-col gap-3">
-          <span>
-            <ConfidenceBadge level={!k.level || k.level === "none" ? "noise" : k.level} />
-          </span>
-          <p className="text-lg leading-snug text-kumo-strong"><Rich text={k.reason} /></p>
-        </div>
-
-        <section className="flex flex-col gap-4">
-          <h3 className="text-base font-semibold text-kumo-strong">{`3 · Where it was read · ${readIn.length}`}</h3>
-          {readIn.length ? (
-            <ul className="flex flex-col">
-              {readIn.map((r) => (
-                <li key={r.eventId} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
-                  {day(r.day)} · {KIND[r.kind]}: <EventTitle symbol={symbol} e={r} /> · price {pct(r.reaction)} beyond the market
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-base text-kumo-subtle">{`${CANDIDATE_KIND_WORD[k.kind]} its business model makes obvious; no event that moved the stock names it.`}</p>
-          )}
-        </section>
-
-        {!isKpi && (
-          <section className="flex flex-col gap-4">
-            <h3 className="text-base font-semibold text-kumo-strong">{`4 · When ${k.name} changed · ${changed.length}`}</h3>
-            {changed.length ? (
-              <ul className="flex flex-col">
-                {[...changed].reverse().map((r) => (
-                  <li key={r.eventId} className="grid grid-cols-[7rem_5rem_1fr] gap-3 border-b border-kumo-hairline py-2 text-sm last:border-b-0">
-                    <span className="text-kumo-subtle">{day(r.day)}</span>
-                    <span className={r.changeUp ? "font-semibold text-dualis-long" : "font-semibold text-dualis-short"}>{r.changeUp ? "Better" : "Worse"}</span>
-                    <span className="text-kumo-default">
-                      {r.kpiWhy ? `${r.kpiWhy} · ` : ""}
-                      <EventTitle symbol={symbol} e={r} />
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className="text-base text-kumo-subtle">No event of 3 years changed it.</p>
-            )}
-          </section>
-        )}
-
-        {isKpi && <section className="flex flex-col gap-4">
-          <h3 className="text-base font-semibold text-kumo-strong">{`4 · When ${k.name} moved · ${significant.length}`}</h3>
-          {k.periods.length && m ? (
-            <KpiPeriodsChart periods={k.periods.map((p) => ({ date: p.period, period: periodWords(p.periodType, p.period), value: p.value, significant: p.significant }))} unit={m.unit} currency={m.currency} label={k.name} />
-          ) : (
-            <p className="text-base text-kumo-subtle">No stored figure measures it, and the reports do not print it.</p>
-          )}
-          {k.periods.length > 0 && (
-            <Drawers>
-              <Drawer icon={<ChartBarIcon size={16} aria-hidden />} title={`Every period · ${k.periods.length}`}>
-                <ul className="flex flex-col">
-                  {[...k.periods].reverse().map((p) => (
-                    <li key={p.period} className="grid grid-cols-[9rem_12rem_1fr] gap-3 border-b border-kumo-hairline py-2 text-sm last:border-b-0">
-                      <span className="text-kumo-subtle">{periodWords(p.periodType, p.period)}</span>
-                      <span className="tabular text-kumo-default">
-                        {value(p.prior)} → {figure(p)} <span className="text-kumo-subtle">({kpiChange(p.change, p.changeKind)})</span>
-                      </span>
-                      <span className={`tabular ${p.significant ? "font-semibold text-kumo-strong" : "text-kumo-subtle"}`}>{p.change === null ? "No year earlier to compare" : (p.why ?? (p.significant ? "Moved" : "Did not move"))}</span>
-                    </li>
-                  ))}
-                </ul>
-                {m && <p className="text-sm text-kumo-subtle">{m.label}</p>}
-              </Drawer>
-            </Drawers>
-          )}
-        </section>}
-
-        <section className="flex flex-col gap-4">
-          <h3 className="text-base font-semibold text-kumo-strong">5 · Event by event</h3>
-          <KpiDriverChart kpi={c.kpi} unit={c.unit} currency={c.currency} kpiLabel={k.name} price={c.price} indexName={c.indexName} markers={c.markers} />
-          <Drawers>
-            {moved.map((r) => {
-              const p = r.period ? periodOf.get(r.period) : undefined;
-              return (
-                <Drawer
-                  key={r.eventId}
-                  title={
-                    <span className="grid grid-cols-[1fr_auto] items-start gap-x-4 gap-y-1">
-                      <span className="min-w-0">{`${c.number.get(r.eventId)}. ${day(r.day)} · ${KIND[r.kind]}: ${decodeEntities(r.title.replace(/\s+/g, " "))}`}</span>
-                      <Badge variant={RESULT_BADGE[r.result]}>{RESULT_WORD[r.result]}</Badge>
-                      <span className="col-span-2 flex flex-wrap gap-x-4 text-sm font-normal">
-                        <span>{isKpi ? "KPI moved?" : "Changed?"} {yes(r.kpiMoved, p ? `${value(r.from)} → ${value(r.to)} (${kpiChange(r.change, p.changeKind)})` : r.changeUp === undefined || r.changeUp === null ? "Yes" : r.changeUp ? "Better" : "Worse")}</span>
-                        <span>Price moved? {yes(r.priceMoved, `${pct(r.reaction)} beyond the market, ${r.z === null ? "" : `${Math.abs(r.z).toFixed(1)}x usual`}`)}</span>
-                      </span>
-                    </span>
-                  }
-                >
-                  <MomentCard
-                    kpiName={p ? `${k.name}, ${periodWords(p.periodType, p.period)}` : k.name}
-                    from={r.from === null ? null : value(r.from)}
-                    to={r.to === null ? null : value(r.to)}
-                    change={p ? kpiChange(r.change, p.changeKind) : null}
-                    stock={r.stock}
-                    beyond={r.reaction}
-                    indexName={c.indexName}
-                    verdict={r.result === "confirms" ? "confirms" : r.result === "invalidates" ? "invalidates" : "neutral"}
-                    navy={COLOR["brand-chart"].light}
-                    green={COLOR.long.light}
-                    red={COLOR.short.light}
-                    grey="#9aa1ab"
-                  />
-                  {r.kpiWhy && <p className="text-base text-kumo-default"><Rich text={r.kpiWhy} /></p>}
-                  {r.cite ? (
-                    <Sourced symbol={symbol} item={docItemId(r.cite.documentId, r.cite.page, r.cite.quote)} className="text-base text-kumo-default">
-                      « {r.cite.quote} »
-                    </Sourced>
-                  ) : (
-                    <p className="text-base text-kumo-default">
-                      <EventTitle symbol={symbol} e={r} />
-                    </p>
-                  )}
-                </Drawer>
-              );
-            })}
-            <Drawer icon={<MinusCircleIcon size={16} aria-hidden />} title={`Nothing moved · ${quiet.length}`}>
-              <ul className="flex flex-col">
-                {[...quiet].reverse().map((r) => (
-                  <li key={r.eventId} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
-                    {day(r.day)} · {KIND[r.kind]}: {decodeEntities(r.title)} · price {pct(r.reaction)} beyond the market
-                  </li>
-                ))}
-              </ul>
-            </Drawer>
-            <Drawer icon={<FunnelIcon size={16} aria-hidden />} title="How the market's noise is taken out">
-              <KpiDriverChart kpi={[]} unit={c.unit} currency={c.currency} kpiLabel={k.name} price={c.price} indexName={c.indexName} markers={[]} height={200} />
-              <p className="text-base leading-relaxed text-kumo-default">
-                Each move is the share price over the 5 trading days after the event, minus {c.beta.toFixed(2)} times the {c.indexName} over the same days. A move counts when it is at least twice the stock&apos;s usual 5-day move.
-              </p>
-            </Drawer>
-          </Drawers>
-        </section>
-
-        <section className="flex flex-col gap-4">
-          <h3 className="text-base font-semibold text-kumo-strong">6 · How the verdict was reached</h3>
-          <div className="flex flex-wrap items-start gap-6">
-            <ul className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-              {tally.map(({ r, n }) => (
-                <li key={r} className="flex min-w-24 flex-col gap-1 rounded-lg p-3 ring-1 ring-kumo-hairline">
-                  <span className={`text-2xl font-semibold tabular ${r === "confirms" ? "text-dualis-long" : r === "invalidates" ? "text-dualis-short" : "text-kumo-strong"}`}>{n}</span>
-                  <span className="text-xs text-kumo-subtle">{RESULT_WORD[r]}</span>
-                </li>
-              ))}
-            </ul>
-            <div className="flex min-w-60 flex-1 flex-col gap-2">
-              <p className="text-base leading-snug text-kumo-strong"><Rich text={k.reason} /></p>
-              {k.tests && (
-                <ul className="flex flex-col gap-1 text-sm text-kumo-default">
-                  <li>{`A · ${k.tests.changes} big ${k.tests.changes === 1 ? "change" : "changes"} of it: the price followed ${k.tests.followed}, went against or ignored ${k.tests.against}.`}</li>
-                  <li>{`B · ${k.tests.moves} unusual price ${k.tests.moves === 1 ? "move" : "moves"}: it changed in ${k.tests.explained}.`}</li>
-                </ul>
-              )}
-              {k.signal && k.signal !== "none" && k.signalWhy && <p className="text-sm text-kumo-default"><Rich text={k.signalWhy} /></p>}
-            </div>
-          </div>
-        </section>
-      </>
-    ),
+    body: <DriverProof symbol={symbol} k={k} />,
   };
 }
 

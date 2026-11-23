@@ -13,26 +13,29 @@ import { FitWidth } from "./fit-width";
 import { day } from "./format";
 import { openPanel } from "./item-nav";
 import { itemHref } from "./item-href";
-import type { PricePoint } from "./kpi-driver-chart";
 import Link from "./link";
-import { arrowGroups, arrowWords, type MoveArrow } from "./move-arrows";
+import { Badge } from "@cloudflare/kumo";
+import { arrowGroups, arrowWords, WEEK_BADGE, WEEK_WORD, type MoveArrow } from "./move-arrows";
 import { usePageDark } from "./use-page-dark";
 import { COLOR } from "@/design/tokens";
 
 echarts.use([LineChart, ScatterChart, GridComponent, MarkAreaComponent, AriaComponent, CanvasRenderer]);
+
+/** A day of the share price as traded and with its market taken out. */
+export type PricePoint = { date: string; raw: number; clean: number };
 
 const UP = "path://M5,0 L10,9 L6.5,9 L6.5,16 L3.5,16 L3.5,9 L0,9 Z";
 const DOWN = "path://M3.5,0 L6.5,0 L6.5,7 L10,7 L5,16 L0,7 L3.5,7 Z";
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 
 /**
- * Step 2 « When the stock moved » with what happened at each move (MOVE-ARROWS-1123, Thierry 2026-11-23: « a chart
+ * Steps 1 and 4 of the proof: when the stock moved, and (`verdicts`) step 4's one verdict on each week (MOVE-ARROWS-1123, Thierry 2026-11-23: « a chart
  * with arrows pointing at each thing, telling me: this is what happened here »). The share price with its market taken
  * out; each unusual move shaded over its days and marked by a numbered arrow, up ones in a band above the line, down
  * ones in a band below it, so neither the numbers nor the arrows ever cover the line; the words sit in the numbered
  * list under the chart. A click on an arrow or a row opens the move's panel.
  */
-export function MovesChart({ symbol, price, indexName, arrows, height = 280 }: { symbol: string; price: PricePoint[]; indexName: string; arrows: MoveArrow[]; height?: number }) {
+export function MovesChart({ symbol, price, indexName, arrows, verdicts = false, height = 280 }: { symbol: string; price: PricePoint[]; indexName: string; arrows: MoveArrow[]; /** Step 4: each week's verdict and fact in the list; step 1 lists the moves only. */ verdicts?: boolean; height?: number }) {
   const dark = usePageDark();
   const router = useRouter();
   const ink = dark ? INK.dark : INK.light;
@@ -139,7 +142,7 @@ export function MovesChart({ symbol, price, indexName, arrows, height = 280 }: {
       <ol className="flex flex-col">
         {arrows.map((a) => (
           <li key={a.id}>
-            <Link href={moveHref(a.id)} scroll={false} className="-mx-2 grid grid-cols-[2rem_11.5rem_4rem_1fr] items-baseline gap-x-3 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-kumo-tint">
+            <Link href={moveHref(a.id)} scroll={false} className={`-mx-2 grid ${verdicts ? "grid-cols-[2rem_11.5rem_4rem_6.5rem_1fr]" : "grid-cols-[2rem_11.5rem_4rem]"} items-baseline gap-x-3 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-kumo-tint`}>
               <span className="inline-flex items-center gap-0.5 font-semibold tabular" style={{ color: tone[a.direction] }}>
                 {a.direction === "up" ? <ArrowUpIcon size={12} weight="bold" aria-hidden /> : <ArrowDownIcon size={12} weight="bold" aria-hidden />}
                 {a.n}
@@ -148,7 +151,12 @@ export function MovesChart({ symbol, price, indexName, arrows, height = 280 }: {
               <span className="tabular font-semibold" style={{ color: tone[a.direction] }}>
                 {pct(a.abnormal)}
               </span>
-              <span className={a.candidates.length || a.fact ? "text-kumo-default" : "text-kumo-subtle"}>{arrowWords(a)}</span>
+              {verdicts && (
+                <span>
+                  <Badge variant={WEEK_BADGE[a.week]}>{WEEK_WORD[a.week]}</Badge>
+                </span>
+              )}
+              {verdicts && <span className={a.fact ? "text-kumo-default" : "text-kumo-subtle"}>{arrowWords(a)}</span>}
             </Link>
           </li>
         ))}

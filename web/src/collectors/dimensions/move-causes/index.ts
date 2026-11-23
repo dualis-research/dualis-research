@@ -21,8 +21,12 @@ import { analysedSymbols } from "../watchlist";
 
 export const MOVE_CAUSES_DIMENSION = "move-causes";
 export const MOVE_SUBJECT_KIND = "price-move";
-/** v2 (Kevin 2026-11-19): the judge also reads the figures just reported and names the one that explains a business move. */
-export const MOVE_QUESTION = "move-cause@v2";
+/**
+ * v3 (PROOF-STRUCTURE-1123, whiteboard 2026-11-23 « Fundamental = industry or company »): a fact of the company's
+ * industry (a competitor, a supplier, its market) is fundamental, never macro; the kind is step 4's ONE verdict per week.
+ * v2 (Kevin 2026-11-19): the judge also reads the figures just reported and names the one that explains a business move.
+ */
+export const MOVE_QUESTION = "move-cause@v3";
 /** Moves per call (the repo speed rule: never one call per tiny item). */
 export const MOVES_PER_CALL = 15;
 const PARALLEL = 4;
@@ -138,8 +142,8 @@ async function pendingSubjects(db: Db): Promise<string[]> {
 export const MOVE_SYSTEM = [
   "You are an equity research analyst. A stock moved at least twice its usual 5-day move, once its own market's move (its local index times its beta) is taken out.",
   "Your job: say what made the market care at that moment, from the news items and filings dated around the move.",
-  "The point of the exercise: the moves caused by facts about THIS business (results, guidance, orders and backlog, margins, a contract, management, capital, a deal) show what the market watches on the company; the moves caused by the market at large say nothing about it.",
-  "kind: fundamental = a fact about this company's business or capital caused it; macro = the market, rates, a war, a commodity price, a policy or sector-wide news moved it, not a fact of the company; technical = trading itself (index inclusion or removal, a share placement priced at a discount, a lock-up, a short squeeze) with no business fact; unknown = none of the items explains the move.",
+  "The point of the exercise: the moves caused by FUNDAMENTAL facts (this company's business, or its industry) show what the market watches on the company; the moves caused by the market at large say nothing about it. Your kind is the ONE verdict on that week: the reader sees it as a badge, so the fact must agree with it.",
+  "kind: fundamental = a fact of this company's business or capital (results, guidance, orders and backlog, margins, a contract, management, a deal), OR of its industry (a competitor's results or failure, a supplier, demand or prices in its own market, a rule that bears on its business) caused it; macro = the market at large, rates, currencies, a war, a commodity price, a whole-economy policy; technical = trading itself (index inclusion or removal, a share placement priced at a discount, a lock-up, a short squeeze) with no business fact; unknown = none of the items explains the move (then fact is null: never a sentence about items that do not explain it).",
   "Decide from what the items say, never from a word alone: a news item about oil can be a fundamental fact for a company whose contract changed, a results filing can be irrelevant if it came out after the move.",
   "fact: ONE plain sentence a reader understands without the items: what happened in the business (with the figure the item gives, in management's words when the item quotes them), or the macro or technical event. null when unknown.",
   "category: the one Driver Category the fact belongs to, exactly one of: " + DRIVER_CATEGORIES.join(", ") + "; null when unknown.",
@@ -198,7 +202,8 @@ export function parseBatch(text: string, itemIds: Map<string, MoveCandidate>[], 
     if (!kind) throw new Error(`move-causes: kind "${String(v.kind)}" for M${i + 1} is not one of ${MOVE_CAUSE_KINDS.join(", ")}`);
     const cites = (Array.isArray(v.cites) ? v.cites : []).map((c) => ids.get(String(c))).filter((c): c is MoveCandidate => !!c);
     const category = DRIVER_CATEGORIES.includes(v.category as DriverCategory) ? (v.category as DriverCategory) : null;
-    const fact = typeof v.fact === "string" && v.fact.trim() ? v.fact.trim().replace(/\s*[—–]\s*/g, ", ") : null;
+    // One verdict per week: an unknown week carries no sentence (a fact beside « unknown » read as a contradiction, 2026-11-23).
+    const fact = kind !== "unknown" && typeof v.fact === "string" && v.fact.trim() ? v.fact.trim().replace(/\s*[—–]\s*/g, ", ") : null;
     const confidence = typeof v.confidence === "number" && v.confidence >= 0 && v.confidence <= 1 ? v.confidence : null;
     if (confidence === null) throw new Error(`move-causes: confidence "${String(v.confidence)}" for M${i + 1} is not a number from 0 to 1`);
     const lasting: MoveLasting = kind === "fundamental" && (v.lasting === "structural" || v.lasting === "temporary") ? v.lasting : "n-a";
@@ -297,7 +302,7 @@ export async function rebuildMoveCauses(db: Db, symbols: string[]): Promise<numb
 
 export const moveCausesDim: Dimension = {
   name: MOVE_CAUSES_DIMENSION,
-  description: "What caused each significant price move (market-reaction): a business fact (fundamental), the market at large (macro), trading itself (technical) or not found, from the news and filings dated 3 days before to 1 day after it, with the items it rests on. One judgment per move and set of items; no item = not found, no call.",
+  description: "What caused each significant price move (market-reaction), the ONE verdict per week: a fact of the company or its industry (fundamental), the market at large (macro), trading itself (technical) or not found, from the news and filings dated 3 days before to 1 day after it, with the items it rests on. One judgment per move and set of items; no item = not found, no call.",
   sources: [moveCausesSource],
   subjects: pendingSubjects,
   promote: async (db): Promise<PromoteResult> => ({ silverRowsBySource: { claude: await rebuildMoveCauses(db, await analysedSymbols(db)) } }),

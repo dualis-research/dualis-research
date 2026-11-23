@@ -18,35 +18,3 @@ describe("a claim's drawer title is its first sentence, whole", () => {
     expect(leadSentence(us)).toEqual({ lead: us, rest: "" });
   });
 });
-
-describe("Price Drivers (A) and the ones turning now (B) in the panel, read from the KPI drivers", () => {
-  const kpi = (rank: number, name: string, level: "strong" | "weak" | "none", signal: "strong" | "weak" | "none" | null) =>
-    ({ id: `X:kpi:${rank}`, rank, name, level, signal, signalWhy: `${name} moved`, direction: "up", confirmed: 2, rows: [{}, {}, {}] }) as never;
-  const kpis = [kpi(1, "Cash returned to holders", "none", null), kpi(2, "Operating margin", "weak", "weak"), kpi(3, "Order intake", "strong", "none")];
-
-  it("A lists the trusted KPIs only, strongest first, each opening its test panel", async () => {
-    const { KpiDrivers } = await import("@/console/analysis");
-    const html = renderToStaticMarkup(createElement(KpiDrivers, { symbol: "X", kpis }));
-    expect(html).not.toContain("Cash returned to holders");
-    expect(html.indexOf("Order intake")).toBeLessThan(html.indexOf("Operating margin"));
-    expect(html).toContain("Strong confidence");
-    // Kevin 2026-11-23: the « Confirmed N times, invalidated M » line under each driver says nothing useful.
-    expect(html).not.toContain("Confirmed");
-    expect(html).toContain(encodeURIComponent("kdriver:X:kpi:3"));
-  });
-
-  it("B lists, among A, only the KPIs turning now", async () => {
-    const { KpiSignals } = await import("@/console/analysis");
-    const html = renderToStaticMarkup(createElement(KpiSignals, { symbol: "X", kpis }));
-    expect(html).toContain("Operating margin");
-    expect(html).not.toContain("Order intake");
-    expect(html).toContain("Weak turn · up");
-  });
-
-  it("says Not tested yet before a run, and a dash when no KPI is trusted", async () => {
-    const { KpiDrivers, KpiSignals } = await import("@/console/analysis");
-    expect(renderToStaticMarkup(createElement(KpiDrivers, { symbol: "X", kpis: [] }))).toContain("Not tested yet.");
-    expect(renderToStaticMarkup(createElement(KpiDrivers, { symbol: "X", kpis: [kpis[0]] }))).toContain("–");
-    expect(renderToStaticMarkup(createElement(KpiSignals, { symbol: "X", kpis: [kpis[2]] }))).toContain("No price driver is turning now.");
-  });
-});

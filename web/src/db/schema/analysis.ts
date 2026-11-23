@@ -784,7 +784,18 @@ export type KpiEventRow = {
   cite: DocCitation | null;
   /** A policy or industry candidate (no figure): did it turn up (stronger, more favourable) at this event? Absent on KPI rows. */
   changeUp?: boolean | null;
+  /**
+   * Step 4's ONE verdict on the week the event sits in (`gold.price_move_causes`): fundamental = a fact of the company or
+   * its industry moved it, market = the market at large or trading itself, unknown = no item explains it. Only a
+   * fundamental week counts as the price moving (`priceMoved`) for tests A, B and C (PROOF-STRUCTURE-1123). Null = no move.
+   */
+  week?: WeekVerdict | null;
 };
+
+/** The one verdict per unusual week (step 4, PROOF-STRUCTURE-1123): read from `price_move_causes.kind` (macro and technical = market). */
+export const WEEK_VERDICTS = ["fundamental", "market", "unknown"] as const;
+export type WeekVerdict = (typeof WEEK_VERDICTS)[number];
+export const weekVerdict = (kind: string | null | undefined): WeekVerdict => (kind === "fundamental" ? "fundamental" : kind === "macro" || kind === "technical" ? "market" : "unknown");
 
 /** What a Price Driver Candidate is (Kevin + Thierry 2026-11-23): a company KPI, a policy, or a qualitative industry fact. */
 export const CANDIDATE_KINDS = ["kpi", "policy", "industry"] as const;
@@ -795,13 +806,41 @@ export type CandidateKind = (typeof CANDIDATE_KINDS)[number];
  * did the price move the expected way in its 5 trading days? B) each unbiased price move of 3 years, did the candidate
  * change in it? Counted by code from the rows and the step-2 moves; the verdict is the AI's.
  */
-export type DriverTests = { changes: number; followed: number; against: number; moves: number; explained: number; explainedMoveIds: string[] };
+export type DriverTests = {
+  /** A) big changes of the candidate; the price followed the expected way in a fundamental week / did not. */
+  changes: number;
+  followed: number;
+  against: number;
+  /** B) unusual weeks of the window, the fundamental ones among them, and those in which the candidate changed. */
+  moves: number;
+  fundamentalMoves: number;
+  explained: number;
+  explainedMoveIds: string[];
+  /** C) events where the candidate changed AND the price moved in a fundamental week; those the expected way. */
+  both: number;
+  bothAgree: number;
+};
 
 /**
- * KPI Drivers (Kevin + Thierry 2026-11-19; six steps DRIVERS-SIX-STEPS-1123): a driver is a fundamental KPI the market
- * trades the stock on. Step 3 (AI) lists the candidates with their expected direction and how each is measured; step 4
- * (code) its moves (`periods`); step 5 (code) every event (`rows`); step 6 (AI, from step 5 only) the verdict
- * (strong / weak / none + reason) and whether it turns NOW (signal). id = `<symbol>:kpi:<n>`.
+ * Section 3 (PROOF-STRUCTURE-1123, whiteboard 2026-11-23 « Inflection: the PD changes; a leading indicator of the PD »):
+ * the AI's three readings on a trusted Price Driver, stored once per input (`kpi-reversal@v1`).
+ */
+export type DriverReversal = {
+  /** Is the driver reversing on its own latest reported value? */
+  intrinsic: { state: "reversing" | "continuing" | "flat"; why: string; period: string | null };
+  /** Does a recent event announce that it will change soon (a leading indicator), and how likely? */
+  leading: { probability: "high" | "medium" | "low" | "none"; why: string; events: { id: string; day: string; kind: DriverEventKind; title: string; sourceId: string; url: string | null }[] };
+  /** Bottom line: the strength of this driver's reversal, and which way the driver turns. */
+  strength: KpiLevel;
+  direction: "up" | "down" | null;
+  why: string;
+};
+
+/**
+ * Price Driver Candidates and Price Drivers (PROOF-STRUCTURE-1123): one row per candidate (a KPI, a policy or an industry
+ * fact), how it is measured (`measure`, `periods`), every event crossed with it and the week verdicts (`rows`), tests A,
+ * B and C (`tests`), the AI's confidence (`level` + `reason`) and, for a trusted one, its reversal (`reversal`; its bottom
+ * line also in `signal` / `signalWhy`). id = `<symbol>:kpi:<slug of the name>`.
  */
 export const kpiDrivers = gold.table(
   "kpi_drivers",
@@ -814,7 +853,7 @@ export const kpiDrivers = gold.table(
     kind: text("kind").$type<CandidateKind>().notNull().default("kpi"),
     /** The step-1 events, with an unbiased move, where the AI read this candidate. */
     foundIn: jsonb("found_in").$type<string[]>().notNull().default([]),
-    /** Tests A and B, counted by code. */
+    /** Tests A, B and C, counted by code. */
     tests: jsonb("tests").$type<DriverTests | null>(),
     /** Why this KPI moves this business, in one sentence. */
     why: text("why").notNull(),
@@ -832,9 +871,11 @@ export const kpiDrivers = gold.table(
     rows: jsonb("rows").$type<KpiEventRow[]>().notNull().default([]),
     confirmed: integer("confirmed").notNull().default(0),
     invalidated: integer("invalidated").notNull().default(0),
-    /** Does it turn NOW (the latest release): strong / weak / none, and why. Null for a KPI not trusted. */
+    /** Section 3's bottom line (= `reversal.strength` and `.why`): strong / weak / none. Null for a candidate not trusted. */
     signal: text("signal").$type<KpiLevel>(),
     signalWhy: text("signal_why"),
+    /** Section 3: is it reversing on its latest value, does a leading indicator say it will soon, and the bottom line. */
+    reversal: jsonb("reversal").$type<DriverReversal | null>(),
     /** Which way it turns, read against the story (`up` / `down` in the KPI itself). */
     direction: text("direction").$type<"up" | "down">(),
     asOf: timestamp("as_of", { withTimezone: true }).notNull(),
