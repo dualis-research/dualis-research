@@ -1,4 +1,5 @@
 import { Badge } from "@cloudflare/kumo";
+import { Rich } from "./rich";
 import { CaretRightIcon } from "@phosphor-icons/react/ssr";
 import type { Valuation } from "./analysis-queries";
 import { FootballField, type FieldRow } from "./football-field";
@@ -56,7 +57,7 @@ export function MethodsTable({ symbol, v }: { symbol: string; v: Valuation }) {
                     </time>
                   )}
                   {/* Why a method does not count (PB-WEIGHT-1109: P/B on a company whose book value is intangible). */}
-                  {!m.applicable && m.reason && <span className="max-w-prose text-sm text-kumo-subtle">{m.reason}</span>}
+                  {!m.applicable && m.reason && <span className="max-w-prose text-sm text-kumo-subtle"><Rich text={m.reason} /></span>}
                 </span>
               </KTableCell>
               <KTableCell className="py-3 text-right align-top font-mono tabular">{val(m.low)}</KTableCell>

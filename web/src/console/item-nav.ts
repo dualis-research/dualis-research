@@ -8,7 +8,7 @@ import { loadItemPanel } from "./item-actions";
  * `history.pushState` (Next keeps `useSearchParams` in sync, back/forward work) and `ItemPanelHost` asks the server for
  * that one panel (`loadItemPanel`). Any other link is a normal navigation.
  */
-export type PanelView = { title: string; subtitle: string | null; body: React.ReactNode };
+export type PanelView = { title: string; subtitle: React.ReactNode | null; body: React.ReactNode };
 type Page = { pathname: string; symbol: string; shown: "long" | "short" | null; competing: boolean };
 
 let page: Page | null = null;

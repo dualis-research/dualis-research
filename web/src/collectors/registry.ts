@@ -44,6 +44,7 @@ import { intradayPrice } from "./dimensions/intraday-price";
 import { thesis } from "./dimensions/thesis";
 import { watchlist } from "./dimensions/watchlist";
 import { xPublish } from "./dimensions/x-publish";
+import { emphasisDim } from "./dimensions/emphasis";
 import type { Dimension } from "./types";
 
 /**
@@ -67,8 +68,9 @@ import type { Dimension } from "./types";
  * once would race the account's rotating token, so `all`, `core` and `growth` never include it.
  * One signal engine since 2026-11-09: the legacy catalysts / thesis-confidence chain is gone; the WhatsApp alert is the Signal Change.
  * Signal alerts right after signals: a Signal Change that makes the signal better goes to Kevin and Thierry with its picture.
+ * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, driverConfidenceDim, kpiDriversDim, analysis, narrativeSinceDim, evidenceDim, narrativeStateDim, signalsDim, signalAlertsDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, driverConfidenceDim, kpiDriversDim, analysis, narrativeSinceDim, evidenceDim, narrativeStateDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts): the daily schedule only. A deploy's
@@ -105,6 +107,8 @@ export const STAGES: readonly (readonly string[])[] = [
   ["narrative-state"],
   ["signals"],
   ["signal-alerts"],
+  // Bold on the texts the analysis chain just wrote (Kevin 2026-11-23); the Ideas get theirs on the next run.
+  ["emphasis"],
   ...GROWTH_DIMENSIONS.map((d) => [d]),
   ...ON_DEMAND_DIMENSIONS.map((d) => [d]),
 ];

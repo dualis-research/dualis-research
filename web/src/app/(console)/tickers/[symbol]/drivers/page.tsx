@@ -1,4 +1,5 @@
 import { CaretRightIcon } from "@phosphor-icons/react/ssr";
+import { Rich } from "@/console/rich";
 import { Badge } from "@cloudflare/kumo";
 import { ConfidenceBadge } from "@/console/confidence-badge";
 import { itemView } from "@/console/item-detail";
@@ -42,7 +43,7 @@ export default async function DriversPage({ params, searchParams }: { params: Pr
                     <KTableCell className="py-3 pl-4">
                       <span className="flex flex-col gap-0.5">
                         <span className="text-base font-medium text-kumo-strong">{k.name}</span>
-                        <span className="text-sm text-kumo-subtle">{k.why}</span>
+                        <span className="text-sm text-kumo-subtle"><Rich text={k.why} /></span>
                       </span>
                     </KTableCell>
                     <KTableCell className="py-3">

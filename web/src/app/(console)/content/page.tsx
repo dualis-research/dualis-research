@@ -1,4 +1,5 @@
 import { Badge } from "@cloudflare/kumo";
+import { Rich } from "@/console/rich";
 import { LightbulbIcon } from "@phosphor-icons/react/ssr";
 import { FORMAT_LABEL, PROPOSED_FORMATS } from "@/collectors/dimensions/content-drafts/format";
 import { lastContentRun, listIdeas } from "@/console/content-queries";
@@ -133,7 +134,7 @@ function IdeaPanel({ idea }: { idea: GoldContentIdea }) {
     >
       <section className="flex flex-col gap-2">
         <h3 className="text-xl font-semibold text-kumo-strong">{idea.title}</h3>
-        <p className="text-base text-kumo-default">{idea.angle}</p>
+        <p className="text-base text-kumo-default"><Rich text={idea.angle} /></p>
       </section>
 
       <section className="flex flex-col gap-3">
@@ -147,7 +148,7 @@ function IdeaPanel({ idea }: { idea: GoldContentIdea }) {
                 <span className="pt-0.5">{s ? <Score value={s.score} /> : <span className="text-sm text-kumo-subtle">–</span>}</span>
                 <span className="flex min-w-0 flex-col gap-0.5">
                   <span className="text-base font-medium text-kumo-strong">{FORMAT_LABEL[format]}</span>
-                  {s?.why && <span className="text-sm text-kumo-subtle">{s.why}</span>}
+                  {s?.why && <span className="text-sm text-kumo-subtle"><Rich text={s.why} /></span>}
                   {r?.status === "failed" && <span className="text-sm text-dualis-short">The last try failed: {r.error}</span>}
                 </span>
                 <RequestAction request={r} />

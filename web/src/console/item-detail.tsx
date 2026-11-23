@@ -23,6 +23,7 @@ import { documentPageDetail } from "./document-queries";
 import { DocumentPageText, docItemId, openAt, parseDocItem } from "./document-page";
 import type { PeerRow } from "@/db/schema/valuation";
 import type { ThesisSide } from "@/db/schema/analysis";
+import { Rich } from "./rich";
 
 /**
  * Level C: the detail of one item of the analysis (`?item=` on the Analysis page): what it says, its chart, and where
@@ -31,7 +32,7 @@ import type { ThesisSide } from "@/db/schema/analysis";
  * `doc:<document id>:<page>[:<quote>]` (one page of a company document, the quote highlighted).
  */
 
-export type ItemView = { title: string; subtitle?: string; body: React.ReactNode };
+export type ItemView = { title: string; subtitle?: React.ReactNode; body: React.ReactNode };
 
 /** Where an item comes from, as a research note prints it: "Source: Company filings (DART), Yahoo Finance, Dualis Research." */
 function SourceNote({ sources }: { sources: string[] }) {
@@ -57,7 +58,7 @@ async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
           // Too old (Kevin 2026-11-06): from before the current story, judged against no driver.
           <div className="flex flex-col gap-2">
             <TagBadge effect="too-old" strength="noise" side={null} />
-            {d.evidence.why && <p className="text-base leading-relaxed text-kumo-strong">{d.evidence.why}</p>}
+            {d.evidence.why && <p className="text-base leading-relaxed text-kumo-strong"><Rich text={d.evidence.why} /></p>}
           </div>
         ) : d.evidence ? (
           // Judged against EACH driver (Kevin 2026-11-06): one tag per driver, why, and the sentence it rests on.
@@ -72,7 +73,7 @@ async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
                 {top?.v && (
                   <div className="flex flex-col gap-3">
                     <span><TagBadge effect={top.v.effect} strength={top.v.strength} side={top.drv.side} /></span>
-                    {top.v.why && <p className="text-xl leading-snug font-semibold text-kumo-strong">{top.v.why}</p>}
+                    {top.v.why && <p className="text-xl leading-snug text-kumo-strong"><Rich text={top.v.why} /></p>}
                   </div>
                 )}
                 <Drawers>
@@ -87,7 +88,7 @@ async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
                         </span>
                       }
                     >
-                      {v?.why && <p className="text-base leading-relaxed text-kumo-default">{v.why}</p>}
+                      {v?.why && <p className="text-base leading-relaxed text-kumo-default"><Rich text={v.why} /></p>}
                       {v?.citedSentence && v.effect !== "noise" && <blockquote className="rounded-lg bg-kumo-tint px-4 py-3 text-sm leading-relaxed text-kumo-default italic">“{v.citedSentence}”</blockquote>}
                       <span className="flex flex-wrap items-center gap-3 text-sm text-kumo-subtle">
                         {v?.pricedIn && v.effect !== "noise" && <span>{PRICED_WORD[v.pricedIn]}</span>}
@@ -113,7 +114,7 @@ async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
               <span className="text-base text-kumo-default">{c.direction === "contradicts" ? "Cracks the narrative" : "Continues the narrative"}</span>
               <span className="text-sm text-kumo-subtle tabular">judge {Math.round(c.probability * 100)}% sure</span>
             </div>
-            {c.reason && <p className="text-lg leading-relaxed text-kumo-strong">{c.reason}</p>}
+            {c.reason && <p className="text-lg leading-relaxed text-kumo-strong"><Rich text={c.reason} /></p>}
             {c.evidence && <blockquote className="border-l border-kumo-line pl-4 text-base leading-relaxed text-kumo-default italic">“{c.evidence}”</blockquote>}
           </>
         )}
@@ -265,7 +266,7 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
           <Badge variant={c?.kind === "fundamental" ? "primary" : "outline"}>{MOVE_KIND[c?.kind ?? "unknown"]}</Badge>
           {c?.category && <Badge variant="outline">{c.category}</Badge>}
         </span>
-        <p className="text-xl leading-snug font-semibold text-kumo-strong">{conclusion}</p>
+        <p className="text-xl leading-snug text-kumo-strong"><Rich text={conclusion} /></p>
         {c?.metric && (
           <p className="text-base text-kumo-default">
             {c.metric.label}: {c.metric.from ? `${c.metric.from} → ` : ""}
@@ -324,7 +325,7 @@ async function driverItem(symbol: string, id: string): Promise<ItemView | null> 
         {/* The reason first, in one sentence (Kevin 2026-11-17), then what changed with its quotes, then the moves. */}
         <DriverReason state={d.state} side={d.side} moves={d.moves} hrefFor={(item) => itemHref(symbol, item)}>
           <Drawer icon={<LightbulbIcon size={16} aria-hidden />} title="Why the market holds it">
-            <p className="text-base leading-relaxed text-kumo-default">{d.driver.text}</p>
+            <p className="text-base leading-relaxed text-kumo-default"><Rich text={d.driver.text} /></p>
           </Drawer>
           {d.exhibits.length > 0 && (
             <Drawer icon={<ChartBarIcon size={16} aria-hidden />} title={`Exhibits · ${d.exhibits.length}`}>
@@ -368,8 +369,8 @@ async function confidenceItem(symbol: string, id: string): Promise<ItemView | nu
           <span className="text-sm text-kumo-subtle tabular">
             {day(on)} · {`${ret >= 0 ? "+" : ""}${(ret * 100).toFixed(1)}%`}
           </span>
-          <span className="text-base text-kumo-strong">{fact ?? "No fact written."}</span>
-          {figure && <span className="text-sm text-kumo-default">{figure}</span>}
+          <span className="text-base text-kumo-strong"><Rich text={fact ?? "No fact written."} /></span>
+          {figure && <span className="text-sm text-kumo-default"><Rich text={figure} /></span>}
         </span>
         {right}
       </Link>
@@ -386,7 +387,7 @@ async function confidenceItem(symbol: string, id: string): Promise<ItemView | nu
               <ConfidenceBadge level={c.level} />
             </span>
           )}
-          <p className="text-xl leading-snug font-semibold text-kumo-strong">{c?.reason ?? "Not tested yet: the next run checks the business moves that followed its origin."}</p>
+          <p className="text-xl leading-snug text-kumo-strong"><Rich text={c?.reason ?? "Not tested yet: the next run checks the business moves that followed its origin."} /></p>
           {c && (
             <p className="text-sm text-kumo-subtle">
               Explains {c.explained} of {c.tested} later business {c.tested === 1 ? "move" : "moves"}
@@ -425,7 +426,7 @@ async function confidenceItem(symbol: string, id: string): Promise<ItemView | nu
             </Drawer>
           )}
           <Drawer icon={<LightbulbIcon size={16} aria-hidden />} title="Why the market holds it">
-            <p className="text-base leading-relaxed text-kumo-default">{d.driver.text}</p>
+            <p className="text-base leading-relaxed text-kumo-default"><Rich text={d.driver.text} /></p>
           </Drawer>
         </Drawers>
         <SourceNote sources={["claude"]} />
@@ -451,14 +452,14 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
   const pct = (x: number | null) => (x === null ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
   return {
     title: k.name,
-    subtitle: k.why,
+    subtitle: <Rich text={k.why} />,
     body: (
       <>
         <div className="flex flex-col gap-3">
           <span>
             <ConfidenceBadge level={k.level === "none" ? "noise" : k.level} />
           </span>
-          <p className="text-lg leading-snug font-medium text-kumo-strong">{k.reason}</p>
+          <p className="text-lg leading-snug text-kumo-strong"><Rich text={k.reason} /></p>
           <p className="text-sm text-kumo-subtle">
             ✓ {k.confirmed} · ✗ {k.invalidated} of {k.rows.length} moments tested
           </p>
@@ -466,7 +467,7 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
         <Drawers>
           {k.signal && (
             <Drawer icon={<CrosshairIcon size={16} aria-hidden />} title={`Now: ${k.signal === "none" ? "not turning" : `${k.signal} turn${k.direction ? `, ${k.direction}` : ""}`}`}>
-              <p className="text-base leading-relaxed text-kumo-default">{k.signalWhy ?? "Nothing moved enough at the latest release."}</p>
+              <p className="text-base leading-relaxed text-kumo-default"><Rich text={k.signalWhy ?? "Nothing moved enough at the latest release."} /></p>
             </Drawer>
           )}
           {(() => {
@@ -483,7 +484,7 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
                       <span className="text-base text-kumo-strong">
                         {r.from || r.to ? `${k.name}: ${r.from ? `${r.from} → ` : ""}${r.to ?? "?"}${r.change ? ` (${r.change})` : ""}` : r.kpiChanged ? `${k.name} moved` : `${k.name} did not move`}
                       </span>
-                      {r.why && <span className="text-sm text-kumo-default">{r.why}</span>}
+                      {r.why && <span className="text-sm text-kumo-default"><Rich text={r.why} /></span>}
                       {r.cite && (
                         <Link href={itemHref(symbol, docItemId(r.cite.documentId, r.cite.page, r.cite.quote))} scroll={false} className="text-sm text-kumo-link hover:underline">
                           « {r.cite.quote.length > 90 ? `${r.cite.quote.slice(0, 90)}…` : r.cite.quote} » p. {r.cite.page}
@@ -538,7 +539,7 @@ async function exhibitItem(symbol: string, id: string): Promise<ItemView | null>
     body: (
       <>
         <ExhibitChart number={x.number} title={x.title} chart={x.chart} series={x.series} points={x.points} sources={x.sources} height={280} />
-        <p className="text-lg leading-relaxed text-kumo-strong">{x.takeaway}</p>
+        <p className="text-lg leading-relaxed text-kumo-strong"><Rich text={x.takeaway} /></p>
         <Drawers>
         <Drawer icon={<TableIcon size={16} aria-hidden />} title={`Data · ${x.points.length} periods`}>
         <div className="overflow-x-auto rounded-lg ring-1 ring-kumo-hairline">
@@ -605,7 +606,7 @@ async function fairValueItem(symbol: string): Promise<ItemView | null> {
         <Drawers>
           {r && (
             <Drawer icon={<TextAlignLeftIcon size={16} aria-hidden />} title="Why this value">
-              <p className="text-base leading-relaxed text-kumo-default">{r.summary}</p>
+              <p className="text-base leading-relaxed text-kumo-default"><Rich text={r.summary} /></p>
             </Drawer>
           )}
           {v.methods.length > 0 && (
@@ -654,13 +655,13 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
         {m.applicable && m.base !== null ? (
           <RangeCards low={m.low} base={m.base} high={m.high} currency={m.currency} baseLabel={`Base${m.weight ? `, weight ${Math.round(m.weight.weight * 100)}%` : ""}`} />
         ) : (
-          <p className="text-lg text-kumo-subtle">Not used for this company: {m.reason}</p>
+          <p className="text-lg text-kumo-subtle">Not used for this company: <Rich text={m.reason} /></p>
         )}
         <Drawers>
         {(m.summary || m.weight?.why) && (
           <Drawer icon={<TextAlignLeftIcon size={16} aria-hidden />} title="Summary">
-            {m.summary && <p className="text-base leading-relaxed text-kumo-default">{m.summary}</p>}
-            {m.weight?.why && <p className="text-base text-kumo-default">Weight: {m.weight.why}</p>}
+            {m.summary && <p className="text-base leading-relaxed text-kumo-default"><Rich text={m.summary} /></p>}
+            {m.weight?.why && <p className="text-base text-kumo-default">Weight: <Rich text={m.weight.why} /></p>}
           </Drawer>
         )}
         {m.history && m.history.points.length > 1 && (
@@ -695,7 +696,7 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
                       <KTableCell className="text-right align-top font-mono tabular">{unit(a.unit, a.low)}</KTableCell>
                       <KTableCell className="text-right align-top font-mono tabular text-kumo-strong">{unit(a.unit, a.base)}</KTableCell>
                       <KTableCell className="text-right align-top font-mono tabular">{unit(a.unit, a.high)}</KTableCell>
-                      <KTableCell className="pr-4 align-top text-kumo-default">{a.why}</KTableCell>
+                      <KTableCell className="pr-4 align-top text-kumo-default"><Rich text={a.why} /></KTableCell>
                     </KTableRow>
                   ))}
                 </KTableBody>
@@ -736,7 +737,7 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
               <p className="text-base text-kumo-default">
                 Base and high start from the peers&apos; median {m.peerPricing.label} of <span className="font-mono tabular">{m.peerPricing.median.toFixed(1)}x</span> ({m.peerPricing.count} {m.peerPricing.count === 1 ? "company" : "companies"}): base{" "}
                 <span className="font-mono tabular">{premium(m.peerPricing.premium.base)}</span>, high <span className="font-mono tabular">{premium(m.peerPricing.premium.high)}</span>. The low case stays on the company&apos;s own history.
-                {m.peerPricing.why && <span className="mt-2 block text-kumo-strong">{m.peerPricing.why}</span>}
+                {m.peerPricing.why && <span className="mt-2 block text-kumo-strong"><Rich text={m.peerPricing.why} /></span>}
               </p>
             )}
             <div className="overflow-x-auto rounded-lg ring-1 ring-kumo-hairline">
@@ -827,7 +828,7 @@ async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise
   const short = r?.summary ?? a.narrative.detail;
   return {
     title: "Why the market tells this story",
-    subtitle: a.narrative.text,
+    subtitle: <Rich text={a.narrative.text} />,
     body: (
       <>
         <Drawers>
@@ -841,7 +842,7 @@ async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise
                 </span>
               }
             >
-              {st.why && <p className="text-base leading-relaxed text-kumo-default">{st.why}</p>}
+              {st.why && <p className="text-base leading-relaxed text-kumo-default"><Rich text={st.why} /></p>}
               <span className="flex flex-wrap items-center gap-3 text-sm text-kumo-subtle">
                 {st.since && st.effect !== "noise" && <span className="tabular">Since {day(st.since)}</span>}
                 {st.pricedIn && st.effect !== "noise" && <span>{PRICED_WORD[st.pricedIn]}</span>}
@@ -850,14 +851,14 @@ async function narrativeItem(symbol: string, thesis: ThesisSide | null): Promise
           )}
           {short && (
             <Drawer icon={<TextAlignLeftIcon size={16} aria-hidden />} title="In short">
-              <p className="text-base leading-relaxed text-kumo-default">{short}</p>
+              <p className="text-base leading-relaxed text-kumo-default"><Rich text={short} /></p>
             </Drawer>
           )}
           {(r?.claims ?? []).map((c, i) => {
             const { lead, rest } = leadSentence(c.text);
             return (
-              <Drawer icon={<ChatTextIcon size={16} aria-hidden />} key={i} title={lead}>
-                {rest && <p className="text-base leading-relaxed text-kumo-default">{rest}</p>}
+              <Drawer icon={<ChatTextIcon size={16} aria-hidden />} key={i} title={<Rich text={lead} />}>
+                {rest && <p className="text-base leading-relaxed text-kumo-default"><Rich text={rest} /></p>}
                 <span className="flex flex-wrap items-center gap-2 text-sm">
                   {c.drivers.map((rank) => {
                     const d = driverByRank.get(rank);

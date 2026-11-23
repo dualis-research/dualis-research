@@ -6,6 +6,7 @@ import type { DocCitation, GoldNarrativeState, GoldPriceMove, GoldPriceMoveCause
 import { docItemId } from "./document-page";
 import { Drawer, Drawers } from "./drawer";
 import { TagBadge } from "./tag-badge";
+import { Rich } from "./rich";
 
 /**
  * The top of a Narrative Driver panel (INFLECTION-1117, Kevin 2026-11-17: « la raison doit être résumée très clairement
@@ -29,7 +30,13 @@ function CitationChip({ c, href }: { c: DocCitation; href: string }) {
 }
 
 /** The explanation with each quote's chip right after the words it quotes; a quote not found in the text gets its chip at the end. */
-export function ExplanationWithCitations({ text, citations, hrefFor }: { text: string; citations: DocCitation[]; hrefFor: (item: string) => string }) {
+export function ExplanationWithCitations({ text: shown, citations, hrefFor }: { text: string; citations: DocCitation[]; hrefFor: (item: string) => string }) {
+  // Quotes are found in the words without the bold marks; `at` maps a position there back to the shown text.
+  const at: number[] = [];
+  for (let i = 0; i < shown.length; i++) if (!(shown[i] === "*" && (shown[i + 1] === "*" || shown[i - 1] === "*"))) at.push(i);
+  at.push(shown.length);
+  const text = shown.replace(/\*\*/g, "");
+  const cut = (from: number, to: number) => <Rich key={`t${from}`} text={shown.slice(at[from], at[to])} />;
   const placed = citations
     .map((c, i) => ({ c, i, at: findQuote(text, c.quote) }))
     .filter((x): x is { c: DocCitation; i: number; at: [number, number] } => x.at !== null)
@@ -39,11 +46,11 @@ export function ExplanationWithCitations({ text, citations, hrefFor }: { text: s
   let cursor = 0;
   for (const p of placed) {
     if (p.at[1] < cursor) continue;
-    parts.push(text.slice(cursor, p.at[1]));
+    parts.push(cut(cursor, p.at[1]));
     parts.push(<CitationChip key={`c${p.i}`} c={p.c} href={hrefFor(docItemId(p.c.documentId, p.c.page, p.c.quote))} />);
     cursor = p.at[1];
   }
-  parts.push(text.slice(cursor));
+  parts.push(cut(cursor, text.length));
   return (
     <p className="text-base leading-relaxed text-kumo-default">
       {parts}
@@ -71,7 +78,7 @@ export function DriverReason({ state, side, moves, hrefFor, children }: { state:
               </Badge>
             )}
           </span>
-          {top && <p className="text-xl leading-snug font-semibold text-kumo-strong">{top}</p>}
+          {top && <p className="text-xl leading-snug text-kumo-strong"><Rich text={top} /></p>}
         </div>
       )}
       <Drawers>
@@ -89,7 +96,7 @@ export function DriverReason({ state, side, moves, hrefFor, children }: { state:
                   <span className="text-base font-medium text-kumo-strong">
                     {`${x.direction === "up" ? "Rise" : "Fall"} of ${signed(x.returnPct)} on ${shortDay(x.startDay)}`} <span className="text-kumo-subtle">›</span>
                   </span>
-                  {x.cause?.fact && <span className="text-sm text-kumo-default">{x.cause.fact}</span>}
+                  {x.cause?.fact && <span className="text-sm text-kumo-default"><Rich text={x.cause.fact} /></span>}
                 </Link>
               </li>
             ))}

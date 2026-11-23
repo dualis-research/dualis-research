@@ -1,5 +1,5 @@
 import { LightningIcon } from "@phosphor-icons/react/ssr";
-import { AnalysisBody, analysisData, analysisTitle, parseThesis } from "@/console/analysis";
+import { AnalysisBody, analysisData, OpenFullAnalysis, PanelHeading, parseThesis } from "@/console/analysis";
 import { InactiveTable, SignalTable } from "@/console/board";
 import { inactiveBoard, signalBoard } from "@/console/board-queries";
 import { BoardTabs } from "@/console/board-tabs";
@@ -50,7 +50,7 @@ export default async function SignalsPage({ searchParams }: { searchParams: Prom
       </TableSearch>
       </div>
       {analysis && (
-        <SlideOver title={analysisTitle(analysis.row)} subtitle={analysis.row.symbol} closeHref={base} size="lg">
+        <SlideOver title={<PanelHeading row={analysis.row} />} actions={<OpenFullAnalysis symbol={analysis.row.symbol} />} closeHref={base} size="lg">
           <AnalysisBody analysis={analysis} variant="panel" />
         </SlideOver>
       )}

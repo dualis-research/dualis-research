@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
+import { withBold } from "./emphasis";
 import { BENCHMARK } from "@/collectors/benchmark";
 import { getDb } from "@/db/client";
 import { liveBenchmark, livePositions, signalEvents } from "@/db/schema/analysis";
@@ -14,7 +15,7 @@ import type { Bar } from "./portfolio-series";
 export async function liveTestView() {
   const db = getDb();
   const [events, positions, [spx]] = await Promise.all([
-    db.select().from(signalEvents).orderBy(desc(signalEvents.at)),
+    db.select().from(signalEvents).orderBy(desc(signalEvents.at)).then(withBold),
     db.select().from(livePositions).orderBy(desc(livePositions.openedAt)),
     db.select().from(liveBenchmark).where(eq(liveBenchmark.symbol, BENCHMARK)),
   ]);
