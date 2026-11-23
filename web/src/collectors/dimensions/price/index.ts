@@ -9,14 +9,17 @@ import { priceConsensus } from "./consensus";
 import { PRICE_SOURCES } from "./sources";
 
 export const PRICE_DIMENSION = "price";
-import { BENCHMARK } from "../../benchmark";
+import { indexesFor } from "../../benchmark";
 const BATCH = 500;
 
 export const price: Dimension = {
   name: PRICE_DIMENSION,
-  description: "Daily price history (five years from Yahoo, one year from the others, every market), last close and day change; plus the S&P 500 (^GSPC).",
+  description: "Daily price history (five years from Yahoo, one year from the others, every market), last close and day change; plus the S&P 500 (^GSPC) and each stock's local market index.",
   sources: PRICE_SOURCES,
-  subjects: async (db) => [...(await activeSymbols(db)), BENCHMARK],
+  subjects: async (db) => {
+    const symbols = await activeSymbols(db);
+    return [...symbols, ...indexesFor(symbols)];
+  },
   promote: promotePrices,
 };
 

@@ -6,7 +6,8 @@ import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
-import { kpiSource, parseCandidates, promoteKpis, reactionAfter } from "./dimensions/kpi-drivers";
+import { betaBefore, kpiSource, marketView, parseCandidates, promoteKpis, reactionAfter } from "./dimensions/kpi-drivers";
+import { indexesFor, localIndex } from "./benchmark";
 import type { SourceContext } from "./types";
 
 /** KPI Drivers (Kevin + Thierry 2026-11-19): candidates from the reports, each tested on every release of 3 years. */
@@ -22,7 +23,7 @@ describe("kpi drivers", () => {
     ({ db, close } = await testDb());
     const bars = Array.from({ length: 300 }, (_, i) => ({ date: day(i), close: 100 + (i >= 101 && i < 120 ? 15 : 0) }));
     await db.insert(gold.priceBars).values(bars.map((b) => ({ symbol: SYMBOL, date: b.date, close: b.close, sources: ["naver"], alternatives: [] })) as never);
-    await db.insert(gold.priceBars).values(bars.map((b) => ({ symbol: "^GSPC", date: b.date, close: 5000, sources: ["yahoo"], alternatives: [] })) as never);
+    await db.insert(gold.priceBars).values(bars.map((b) => ({ symbol: "^KQ11", date: b.date, close: 5000, sources: ["yahoo"], alternatives: [] })) as never);
     await db.insert(gold.filings).values({ id: "00000000-0000-4000-8000-0000000000f1", symbol: SYMBOL, registry: "dart", filingKey: "f1", form: null, title: "매출액또는손익구조30%변경", filedAt: new Date(`${day(150)}T06:00:00Z`), url: null, language: "ko", sources: ["dart"] } as never);
     for (const [n, d, title] of [[1, 100, "분기보고서 (2026.03)"], [2, 200, "반기보고서 (2026.06)"]] as const) {
       await db.insert(documents).values({ id: DOC(n), symbol: SYMBOL, registry: "dart", kind: "report", form: null, title, filedAt: new Date(`${day(d)}T06:00:00Z`), language: "ko", viewUrl: null, format: "xml", pageCount: 1, sources: ["dart"] } as never);
@@ -30,6 +31,26 @@ describe("kpi drivers", () => {
     }
   });
   afterEach(async () => close());
+
+  it("measures each stock against its OWN market's index, the market's move times its beta taken out", () => {
+    expect(localIndex("1161.HK").name).toBe("Hang Seng");
+    expect(localIndex("101160.KQ").symbol).toBe("^KQ11");
+    expect(localIndex("4238.T").symbol).toBe("^N225");
+    expect(localIndex("SPCB").symbol).toBe("^GSPC");
+    expect(indexesFor(["1161.HK", "SPCB"])).toEqual(["^GSPC", "^HSI"]);
+    // A stock that moves exactly twice its index: beta 2, nothing left once the market is taken out.
+    const days = Array.from({ length: 300 }, (_, i) => new Date(Date.UTC(2025, 0, 1) + i * 86_400_000).toISOString().slice(0, 10));
+    let ix = 100, st = 100;
+    const index: { date: string; close: number }[] = [], stock: { date: string; close: number }[] = [];
+    days.forEach((date, i) => {
+      const r = Math.sin(i) / 100;
+      ix *= 1 + r; st *= 1 + 2 * r;
+      index.push({ date, close: ix }); stock.push({ date, close: st });
+    });
+    expect(betaBefore(stock, index, days[280])).toBeCloseTo(2, 1);
+    const v = marketView(stock, index)(days[280]);
+    expect(Math.abs(v.reaction!)).toBeLessThan(Math.abs(v.stock!));
+  });
 
   it("measures the 5 trading days after a release from the last close before it", () => {
     const bars = Array.from({ length: 10 }, (_, i) => ({ date: day(i), close: i < 3 ? 100 : 110 }));
