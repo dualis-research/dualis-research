@@ -10,7 +10,7 @@ import { ConfidenceBadge } from "./confidence-badge";
 import { kpiDriver, kpiDriverChart } from "./kpi-queries";
 import { KpiDriverChart } from "./kpi-driver-chart";
 import { KpiPeriodsChart } from "./driver-steps-charts";
-import { EventTitle } from "./drivers-found";
+import { CANDIDATE_KIND_WORD, EventTitle } from "./drivers-found";
 import { kpiChange, kpiValue, periodWords } from "@/collectors/dimensions/kpi-drivers/steps";
 import { MomentCard } from "./moment-card";
 import { decodeEntities } from "@/collectors/dimensions/content-posts/parse";
@@ -472,6 +472,10 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
   const quiet = k.rows.filter((r) => r.result === "nothing");
   const tally = (["confirms", "invalidates", "other-cause", "nothing"] as const).map((r) => ({ r, n: k.rows.filter((x) => x.result === r).length }));
   const yes = (b: boolean | null, words: string) => (b === null ? <span className="text-kumo-subtle">–</span> : b ? <span className="text-kumo-strong">{words}</span> : <span className="text-kumo-subtle">No</span>);
+  // A policy or industry candidate has no figure: its step 4 is the events that changed it (meeting 2026-11-23).
+  const isKpi = k.kind === "kpi";
+  const changed = k.rows.filter((r) => r.kpiMoved === true);
+  const readIn = k.foundIn.map((id) => k.rows.find((r) => r.eventId === id)).filter((r): r is (typeof k.rows)[number] => !!r);
   return {
     title: k.name,
     // A trusted one is a Price Driver, the rest stay candidates (Kevin 2026-11-23).
@@ -486,6 +490,43 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
         </div>
 
         <section className="flex flex-col gap-4">
+          <h3 className="text-base font-semibold text-kumo-strong">{`3 · Where it was read · ${readIn.length}`}</h3>
+          {readIn.length ? (
+            <ul className="flex flex-col">
+              {readIn.map((r) => (
+                <li key={r.eventId} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
+                  {day(r.day)} · {KIND[r.kind]}: <EventTitle symbol={symbol} e={r} /> · price {pct(r.reaction)} beyond the market
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-base text-kumo-subtle">{`${CANDIDATE_KIND_WORD[k.kind]} its business model makes obvious; no event that moved the stock names it.`}</p>
+          )}
+        </section>
+
+        {!isKpi && (
+          <section className="flex flex-col gap-4">
+            <h3 className="text-base font-semibold text-kumo-strong">{`4 · When ${k.name} changed · ${changed.length}`}</h3>
+            {changed.length ? (
+              <ul className="flex flex-col">
+                {[...changed].reverse().map((r) => (
+                  <li key={r.eventId} className="grid grid-cols-[7rem_5rem_1fr] gap-3 border-b border-kumo-hairline py-2 text-sm last:border-b-0">
+                    <span className="text-kumo-subtle">{day(r.day)}</span>
+                    <span className={r.changeUp ? "font-semibold text-dualis-long" : "font-semibold text-dualis-short"}>{r.changeUp ? "Better" : "Worse"}</span>
+                    <span className="text-kumo-default">
+                      {r.kpiWhy ? `${r.kpiWhy} · ` : ""}
+                      <EventTitle symbol={symbol} e={r} />
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-base text-kumo-subtle">No event of 3 years changed it.</p>
+            )}
+          </section>
+        )}
+
+        {isKpi && <section className="flex flex-col gap-4">
           <h3 className="text-base font-semibold text-kumo-strong">{`4 · When ${k.name} moved · ${significant.length}`}</h3>
           {k.periods.length && m ? (
             <KpiPeriodsChart periods={k.periods.map((p) => ({ date: p.period, period: periodWords(p.periodType, p.period), value: p.value, significant: p.significant }))} unit={m.unit} currency={m.currency} label={k.name} />
@@ -510,7 +551,7 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
               </Drawer>
             </Drawers>
           )}
-        </section>
+        </section>}
 
         <section className="flex flex-col gap-4">
           <h3 className="text-base font-semibold text-kumo-strong">5 · Event by event</h3>
@@ -526,7 +567,7 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
                       <span className="min-w-0">{`${c.number.get(r.eventId)}. ${day(r.day)} · ${KIND[r.kind]}: ${decodeEntities(r.title.replace(/\s+/g, " "))}`}</span>
                       <Badge variant={RESULT_BADGE[r.result]}>{RESULT_WORD[r.result]}</Badge>
                       <span className="col-span-2 flex flex-wrap gap-x-4 text-sm font-normal">
-                        <span>KPI moved? {yes(r.kpiMoved, p ? `${value(r.from)} → ${value(r.to)} (${kpiChange(r.change, p.changeKind)})` : "Yes")}</span>
+                        <span>{isKpi ? "KPI moved?" : "Changed?"} {yes(r.kpiMoved, p ? `${value(r.from)} → ${value(r.to)} (${kpiChange(r.change, p.changeKind)})` : r.changeUp === undefined || r.changeUp === null ? "Yes" : r.changeUp ? "Better" : "Worse")}</span>
                         <span>Price moved? {yes(r.priceMoved, `${pct(r.reaction)} beyond the market, ${r.z === null ? "" : `${Math.abs(r.z).toFixed(1)}x usual`}`)}</span>
                       </span>
                     </span>
@@ -590,6 +631,12 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
             </ul>
             <div className="flex min-w-60 flex-1 flex-col gap-2">
               <p className="text-base leading-snug text-kumo-strong"><Rich text={k.reason} /></p>
+              {k.tests && (
+                <ul className="flex flex-col gap-1 text-sm text-kumo-default">
+                  <li>{`A · ${k.tests.changes} big ${k.tests.changes === 1 ? "change" : "changes"} of it: the price followed ${k.tests.followed}, went against or ignored ${k.tests.against}.`}</li>
+                  <li>{`B · ${k.tests.moves} unusual price ${k.tests.moves === 1 ? "move" : "moves"}: it changed in ${k.tests.explained}.`}</li>
+                </ul>
+              )}
               {k.signal && k.signal !== "none" && k.signalWhy && <p className="text-sm text-kumo-default"><Rich text={k.signalWhy} /></p>}
             </div>
           </div>

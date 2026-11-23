@@ -782,7 +782,20 @@ export type KpiEventRow = {
   priceMoved: boolean;
   result: KpiResult;
   cite: DocCitation | null;
+  /** A policy or industry candidate (no figure): did it turn up (stronger, more favourable) at this event? Absent on KPI rows. */
+  changeUp?: boolean | null;
 };
+
+/** What a Price Driver Candidate is (Kevin + Thierry 2026-11-23): a company KPI, a policy, or a qualitative industry fact. */
+export const CANDIDATE_KINDS = ["kpi", "policy", "industry"] as const;
+export type CandidateKind = (typeof CANDIDATE_KINDS)[number];
+
+/**
+ * The two tests behind a candidate's confidence (meeting 2026-11-23, whiteboard): A) each big change of the candidate,
+ * did the price move the expected way in its 5 trading days? B) each unbiased price move of 3 years, did the candidate
+ * change in it? Counted by code from the rows and the step-2 moves; the verdict is the AI's.
+ */
+export type DriverTests = { changes: number; followed: number; against: number; moves: number; explained: number; explainedMoveIds: string[] };
 
 /**
  * KPI Drivers (Kevin + Thierry 2026-11-19; six steps DRIVERS-SIX-STEPS-1123): a driver is a fundamental KPI the market
@@ -797,6 +810,12 @@ export const kpiDrivers = gold.table(
     symbol: text("symbol").notNull(),
     rank: integer("rank").notNull(),
     name: text("name").notNull(),
+    /** kpi / policy / industry (2026-11-23). */
+    kind: text("kind").$type<CandidateKind>().notNull().default("kpi"),
+    /** The step-1 events, with an unbiased move, where the AI read this candidate. */
+    foundIn: jsonb("found_in").$type<string[]>().notNull().default([]),
+    /** Tests A and B, counted by code. */
+    tests: jsonb("tests").$type<DriverTests | null>(),
     /** Why this KPI moves this business, in one sentence. */
     why: text("why").notNull(),
     /** KPI up => price `up` or `down` (step 3). */
