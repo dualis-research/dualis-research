@@ -6,7 +6,8 @@ import type { ProfileField } from "./gold";
 /** A profile source = how to fetch one ticker + how to read profile fields out of its raw answer. */
 export type ProfileSource = Source & {
   /** Reads profile fields out of one raw answer about `subject`. */
-  extract: (payload: unknown, subject: string) => Partial<Record<ProfileField, unknown>>;
+  /** `localNames` (Wikidata labels in home-press languages) is a silver fact only: read by the news history, never a gold column. */
+  extract: (payload: unknown, subject: string) => Partial<Record<ProfileField | "localNames", unknown>>;
 };
 
 const num = (v: unknown) => (v === null || v === undefined || v === "" ? null : Number(v));
@@ -269,14 +270,21 @@ const wikidataCodes = (symbol: string) => {
   return [...new Set([base, base.replace(/^0+(?=\d)/, "")])];
 };
 
-const WIKIDATA_QUERY = (codes: string[]) => `SELECT ?item ?itemLabel ?exLabel ?web ?logo ?emp ?countryLabel ?indLabel ?inception ?article WHERE {
+const WIKIDATA_QUERY = (codes: string[]) => `SELECT ?item ?itemLabel ?exLabel ?web ?logo ?emp ?countryLabel ?indLabel ?inception ?article ?local WHERE {
   VALUES ?t { ${codes.map((c) => JSON.stringify(c)).join(" ")} }
   ?item p:P414 ?st . ?st pq:P249 ?t ; ps:P414 ?ex .
   OPTIONAL { ?item wdt:P856 ?web } OPTIONAL { ?item wdt:P154 ?logo } OPTIONAL { ?item wdt:P1128 ?emp }
   OPTIONAL { ?item wdt:P17 ?country } OPTIONAL { ?item wdt:P452 ?ind }
   OPTIONAL { ?article schema:about ?item ; schema:isPartOf <https://en.wikipedia.org/> }
+  OPTIONAL { ?item rdfs:label ?local . FILTER(LANG(?local) IN (${LOCAL_LABEL_LANGS.map((l) => JSON.stringify(l)).join(", ")})) }
   SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
 }`;
+
+/**
+ * The company's names in its home-press languages (NEWS-HISTORY-1123: 1161.HK is « 奧思集團 » in the Hong Kong press,
+ * a name Claude got wrong from memory): Wikidata labels, stored as the `localNames` fact {lang: [names]}.
+ */
+export const LOCAL_LABEL_LANGS = ["zh", "zh-hant", "zh-hk", "zh-tw", "ja", "ko"] as const;
 
 type WikidataBinding = Record<string, { value: string } | undefined>;
 
@@ -307,7 +315,15 @@ export const wikidata: ProfileSource = {
     return out;
   },
   extract(payload, symbol) {
-    const b = wikidataMatches(symbol, payload)[0];
+    const matches = wikidataMatches(symbol, payload);
+    const b = matches[0];
+    const localNames: Record<string, string[]> = {};
+    for (const m of matches) {
+      const l = m.local as { value: string; "xml:lang"?: string } | undefined;
+      if (m.item?.value !== b.item?.value || !l?.value || !l["xml:lang"]) continue;
+      const list = (localNames[l["xml:lang"]] ??= []);
+      if (!list.includes(l.value)) list.push(l.value);
+    }
     const logo = b.logo?.value;
     return {
       name: b.itemLabel?.value && !/^Q\d+$/.test(b.itemLabel.value) ? b.itemLabel.value : null,
@@ -316,6 +332,7 @@ export const wikidata: ProfileSource = {
       employees: headcount(b.emp?.value),
       country: b.countryLabel?.value,
       industry: capitalize(b.indLabel?.value),
+      ...(Object.keys(localNames).length ? { localNames } : {}),
     };
   },
 };
