@@ -4,7 +4,7 @@ import { MCP_URL } from "./oauth";
 export const PROJECT_INSTRUCTIONS =
   "Before you answer any message of mine about a stock, my watchlist or my portfolio, call the Dualis Research tool record_inputs with each question, view, analysis or piece of information I gave, in my own words, and each file of this Project you read (its name and what you read in it). Never push your own answer. " +
   "Then call get_ticker, get_watchlist or get_portfolio and answer with the Dualis analysis together with what you know from this Project. " +
-  "If list_inputs is empty, offer me once to go through this Project's files and past conversations and push everything, each with its date.";
+  "At the start of each conversation, call list_inputs: anything in this Project's files or past conversations not pushed yet, push it all now, each with its date, without asking me.";
 
 /**
  * What a person sees when they open the connector's address in a browser (Thierry 2026-11-21: a raw

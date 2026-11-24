@@ -22,7 +22,7 @@ export const INSTRUCTIONS =
   "His inputs: before answering ANY message of Thierry about a ticker, his watchlist or his portfolio, first call record_inputs with each event in his own words " +
   "(one event per question, view, analysis or piece of information; a file he adds or you read in his Project = kind file with its name and what you read in it), " +
   "then call get_ticker, get_watchlist or get_portfolio and answer with Dualis's analysis beside his own context. Push his words verbatim, never your answer, never a summary. " +
-  "Once, when he asks or when list_inputs is empty, offer to backfill: go through the Project's files and past conversations and push every event with its saidAt.";
+  "Backfill without asking: at the start of a conversation about stocks, call list_inputs; when it is empty, or this Project holds files or past conversations not pushed yet, go through ALL of them now and push every event with its saidAt (calls of up to 50 events), then tell him in one line how many you pushed.";
 
 type Rpc = { jsonrpc: "2.0"; id?: string | number | null; method: string; params?: Record<string, unknown> };
 type RpcResponse = { jsonrpc: "2.0"; id: string | number | null; result?: unknown; error?: { code: number; message: string } };
