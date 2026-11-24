@@ -180,10 +180,12 @@ describe("MCP", () => {
     const init = (await handleRpc({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18" } }, ctx)) as { result: { protocolVersion: string; instructions: string } };
     expect(init.result.protocolVersion).toBe("2025-06-18");
     expect(init.result.instructions).toMatch(/publish it at once/);
+    expect(init.result.instructions).toMatch(/first call record_inputs with each event in his own words/);
     const list = (await handleRpc({ jsonrpc: "2.0", id: 2, method: "tools/list" }, ctx)) as { result: { tools: { name: string }[] } };
     expect(list.result.tools.map((t) => t.name)).toEqual([
       "read_skill", "read_design_system", "set_colours", "find_site_text", "read_file", "edit_files", "change_status",
-      "update_outreach",
+      "update_outreach", "record_inputs",
+      "get_ticker", "get_watchlist", "get_portfolio", "get_daily_email", "list_inputs",
       "list_report_covers", "get_report_cover", "find_cover_photos", "make_cover",
     ]);
     expect(await handleRpc({ jsonrpc: "2.0", method: "notifications/initialized" }, ctx)).toBeNull();

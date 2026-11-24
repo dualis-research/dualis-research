@@ -6,6 +6,7 @@ import { goldNewsItems, goldNewsLinks } from "@/db/schema/news";
 import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import { astanaDay } from "@/growth/daily";
+import { viewsOf } from "@/inputs/notes";
 import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, PromoteResult, Source, SourceContext } from "../../types";
 import { renderEmail } from "./render";
@@ -54,7 +55,8 @@ export type Candidate = {
   /** Industry items: the industry terms that found it. Filings: the form. */
   note: string | null;
 };
-type Batch = { symbol: string; company: string; about: string | null; items: Candidate[]; told: string[] };
+/** `views` = the analyst's own newest views and analyses on the company (gold.thierry_inputs), so « why » can speak to his thesis; in no key. */
+type Batch = { symbol: string; company: string; about: string | null; items: Candidate[]; told: string[]; views?: string[] };
 const planned = new Map<string, Batch>();
 
 export type Verdict = { id: string; material: boolean; summary: string | null; why: string | null; importance: number | null };
@@ -66,6 +68,7 @@ const SYSTEM = [
   "Not material: macro news (interest rates, oil, currencies, inflation, war, stock indexes, trade policy in general), share price recaps or technical analysis, opinion pieces, previews, explainers and analyses that add no new fact, stock promotion and listicles, routine filings with no business content (a monthly share count return, a meeting notice), product promotions and sales events, articles about a different company with a similar name, old facts re-told, and any story already in the list or in the already-told list (one story = one item, whichever outlet).",
   `Keep at most ${MAX_PER_COMPANY} material items for this company: the ones that matter most to its business. Every other item is not material.`,
   "For each item answer: material (true or false); summary = the main idea in ONE very short plain sentence of at most 12 words, subject verb object, with the figure when the item gives one, its 2 or 3 key words (who, the figure, the fact) wrapped in **double asterisks**, e.g. \"**Winbond** wins **2027 auto memory orders** in Europe and Japan.\"; why = for a material item why it matters for this company's business in at most 15 words, else why it is left out in at most 10 words; importance = for a material item, 1 to 10, how much it can change what THIS company earns or is worth (10 = results far off expectations, a profit warning, a takeover; 1 = barely material), null for the others. The email is ordered by it, most important first.",
+  "When the analyst's own views on the company are given, the why may say how the fact bears on what he thinks; his views never make an item material by themselves.",
   "Plain English, never a dash, never a price target, upside or advice.",
   'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "...", "importance": 7}, ...]} with every id of the list exactly once.',
 ].join(" ");
@@ -79,7 +82,8 @@ export function judgePrompt(b: Batch): string {
     return `i${i + 1} | ${what} | ${isoDay(c.at)} | ${c.publisher ?? "unknown source"} | ${c.title}${summary}`;
   });
   const told = b.told.length ? ["", "Already told to the analyst in the last days (never pick the same story again):", ...b.told.map((t) => `- ${t}`)] : [];
-  return [`Company: ${b.company} (${b.symbol})`, b.about ? `What it does: ${b.about.slice(0, ABOUT_CHARS)}` : null, ...told, "", "Items:", ...lines].filter((l) => l !== null).join("\n");
+  const views = b.views?.length ? ["", "The analyst's own views on this company (his words, newest first):", ...b.views.map((v) => `- ${v}`)] : [];
+  return [`Company: ${b.company} (${b.symbol})`, b.about ? `What it does: ${b.about.slice(0, ABOUT_CHARS)}` : null, ...views, ...told, "", "Items:", ...lines].filter((l) => l !== null).join("\n");
 }
 
 /** Claude's answer -> one verdict per item, in the list's order. Throws on an id missing, extra or malformed. */
@@ -184,12 +188,13 @@ export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()
   }
   for (const f of filed) add(f.symbol, { kind: "filing", itemId: f.id, title: f.title, url: f.url, publisher: f.registry, at: f.filedAt, summary: null, note: f.form });
 
+  const views = await viewsOf(db, [...per.keys()]);
   const subjects: string[] = [];
   for (const t of tickers) {
     const items = (per.get(t.symbol) ?? []).sort((a, b) => (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0));
     for (let i = 0; i < items.length; i += BATCH) {
       const key = `${t.symbol}|${i / BATCH + 1}`;
-      planned.set(key, { symbol: t.symbol, company: t.name ?? t.symbol, about: t.about, items: items.slice(i, i + BATCH), told: told.get(t.symbol) ?? [] });
+      planned.set(key, { symbol: t.symbol, company: t.name ?? t.symbol, about: t.about, items: items.slice(i, i + BATCH), told: told.get(t.symbol) ?? [], views: views.get(t.symbol) ?? [] });
       subjects.push(key);
     }
   }

@@ -2,6 +2,7 @@
 
 import { Sidebar, useSidebar } from "@cloudflare/kumo";
 import {
+  ChatCircleTextIcon,
   FlaskIcon,
   GearSixIcon,
   LightningIcon,
@@ -20,6 +21,7 @@ const RESEARCH = [
   { href: "/portfolio", label: "Portfolio", icon: BriefcaseIcon },
   { href: "/tickers", label: "Tickers", icon: ListBulletsIcon },
   { href: "/live-test", label: "Live test", icon: FlaskIcon },
+  { href: "/inputs", label: "Thierry's inputs", icon: ChatCircleTextIcon },
 ] as const;
 
 const BUSINESS = [
