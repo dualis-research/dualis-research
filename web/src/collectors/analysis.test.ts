@@ -18,7 +18,7 @@ import { analysisPrompt, parseAnalysis } from "./dimensions/analysis/prompt";
 import { narrativeSinceDim, sinceChoices } from "./dimensions/narrative-since";
 import { batchSubject, evidenceDim, parseBatch, parseBatchSubject, parseEvidenceSubject, verdictRank } from "./dimensions/evidence";
 import { kpiReversalDim } from "./dimensions/kpi-reversal";
-import { collectPlan, dimensionsFor, stagesFor, STAGES, DIMENSIONS, ON_DEMAND_DIMENSIONS } from "./registry";
+import { dimensionsFor, stagesFor, STAGES, DIMENSIONS, ON_DEMAND_DIMENSIONS } from "./registry";
 import { driversAgainst, readingOf, signalFrom, signalsDim } from "./dimensions/signals";
 import { watchlist } from "./dimensions/watchlist";
 import { runDimension } from "./runner";
@@ -481,12 +481,8 @@ describe("speed (Kevin 2026-11-06)", () => {
     for (const gone of ["narrative-state", "driver-confidence"]) expect(DIMENSIONS.map((d) => d.name)).not.toContain(gone);
     expect(stagesFor(dimensionsFor("market-reaction,move-causes,kpi-drivers,analysis,kpi-reversal,signals")).map((s) => s.map((d) => d.name))).toEqual([["market-reaction"], ["move-causes"], ["kpi-drivers"], ["analysis"], ["kpi-reversal"], ["signals"]]);
   });
-  it("a merge collects only what its files can move", () => {
-    expect(collectPlan(["web/src/console/analysis.tsx", "site/src/app/page.tsx", "CLAUDE.md"])).toBeNull();
-    expect(collectPlan(["web/src/collectors/dimensions/valuation/prompt.ts", "web/src/collectors/dimensions/evidence/index.ts"])).toBe("from:valuation");
-    expect(collectPlan(["web/src/collectors/dimensions/cover-photos/index.ts"])).toBe("cover-photos");
-    expect(collectPlan(["web/src/collectors/runner.ts"])).toBe("core");
-    expect(collectPlan(["web/src/collectors/valuation.test.ts"])).toBeNull();
+  it("the Sandbox writers never run in the daily collect", () => {
+    for (const d of ["sandbox-posts", "sandbox-visuals", "sandbox-image-fix", "sandbox-review"]) expect(dimensionsFor("all").map((x) => x.name)).not.toContain(d);
   });
 });
 

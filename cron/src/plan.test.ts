@@ -6,10 +6,9 @@ import { dispatchBody, dispatchFor, OWN_WORKFLOW, SCHEDULE } from "./plan.ts";
 test("each slot starts collect.yml on main with its dimension, marked as a scheduled run", () => {
   assert.deepEqual(dispatchBody("0 2 * * *"), {
     ref: "main",
-    inputs: { dimension: "growth-outreach,substack-network,growth-brief,news,filings,daily-email", trigger: "schedule" },
+    inputs: { dimension: "all,daily-email", trigger: "schedule" },
   });
-  assert.equal(dispatchBody("15 5 * * *").inputs.dimension, "all");
-  assert.equal(dispatchBody("15 13 * * *").inputs.dimension, "core");
+  assert.equal(Object.keys(SCHEDULE).length, 1);
 });
 
 test("Cloudflare's free plan allows 5 cron triggers", () => {
@@ -26,9 +25,9 @@ test("wrangler.jsonc declares exactly the crons the schedule knows", () => {
   assert.deepEqual([...crons].sort(), [...Object.keys(SCHEDULE), ...Object.keys(OWN_WORKFLOW)].sort());
 });
 
-test("the hourly X slot starts x-publish.yml on main, every other slot collect.yml", () => {
+test("the X slot starts x-publish.yml, the alert slot news-alert.yml, the daily slot collect.yml", () => {
   assert.deepEqual(dispatchFor("10 3-16 * * *"), { workflow: "x-publish.yml", body: { ref: "main" } });
-  assert.deepEqual(dispatchFor("40 * * * *"), { workflow: "news-alert.yml", body: { ref: "main", inputs: { trigger: "schedule" } } });
-  assert.equal(dispatchFor("15 5 * * *").workflow, "collect.yml");
+  assert.deepEqual(dispatchFor("40 */6 * * *"), { workflow: "news-alert.yml", body: { ref: "main", inputs: { trigger: "schedule" } } });
+  assert.equal(dispatchFor("0 2 * * *").workflow, "collect.yml");
   assert.throws(() => dispatchFor("0 3 * * *"), /Unknown cron/);
 });

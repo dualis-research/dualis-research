@@ -1,8 +1,8 @@
 name: News alert
 
-# Every hour, day and night (URGENT-NEWS-1124): the watchlist's new news and filings are collected, each new item is
+# Every 6 hours (URGENT-NEWS-1124; hourly until Kevin 2026-11-24, to spare the Claude subscription): the watchlist's new news and filings are collected, each new item is
 # judged once (low / medium / high / critical) and a critical one is emailed at once to Kevin and Thierry (« 🚨 Urgent »).
-# Started at minute 40 by the dualis-cron Worker (`cron/`) with `trigger: schedule`. Its own concurrency group: never
+# Started at 00:40, 06:40, 12:40 and 18:40 UTC by the dualis-cron Worker (`cron/`) with `trigger: schedule`. Its own concurrency group: never
 # queued behind a long collect, and never two at once. It never sends the morning email (the 02:00 UTC collect does).
 on:
   workflow_dispatch:
