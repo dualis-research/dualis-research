@@ -1,14 +1,18 @@
 import { and, desc, eq, gt, gte, inArray, sql } from "drizzle-orm";
 import type { BronzeFetch } from "@/db/schema/bronze";
 import { dailyEmailSends, dailyItemVerdicts, type DigestItem, goldDailyDigests } from "@/db/schema/daily-email";
-import { companyProfiles, filings as goldFilings } from "@/db/schema/gold";
+import { filings as goldFilings } from "@/db/schema/gold";
 import { goldNewsItems, goldNewsLinks } from "@/db/schema/news";
-import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import { astanaDay } from "@/growth/daily";
 import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, PromoteResult, Source, SourceContext } from "../../types";
+import { ASSETS_URL, postMail, RECIPIENT_ROLES, recipientsFor } from "./mail";
 import { renderEmail } from "./render";
+import { sendUrgentAlerts } from "./urgent";
+import { watched } from "./watched";
+
+export { ASSETS_URL, MAILER_URL, type Recipient, RECIPIENT_ROLES, recipientsFor } from "./mail";
 
 
 /**
@@ -19,12 +23,11 @@ import { renderEmail } from "./render";
  * it matters for the business. The day's material items = gold.daily_digests (Astana day), sent as ONE email by the
  * `dualis-mail` Worker (Cloudflare Email Workers, $0, verified Email Routing destinations only). Nothing material = no email.
  * Runs only when named (the 02:00 UTC dualis-cron slot, right after `news` and `filings`): a merge never sends it.
+ * The judge is shared with the hourly `news-alert` (URGENT-NEWS-1124): whichever runs first judges an item, once; it
+ * also gives every item a level, and a `critical` one is emailed at once (`urgent.ts`).
  */
 export const DAILY_EMAIL_DIMENSION = "daily-email";
 export const JUDGE_SOURCE = "claude";
-/** Who gets the email (MAIL_RECIPIENTS secret: [{email, role}]): Kevin (test) AND Thierry (client), Kevin 2026-11-23. */
-export const RECIPIENT_ROLES: readonly string[] = ["test", "client"];
-export const MAILER_URL = "https://mailer.dualisresearch.com/send";
 /**
  * The last 24 hours only (Kevin 2026-11-23: « The news should be only last 24h »): news published (or first seen,
  * undated) in the last 24 h; filings filed in the last 48 h, since several registries date a filing by day only
@@ -34,11 +37,9 @@ export const NEWS_WINDOW_MS = 24 * 3_600_000;
 export const FILING_WINDOW_MS = 48 * 3_600_000;
 /** What was told in the last days, handed to the judge so a story is never told twice. */
 const TOLD_MS = 3 * 86_400_000;
-/** Where the email's pictures live: the mailer Worker serves the white knot and the kind icons (Gmail did not render a cid image). */
-export const ASSETS_URL = "https://mailer.dualisresearch.com";
 /** Items per Claude call: a ticker's whole day in one call, so one story told by ten outlets is told once. */
 export const BATCH = 150;
-/** At most this many items per company in one email (in the prompt: the model keeps the most important ones). */
+/** At most this many items per company in one email: asked of the judge per batch, and applied again when the digest is built (the judge runs every hour, so a day holds several batches). */
 export const MAX_PER_COMPANY = 3;
 const ABOUT_CHARS = 400;
 
@@ -57,7 +58,9 @@ export type Candidate = {
 type Batch = { symbol: string; company: string; about: string | null; items: Candidate[]; told: string[] };
 const planned = new Map<string, Batch>();
 
-export type Verdict = { id: string; material: boolean; summary: string | null; why: string | null; importance: number | null };
+export const LEVELS = ["low", "medium", "high", "critical"] as const;
+export type Level = (typeof LEVELS)[number];
+export type Verdict = { id: string; material: boolean; summary: string | null; why: string | null; importance: number | null; level: Level };
 
 const SYSTEM = [
   "You screen the latest news and filings for an equity analyst who follows one listed company among 50. He reads your picks in a two-minute morning email, so the bar is high: pick an item only when it tells him a NEW FACT that can change what this business earns or is worth.",
@@ -66,8 +69,9 @@ const SYSTEM = [
   "Not material: macro news (interest rates, oil, currencies, inflation, war, stock indexes, trade policy in general), share price recaps or technical analysis, opinion pieces, previews, explainers and analyses that add no new fact, stock promotion and listicles, routine filings with no business content (a monthly share count return, a meeting notice), product promotions and sales events, articles about a different company with a similar name, old facts re-told, and any story already in the list or in the already-told list (one story = one item, whichever outlet).",
   `Keep at most ${MAX_PER_COMPANY} material items for this company: the ones that matter most to its business. Every other item is not material.`,
   "For each item answer: material (true or false); summary = the main idea in ONE very short plain sentence of at most 12 words, subject verb object, with the figure when the item gives one, its 2 or 3 key words (who, the figure, the fact) wrapped in **double asterisks**, e.g. \"**Winbond** wins **2027 auto memory orders** in Europe and Japan.\"; why = for a material item why it matters for this company's business in at most 15 words, else why it is left out in at most 10 words; importance = for a material item, 1 to 10, how much it can change what THIS company earns or is worth (10 = results far off expectations, a profit warning, a takeover; 1 = barely material), null for the others. The email is ordered by it, most important first.",
+  "Also give EVERY item a level: low, medium, high or critical (an item that is not material is low). critical = a new fact that can move this company's value sharply right now or break the investment case: a profit warning or results far off expectations, a guidance cut or raise, a takeover offer, merger, major acquisition or disposal, the CEO or CFO leaving, fraud, an investigation or the auditor resigning, a trading halt or suspension, a default, bankruptcy or restructuring, a contract or key customer won or lost that is large relative to its size, a regulatory decision that hits its main business. Critical is rare: the analyst gets an urgent email at once for each. Macro is never critical; an industry item is critical only when it directly changes this company's own business (its main customer goes bankrupt). high, medium, low = decreasing weight for its business.",
   "Plain English, never a dash, never a price target, upside or advice.",
-  'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "...", "importance": 7}, ...]} with every id of the list exactly once.',
+  'Answer with JSON only, no prose, no code fence: {"items": [{"id": "i1", "material": true, "summary": "...", "why": "...", "importance": 7, "level": "high"}, ...]} with every id of the list exactly once.',
 ].join(" ");
 
 const isoDay = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "undated");
@@ -95,7 +99,10 @@ export function parseVerdicts(text: string, count: number): Verdict[] {
     if (raw.material && !(typeof importance === "number" && Number.isInteger(importance) && importance >= 1 && importance <= 10)) {
       throw new Error(`daily-email verdict ${raw.id} is material with no importance 1-10: ${JSON.stringify(raw.importance)}`);
     }
-    byId.set(raw.id, { id: raw.id, material: raw.material, summary, why: typeof raw.why === "string" && raw.why.trim() ? raw.why.trim() : null, importance: importance as number | null });
+    if (!LEVELS.includes(raw.level as Level)) throw new Error(`daily-email verdict ${raw.id} has no level (low, medium, high, critical): ${JSON.stringify(raw.level)}`);
+    // An item that is not material is low by definition, whatever the model wrote.
+    const level = raw.material ? (raw.level as Level) : "low";
+    byId.set(raw.id, { id: raw.id, material: raw.material, summary, why: typeof raw.why === "string" && raw.why.trim() ? raw.why.trim() : null, importance: importance as number | null, level });
   }
   const out = Array.from({ length: count }, (_, i) => byId.get(`i${i + 1}`));
   const missing = out.map((v, i) => (v ? null : `i${i + 1}`)).filter(Boolean);
@@ -131,16 +138,6 @@ export const dailyEmailDim: Dimension = {
   subjects: planBatches,
   promote: promoteDailyEmail,
 };
-
-/** Active tickers with their company name and what they do; portfolio first, then by symbol. */
-async function watched(db: Db) {
-  const rows = await db
-    .select({ symbol: silver.tickers.symbol, inPortfolio: silver.tickers.inPortfolio, name: companyProfiles.name, about: companyProfiles.description, logo: companyProfiles.logoUrl })
-    .from(silver.tickers)
-    .leftJoin(companyProfiles, eq(companyProfiles.symbol, silver.tickers.symbol))
-    .where(sql`${silver.tickers.active}`);
-  return rows.sort((a, b) => Number(b.inPortfolio) - Number(a.inPortfolio) || a.symbol.localeCompare(b.symbol));
-}
 
 /** Every recent item of every watched ticker never judged yet, in batches of BATCH per ticker. */
 export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()): Promise<string[]> {
@@ -198,16 +195,6 @@ export async function planBatches(db: Db, _ctx?: SourceContext, now = new Date()
 
 type JudgePayload = { batch: Omit<Batch, "items" | "told"> & { items: (Omit<Candidate, "at"> & { at: string | null })[] }; model: string; verdicts: Verdict[] };
 
-export type Recipient = { email: string; role: string };
-/** The MAIL_RECIPIENTS secret: [{email, role}]. Every role asked must have a recipient (never a silent half-send). */
-export function recipientsFor(env: Record<string, string | undefined>, roles: readonly string[]): string[] {
-  const raw = env.MAIL_RECIPIENTS;
-  if (!raw) throw new Error("MAIL_RECIPIENTS is not set");
-  const list = JSON.parse(raw) as Recipient[];
-  for (const role of roles) if (!list.some((r) => r.role === role)) throw new Error(`no ${role} recipient in MAIL_RECIPIENTS`);
-  return [...new Set(list.filter((r) => roles.includes(r.role)).map((r) => r.email))];
-}
-
 /**
  * Most important first (Kevin 2026-11-23): inside a company its items by the judge's importance; companies by their
  * most important item, then the sum of their items, then the watchlist order (portfolio first). A verdict made before
@@ -230,8 +217,19 @@ export function orderDigest<T extends { symbol: string; importance?: number | nu
   );
 }
 
-/** bronze answers -> silver verdicts (once per item) -> gold digest of the Astana day -> the email (once a day). */
-export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: SourceContext, now = new Date()): Promise<PromoteResult> {
+/** The `max` most important items of each company (the judge's importance, then the newest), the order kept. */
+export function capPerCompany<T extends { symbol: string; importance?: number | null; at?: Date | null }>(items: readonly T[], max = MAX_PER_COMPANY): T[] {
+  const kept = new Set<T>();
+  const per = new Map<string, T[]>();
+  for (const i of items) per.set(i.symbol, [...(per.get(i.symbol) ?? []), i]);
+  for (const list of per.values()) {
+    for (const i of [...list].sort((a, b) => (b.importance ?? 0) - (a.importance ?? 0) || (b.at?.getTime() ?? 0) - (a.at?.getTime() ?? 0)).slice(0, max)) kept.add(i);
+  }
+  return items.filter((i) => kept.has(i));
+}
+
+/** bronze answers -> silver verdicts, once per (ticker, item): a second answer on the same item is dropped. */
+export async function writeVerdicts(db: Db, fetches: BronzeFetch[]): Promise<number> {
   let written = 0;
   for (const f of fetches.filter((r) => !r.error && r.source === JUDGE_SOURCE)) {
     const p = f.payload as JudgePayload;
@@ -247,11 +245,20 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
       summary: p.verdicts[i].summary,
       why: p.verdicts[i].why,
       importance: p.verdicts[i].importance ?? null,
+      level: p.verdicts[i].level,
       model: p.model,
       bronzeId: f.id,
     }));
     if (rows.length) written += (await db.insert(dailyItemVerdicts).values(rows).onConflictDoNothing().returning({ s: dailyItemVerdicts.symbol })).length;
   }
+  return written;
+}
+
+/** bronze answers -> silver verdicts -> an urgent email per critical item -> gold digest of the Astana day -> the morning email (once a day). */
+export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: SourceContext, now = new Date()): Promise<PromoteResult> {
+  const written = await writeVerdicts(db, fetches);
+  // A failed urgent send never holds the morning email back: it is thrown once the digest is out.
+  const urgent = await sendUrgentAlerts(db, ctx, now).then(() => null, (err: Error) => err);
 
   const day = astanaDay(now);
   const tickers = await watched(db);
@@ -270,7 +277,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const fresh = (v: { kind: string; at: Date | null; createdAt: Date }) =>
     (v.at ?? v.createdAt).getTime() >= now.getTime() - (v.kind === "filing" ? FILING_WINDOW_MS : NEWS_WINDOW_MS);
   const material = (await db.select().from(dailyItemVerdicts).where(and(eq(dailyItemVerdicts.material, true), gt(dailyItemVerdicts.createdAt, cutoff)))).filter((v) => rank.has(v.symbol) && fresh(v));
-  const items: DigestItem[] = orderDigest(material, rank)
+  const items: DigestItem[] = orderDigest(capPerCompany(material), rank)
     .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "", importance: v.importance }));
   const email = items.length ? renderEmail(day, items, ASSETS_URL) : null;
   await db
@@ -279,6 +286,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
     .onConflictDoUpdate({ target: goldDailyDigests.day, set: { items, subject: email?.subject ?? null, text: email?.text ?? null, html: email?.html ?? null, builtAt: now } });
 
   await sendDigest(db, day, items, email, ctx);
+  if (urgent) throw urgent;
   return { silverRowsBySource: { [JUDGE_SOURCE]: written } };
 }
 
@@ -309,24 +317,7 @@ async function sendDigest(db: Db, day: string, items: DigestItem[], email: Retur
   }
   const roles = mode === "test" ? ["test"] : [...RECIPIENT_ROLES];
   const to = recipientsFor(ctx.env, roles);
-  if (!ctx.env.MAIL_TOKEN) throw new Error("MAIL_TOKEN is not set");
-  let status: string;
-  let response: unknown;
-  try {
-    const res = await ctx.fetch(MAILER_URL, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${ctx.env.MAIL_TOKEN}`, "Content-Type": "application/json", "User-Agent": "dualis-collector" },
-      body: JSON.stringify({ to, ...email }),
-    });
-    const body = await res.text();
-    response = { status: res.status, body: (() => { try { return JSON.parse(body); } catch { return body.slice(0, 2000); } })() };
-    const results = (response as { body: { results?: { status: string }[] } }).body?.results ?? [];
-    const sent = results.filter((r) => r.status === "sent").length;
-    status = res.ok && sent === to.length ? "sent" : sent > 0 ? "partial" : "failed";
-  } catch (err) {
-    status = "failed";
-    response = { error: (err as Error).message };
-  }
+  const { status, response } = await postMail(ctx, to, email);
   const recorded = mode === "test" ? (status === "sent" ? "test" : `test-${status}`) : status;
   await db.insert(dailyEmailSends).values({
     day,
@@ -336,7 +327,7 @@ async function sendDigest(db: Db, day: string, items: DigestItem[], email: Retur
     subject: email.subject,
     items: items.map((i) => `${i.symbol}|${i.kind}|${i.title}`),
     status,
-    response: response as object,
+    response,
   });
   await db.update(goldDailyDigests).set({ sendStatus: recorded, sentAt: new Date() }).where(eq(goldDailyDigests.day, day));
   console.log(`[daily-email] ${day}: ${mode} email to ${to.length} recipient(s): ${status}`);

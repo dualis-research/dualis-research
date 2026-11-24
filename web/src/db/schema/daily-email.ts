@@ -1,4 +1,5 @@
-import { boolean, index, integer, jsonb, primaryKey, text, timestamp, uuid } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import { boolean, index, integer, jsonb, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { gold } from "./gold";
 import { silver } from "./silver";
 
@@ -29,6 +30,8 @@ export const dailyItemVerdicts = silver.table(
     why: text("why"),
     /** Material items: 1-10, how much it can change what the company earns or is worth (the email's order). */
     importance: integer("importance"),
+    /** `low` / `medium` / `high` / `critical` (URGENT-NEWS-1124): only `critical` starts an urgent email. Null = judged before levels existed. */
+    level: text("level"),
     model: text("model").notNull(),
     bronzeId: uuid("bronze_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -54,6 +57,33 @@ export const dailyEmailSends = silver.table("daily_email_sends", {
   response: jsonb("response").notNull(),
   sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Urgent emails (URGENT-NEWS-1124): one row per critical item the mailer was asked about. A `full` row is claimed
+ * (`sending`) BEFORE the mail leaves and the unique index below lets one run only hold an item, so an item is alerted
+ * at most once ever, whatever runs overlap; a `failed` send frees it for the next hourly run. `test` rows (Kevin only)
+ * never count as the item's alert.
+ */
+export const urgentAlertSends = silver.table(
+  "urgent_alert_sends",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    symbol: text("symbol").notNull(),
+    kind: text("kind").notNull(),
+    itemId: text("item_id").notNull(),
+    /** `full` (every recipient role) or `test` (Kevin only). */
+    mode: text("mode").notNull(),
+    roles: text("roles").array().notNull(),
+    recipients: text("recipients").array().notNull(),
+    subject: text("subject").notNull(),
+    /** `sending` (claimed), `sent` (every recipient), `partial`, `failed`. */
+    status: text("status").notNull(),
+    /** The mailer's raw answer, or the error. */
+    response: jsonb("response").notNull(),
+    sentAt: timestamp("sent_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("urgent_alert_sends_once").on(t.symbol, t.kind, t.itemId).where(sql`mode = 'full' and status <> 'failed'`)],
+);
 
 export type DigestItem = {
   symbol: string;
