@@ -25,7 +25,7 @@ Breaking-news alarm on Substack. Viral Notes rarely convert to paid readers, so 
 - **Title**: `BREAKING:` + the shock number (« BREAKING: CareCloud Quadrupled Shareholder Profit »). Subtitle: one line on the title's one measure with the same number as the cover note; no share price, no second measure, never « Here is what happened. », never our signal rating.
 - **Structure** (`##` headings): `## The number`, `## Why the market missed it`, `## What happens next`, `## The risk`.
 - **Visual**: see Image below.
-- Do: bold the one figure of each section; the whole Article argues the line-2 figure, other measures only in The risk; plain words (never « enterprise value », « operating profit before depreciation », « price to earnings », « dilutes », « cash from operations »: say « cash the business made » or « spent »).
+- Do: bold the one figure of each section; with a frame drawn, every section uses only figures the picture prints (no share price, guided range or other measure); the whole Article argues the line-2 figure, other measures only in The risk; plain words (never « enterprise value », « operating profit before depreciation », « price to earnings », « dilutes », « cash from operations »: say « cash the business made » or « spent »).
 - Don't: drop the risk section; fake scarcity.
 
 ## Image
