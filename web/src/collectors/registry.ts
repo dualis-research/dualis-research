@@ -46,6 +46,7 @@ import { watchlist } from "./dimensions/watchlist";
 import { xPublish } from "./dimensions/x-publish";
 import { emphasisDim } from "./dimensions/emphasis";
 import { dailyEmailDim } from "./dimensions/daily-email";
+import { newsAlertDim } from "./dimensions/news-alert";
 import type { Dimension } from "./types";
 
 /**
@@ -73,9 +74,11 @@ import type { Dimension } from "./types";
  * News history (NEWS-HISTORY-1123) after news, in its own stage: 3 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
  * Daily email (DAILY-EMAIL-1123) runs only when named, last: the 02:00 UTC slot names it right after news and filings
  * (every watchlist ticker); it judges each new item once and sends the morning email. A merge never runs it.
+ * News alert (URGENT-NEWS-1124) runs only when named too (news-alert.yml, every hour after news and filings): the same
+ * judge and verdicts, an urgent email per critical item, never the morning digest.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, kpiDriversDim, analysis, kpiReversalDim, narrativeSinceDim, evidenceDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, kpiDriversDim, analysis, kpiReversalDim, narrativeSinceDim, evidenceDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts): the daily schedule only. A deploy's
@@ -89,7 +92,7 @@ export const GROWTH_DIMENSIONS: readonly string[] = ["content-accounts", "conten
  * consensus, financials, peers) sit in different stages so they never hit its rate limit together.
  */
 /** Dimensions that run only when named: never part of `all`, `core` or `growth`. */
-export const ON_DEMAND_DIMENSIONS: readonly string[] = ["x-publish", "daily-email"];
+export const ON_DEMAND_DIMENSIONS: readonly string[] = ["x-publish", "daily-email", "news-alert"];
 
 export const STAGES: readonly (readonly string[])[] = [
   ["watchlist"],
