@@ -1,9 +1,10 @@
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import Link from "@/console/link";
 import { DIMENSIONS } from "@/collectors/registry";
+import { INPUTS_DIMENSION, INPUTS_SOURCE } from "@/inputs/record";
 import { duration, relativeTime, utc } from "@/console/format";
 import { ConsensusCoverageCard } from "@/console/consensus";
-import { getRun, listConsensusCoverage, listRuns, sourcesOfRuns } from "@/console/queries";
+import { getRun, latestRunOf, listConsensusCoverage, listRuns, sourcesOfRuns } from "@/console/queries";
 import { SlideOver } from "@/console/slide-over";
 import { Card, PageHeader, RunStatus } from "@/console/ui";
 import { TableSearch } from "@/console/table-search";
@@ -12,9 +13,13 @@ export const metadata = { title: "Data" };
 
 export default async function DataPage({ searchParams }: { searchParams: Promise<{ run?: string }> }) {
   const { run: runId } = await searchParams;
-  const [runs, selected, consensusCoverage] = await Promise.all([listRuns(50), runId ? getRun(runId) : null, listConsensusCoverage()]);
-  const sources = await sourcesOfRuns(runs.map((r) => r.id));
-  const latest = DIMENSIONS.map((d) => ({ dimension: d, run: runs.find((r) => r.dimension === d.name) ?? null }));
+  const [runs, selected, consensusCoverage, lastPush] = await Promise.all([listRuns(50), runId ? getRun(runId) : null, listConsensusCoverage(), latestRunOf(INPUTS_DIMENSION)]);
+  const sources = await sourcesOfRuns([...runs.map((r) => r.id), ...(lastPush ? [lastPush.id] : [])]);
+  // Thierry's inputs are pushed by his Claude (connector record_inputs), not collected: no collector dimension, same card.
+  const latest = [
+    ...DIMENSIONS.map((d) => ({ dimension: { name: d.name, sources: d.sources.map((s) => ({ name: s.name })) }, run: runs.find((r) => r.dimension === d.name) ?? null })),
+    { dimension: { name: INPUTS_DIMENSION, sources: [{ name: INPUTS_SOURCE }] }, run: lastPush },
+  ];
 
   return (
     <>

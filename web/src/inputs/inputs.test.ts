@@ -10,8 +10,7 @@ import { judgePrompt } from "@/collectors/dimensions/daily-email";
 import { watchlist } from "@/collectors/dimensions/watchlist";
 import { runDimension } from "@/collectors/runner";
 import { callConsoleTool } from "@/connector/console-tools";
-import { PROJECT_INSTRUCTIONS } from "@/connector/help-page";
-import { handleRpc } from "@/connector/mcp";
+import { handleRpc, INSTRUCTIONS } from "@/connector/mcp";
 import { callResearchTool } from "@/connector/research-tools";
 import { getInput, inputCounts, listInputs } from "@/console/queries";
 import { evidence, fairValues, kpiDrivers, narratives, signals } from "@/db/schema/analysis";
@@ -205,7 +204,7 @@ describe("read tools", () => {
     const r = (await handleRpc({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "list_inputs", arguments: { limit: 1 } } }, { author: "Kevin", userId: "user_1" })) as { result: { isError: boolean; content: { text: string }[] } };
     expect(r.result.isError).toBe(false);
     expect(r.result.content[0].text).toMatch(/^1 input, newest first/);
-    expect(PROJECT_INSTRUCTIONS).toMatch(/record_inputs/);
+    expect(INSTRUCTIONS).toMatch(/ALWAYS and on your own[\s\S]*record_inputs/);
   });
 });
 

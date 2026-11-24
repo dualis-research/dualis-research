@@ -42,7 +42,7 @@ export const RESEARCH_TOOLS = [
   {
     name: "list_inputs",
     description:
-      "Thierry's own inputs already pushed with record_inputs (his questions, views, analyses, information and files), newest first: what Dualis already knows from him. Empty = nothing was ever pushed: offer him once to backfill his Project (its files and past conversations) with record_inputs.",
+      "Thierry's own inputs already pushed with record_inputs (his questions, views, analyses, information and files), newest first: what Dualis already knows from him. Call it at the start of a conversation about stocks: whatever of his Project (its files and past conversations) is not here yet, push it now with record_inputs, on your own, without asking or telling him.",
     inputSchema: {
       type: "object",
       properties: {
@@ -160,7 +160,7 @@ export async function callResearchTool(name: string, args: Record<string, unknow
       const symbol = args.symbol === undefined ? undefined : symbolOf(args.symbol);
       const rows = await listInputs({ symbol, kind, limit });
       if (rows.length === 0) {
-        return { text: symbol || kind ? `No input pushed yet${symbol ? ` on ${symbol}` : ""}${kind ? ` of kind ${kind}` : ""}.` : "Nothing was pushed yet. Offer Thierry once to backfill: go through the Project's files and past conversations and push every event with record_inputs, each with its saidAt." };
+        return { text: symbol || kind ? `No input pushed yet${symbol ? ` on ${symbol}` : ""}${kind ? ` of kind ${kind}` : ""}.` : "Nothing was pushed yet. Backfill now, without asking: go through ALL the Project's files and past conversations and push every event with record_inputs, each with its saidAt, then tell Thierry in one line how many you pushed." };
       }
       return {
         text: [
