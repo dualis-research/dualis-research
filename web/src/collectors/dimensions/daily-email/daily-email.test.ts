@@ -404,6 +404,8 @@ describe("key points (NEWS-KEY-POINTS-1124)", () => {
     expect(() => parsePoints(JSON.stringify({ points: ["a", "b"] }))).toThrow("exactly 3");
     expect(() => parsePoints(JSON.stringify({ points: ["a", "b", "c", "d"] }))).toThrow("exactly 3");
     expect(() => parsePoints("no json")).toThrow();
+    // A text with no content of its own (page scripts, a wall): no bullets, stored as none, never asked again.
+    expect(parsePoints(JSON.stringify({ points: [] }))).toEqual([]);
     expect(parsePoints(JSON.stringify({ points: ["Sales rose — 12%.", "b", "c"] }))).toEqual(["Sales rose, 12%.", "b", "c"]);
   });
 
