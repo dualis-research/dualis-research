@@ -4,6 +4,7 @@ import type { Db } from "@/db/types";
 import { astanaDay } from "@/growth/daily";
 import type { SourceContext } from "../../types";
 import { ASSETS_URL, postMail, RECIPIENT_ROLES, recipientsFor } from "./mail";
+import { withDriverImpacts } from "./drivers";
 import { renderUrgent } from "./render";
 import { watched } from "./watched";
 
@@ -11,7 +12,7 @@ import { watched } from "./watched";
  * The urgent email (URGENT-NEWS-1124): a news item or filing the judge read as `critical` goes out at once, one email
  * per item, to Kevin and Thierry. Called after every judging run (the hourly `news-alert`, and the 02:00 `daily-email`
  * for what it judged itself). An item is alerted at most once ever (the claim in silver.urgent_alert_sends).
- * Only the scheduled run sends; `URGENT_ALERT_MODE=test` = ONE sample to Kevin only, subject « [TEST] … », any time,
+ * Only the scheduled run sends; `URGENT_ALERT_MODE=test` = ONE sample to Kevin only, subject « [TEST] 🚨 Critical: … », any time,
  * never counted as the item's alert: the freshest critical item, else the most important material one of the last
  * 48 h, else the latest verdict, so the format can be reviewed on a quiet day.
  */
@@ -39,6 +40,7 @@ export async function sendUrgentAlerts(db: Db, ctx: SourceContext, now = new Dat
     company: of.get(v.symbol)?.name ?? v.symbol,
     logo: of.get(v.symbol)?.logo ?? null,
     kind: v.kind as DigestItem["kind"],
+    itemId: v.itemId,
     title: v.title,
     url: v.url,
     publisher: v.publisher,
@@ -46,7 +48,10 @@ export async function sendUrgentAlerts(db: Db, ctx: SourceContext, now = new Dat
     summary: v.summary ?? v.title,
     why: v.why ?? "",
     importance: v.importance,
+    keyPoints: v.keyPoints ?? null,
   });
+  // Key points come with the verdict; the Price Drivers it bears on are read from the evidence judge's verdicts.
+  const full = async (v: VerdictRow) => (await withDriverImpacts(db, [item(v)]))[0];
   const day = astanaDay(now);
 
   if (test) {
@@ -60,7 +65,7 @@ export async function sendUrgentAlerts(db: Db, ctx: SourceContext, now = new Dat
       console.log("[urgent] test: no verdict stored yet, nothing to show");
       return;
     }
-    const email = renderUrgent(day, item(pick), ASSETS_URL, { test: true });
+    const email = renderUrgent(day, await full(pick), ASSETS_URL, { test: true });
     const roles = ["test"];
     const to = recipientsFor(ctx.env, roles);
     const { status, response } = await postMail(ctx, to, email);
@@ -79,7 +84,7 @@ export async function sendUrgentAlerts(db: Db, ctx: SourceContext, now = new Dat
   const to = recipientsFor(ctx.env, roles);
   const failed: string[] = [];
   for (const v of critical) {
-    const email = renderUrgent(day, item(v), ASSETS_URL);
+    const email = renderUrgent(day, await full(v), ASSETS_URL);
     // The claim: one run only gets the row (unique while not failed), so two overlapping runs never both send.
     const [claim] = await db
       .insert(urgentAlertSends)

@@ -32,11 +32,42 @@ export const dailyItemVerdicts = silver.table(
     importance: integer("importance"),
     /** `low` / `medium` / `high` / `critical` (URGENT-NEWS-1124): only `critical` starts an urgent email. Null = judged before levels existed. */
     level: text("level"),
+    /** Material items: exactly 3 bullets on what the article or filing says, written from its TEXT (silver.daily_item_texts), once; null = no text read (yet). */
+    keyPoints: text("key_points").array(),
     model: text("model").notNull(),
     bronzeId: uuid("bronze_id").notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [primaryKey({ columns: [t.symbol, t.kind, t.itemId] }), index("daily_item_verdicts_created").on(t.createdAt)],
+);
+
+/**
+ * The text of a material item (NEWS-KEY-POINTS-1124): the publisher's article (a Google News link decoded first) or the
+ * filing's pages, what the key points are written from. One row per (kind, item) whatever ticker it came under; never
+ * fetched again once `ok`, at most 3 failed tries (`attempts`, one per bronze row in `bronze_ids`).
+ */
+export const dailyItemTexts = silver.table(
+  "daily_item_texts",
+  {
+    /** `news` (company and industry news share it) or `filing`. */
+    kind: text("kind").notNull(),
+    itemId: text("item_id").notNull(),
+    /** `ok` or `failed`. */
+    status: text("status").notNull(),
+    /** The article's or filing's text, at most 12,000 characters (ok only). */
+    text: text("text"),
+    /** Where it was read (the publisher's URL once a Google News link is decoded). */
+    url: text("url"),
+    /** `article`, `pdf`, `html`, `stored-document`. */
+    method: text("method"),
+    /** Why the last try failed. */
+    why: text("why"),
+    attempts: integer("attempts").notNull(),
+    bronzeIds: uuid("bronze_ids").array().notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.kind, t.itemId] })],
 );
 
 /** Every email the mailer was asked to send: which day, who, what it answered. Append-only. */
@@ -91,6 +122,8 @@ export type DigestItem = {
   /** The company's logo URL (gold.company_profiles), shown beside its name. */
   logo?: string | null;
   kind: "news" | "industry" | "filing";
+  /** gold.news_items or gold.filings id (absent on digests built before 2026-11-24). */
+  itemId?: string;
   title: string;
   url: string | null;
   publisher: string | null;
@@ -98,6 +131,21 @@ export type DigestItem = {
   summary: string;
   why: string;
   importance?: number | null;
+  /** 3 bullets on what the item says, written from its text; absent when no text could be read. */
+  keyPoints?: string[] | null;
+  /** The ticker's trusted Price Drivers the item bears on (evidence verdicts), strongest first; absent = no drivers or noise. */
+  drivers?: DriverImpact[] | null;
+};
+
+/** One Price Driver an item bears on: its name and confidence, and the evidence judge's tag against the narrative. */
+export type DriverImpact = {
+  name: string;
+  /** The Price Driver's confidence (gold.kpi_drivers.level). */
+  confidence: "strong" | "weak";
+  effect: "reversal" | "continuation";
+  strength: "strong" | "weak";
+  /** In the console's words: « strong inflection », « weak crack », « continuation ». */
+  words: string;
 };
 
 /** One row per Astana day the digest was built: what the email holds (empty = nothing material, no email). */

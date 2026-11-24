@@ -334,3 +334,51 @@ export async function rebuildEvidence(db: Db): Promise<number> {
   });
   return rows.length;
 }
+
+/** An item as the evidence judge keys it (company and industry news are both `news`). */
+export type EvidenceItemRef = { kind: "news" | "filing"; id: string };
+export type StoredVerdict = { tag: string; pricedIn: PricedIn | null };
+
+/**
+ * The evidence judge's stored verdicts on these items against the ticker's CURRENT Narrative Drivers (its own subjects
+ * and keys), and the items still missing one: read by the morning and urgent emails (NEWS-KEY-POINTS-1124), which never
+ * judge themselves; they ask the missing ones through `evidenceSource` (`batchSubjects`). Null = no narrative or no drivers.
+ */
+export async function storedVerdicts(
+  db: Db,
+  symbol: string,
+  items: EvidenceItemRef[],
+): Promise<{ side: ThesisSide; drivers: (typeof narrativeDrivers.$inferSelect)[]; verdicts: Map<string, Map<number, StoredVerdict>>; pending: EvidenceItemRef[] } | null> {
+  const [n] = (await db.select({ side: narratives.side, version: narratives.version, asOf: narratives.asOf }).from(narratives).where(eq(narratives.symbol, symbol))).sort((a, b) => b.asOf.getTime() - a.asOf.getTime());
+  if (!n) return null;
+  const drivers = (await db.select().from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.side, n.side)))).sort((a, b) => a.rank - b.rank);
+  if (drivers.length === 0) return null;
+  const subjects = items.flatMap((it) => drivers.map((d) => evidenceSubject(symbol, it.kind, it.id, n.side, d.rank)));
+  const rows = subjects.length
+    ? await db
+        .select({ subjectId: silver.judgments.subjectId, questionKey: silver.judgments.questionKey, verdict: silver.judgments.verdict, raw: silver.judgments.raw })
+        .from(silver.judgments)
+        .where(and(eq(silver.judgments.subjectKind, EVIDENCE_SUBJECT_KIND), inArray(silver.judgments.subjectId, subjects)))
+    : [];
+  const byKey = new Map(rows.map((r) => [`${r.subjectId}\u0000${r.questionKey}`, r]));
+  const verdicts = new Map<string, Map<number, StoredVerdict>>();
+  const pending: EvidenceItemRef[] = [];
+  for (const it of items) {
+    const mine = new Map<number, StoredVerdict>();
+    for (const d of drivers) {
+      const subjectId = evidenceSubject(symbol, it.kind, it.id, n.side, d.rank);
+      const j = verdictKeys(n.version, d).map((k) => byKey.get(`${subjectId}\u0000${k}`)).find((x) => x !== undefined);
+      if (j) mine.set(d.rank, { tag: j.verdict, pricedIn: (j.raw as { pricedIn?: PricedIn | null } | null)?.pricedIn ?? null });
+    }
+    verdicts.set(`${it.kind}:${it.id}`, mine);
+    if (mine.size < drivers.length) pending.push(it);
+  }
+  return { side: n.side, drivers, verdicts, pending };
+}
+
+/** The evidence judge's batch subjects for these items (BATCH_ITEMS a call), as its own `pendingSubjects` cuts them. */
+export const batchSubjects = (symbol: string, side: ThesisSide, items: EvidenceItemRef[]): string[] => {
+  const out: string[] = [];
+  for (let i = 0; i < items.length; i += BATCH_ITEMS) out.push(batchSubject(symbol, side, items.slice(i, i + BATCH_ITEMS)));
+  return out;
+};
