@@ -470,6 +470,13 @@
       "when": 1795514258416,
       "tag": "0066_daily-verdict-level",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1795515387177,
+      "tag": "0067_thierry-inputs",
+      "breakpoints": true
     }
   ]
 }

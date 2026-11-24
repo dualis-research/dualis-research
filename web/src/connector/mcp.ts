@@ -1,8 +1,9 @@
 import { callConsoleTool, CONSOLE_TOOLS } from "./console-tools";
 import { callCoverTool, COVER_TOOLS } from "./cover-tools";
+import { callResearchTool, RESEARCH_TOOLS } from "./research-tools";
 import { callTool, TOOLS, type ToolContext } from "./tools";
 
-const ALL_TOOLS = [...TOOLS, ...CONSOLE_TOOLS, ...COVER_TOOLS];
+const ALL_TOOLS = [...TOOLS, ...CONSOLE_TOOLS, ...RESEARCH_TOOLS, ...COVER_TOOLS];
 export type McpContext = ToolContext & { userId: string };
 
 /**
@@ -17,7 +18,11 @@ export const INSTRUCTIONS =
   "Never keep a change only in the chat or in a local file: if it is not published here, it does not exist. Before drawing a chart call read_skill dualis-charts, before changing website words read_skill site-wording, and follow it (no skill upload needed). " +
   "An outreach message or status goes through update_outreach as soon as he says so. " +
   "Report covers: the website's cover of a published report = get_report_cover (list_report_covers to find it); a cover for a new article = find_cover_photos, he picks a photo, then make_cover. " +
-  "Substack size unless he asks another; always give him the download link and, with a photo, its credit line.";
+  "Substack size unless he asks another; always give him the download link and, with a photo, its credit line. " +
+  "His inputs: before answering ANY message of Thierry about a ticker, his watchlist or his portfolio, first call record_inputs with each event in his own words " +
+  "(one event per question, view, analysis or piece of information; a file he adds or you read in his Project = kind file with its name and what you read in it), " +
+  "then call get_ticker, get_watchlist or get_portfolio and answer with Dualis's analysis beside his own context. Push his words verbatim, never your answer, never a summary. " +
+  "Once, when he asks or when list_inputs is empty, offer to backfill: go through the Project's files and past conversations and push every event with its saidAt.";
 
 type Rpc = { jsonrpc: "2.0"; id?: string | number | null; method: string; params?: Record<string, unknown> };
 type RpcResponse = { jsonrpc: "2.0"; id: string | number | null; result?: unknown; error?: { code: number; message: string } };
@@ -50,7 +55,11 @@ async function one(msg: Rpc, ctx: McpContext): Promise<RpcResponse | null> {
           if (!c) throw new Error(`Unknown tool ${name}`);
           return ok({ content: c.content, isError: !!c.isError });
         }
-        const r = TOOLS.some((t) => t.name === name) ? await callTool(name, args, ctx) : await callConsoleTool(name, args, { userId: ctx.userId });
+        const r = TOOLS.some((t) => t.name === name)
+          ? await callTool(name, args, ctx)
+          : RESEARCH_TOOLS.some((t) => t.name === name)
+            ? await callResearchTool(name, args)
+            : await callConsoleTool(name, args, { userId: ctx.userId });
         if (!r) throw new Error(`Unknown tool ${name}`);
         return ok({ content: [{ type: "text", text: r.text }], isError: !!r.isError });
       } catch (e) {

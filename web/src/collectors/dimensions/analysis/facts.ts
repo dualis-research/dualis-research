@@ -6,6 +6,7 @@ import { revenueStreams, valuations, type GoldRevenueStream } from "@/db/schema/
 import { valuationReports } from "@/db/schema/valuation";
 import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
+import { notesText } from "@/inputs/notes";
 import { itemsOf } from "../evidence/items";
 import { seriesCatalog, seriesMenu, type StoredSeries } from "./series";
 import { fairValueHistoryLine } from "./thesis";
@@ -251,6 +252,10 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
   // itself); the ANALYSIS_VERSION bump that brought them rewrites every thesis once.
   const moves = await movesText(db, symbol);
 
+  // What Thierry himself asked, thinks and knows (pushed by his Claude, gold.thierry_inputs): out of the hash like the
+  // news, an input the model weighs at the next rewrite, never a reason to rewrite and never an override.
+  const notes = await notesText(db, symbol);
+
   const q = quote ? { close: quote.close, date: quote.date, currency: quote.currency, stamp: quoteStamp(quote) } : null;
   const fvLine = fairValue
     ? `Fair value (weighted from several valuation methods): ${fmt(fairValue.value, "per-share")} ${fairValue.currency ?? ""}${fairValue.low !== null && fairValue.high !== null ? `, range ${fmt(fairValue.low, "per-share")} to ${fmt(fairValue.high, "per-share")}` : ""}; ${fairValue.method ?? ""}.${vreport ? ` ${vreport.summary}` : ""}`
@@ -262,7 +267,7 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
   const bucket = q && q.close > 0 ? Math.round(Math.log(q.close) / Math.log(1.15)) : "none";
   return {
     symbol,
-    text: `${priceLine}\n${fvLine}\n${fvHistory}\n${stable}${leverage ? `\n\n${leverage}` : ""}${moves.text ? `\n\n${moves.text}` : ""}\n\n${news}`,
+    text: `${priceLine}\n${fvLine}\n${fvHistory}\n${stable}${leverage ? `\n\n${leverage}` : ""}${moves.text ? `\n\n${moves.text}` : ""}\n\n${news}${notes ? `\n\n${notes}` : ""}`,
     hash: fnv(`${stable}\nprice-bucket:${bucket}\nfair-value-bucket:${fvBucket}`),
     catalog,
     quote: q,

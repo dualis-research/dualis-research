@@ -20,3 +20,4 @@ export * as x from "./x";
 export * as documents from "./documents";
 export * as emphasis from "./emphasis";
 export * as dailyEmail from "./daily-email";
+export * as thierryInputs from "./thierry-inputs";

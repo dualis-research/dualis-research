@@ -1,9 +1,11 @@
 import { cache } from "react";
-import { asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import { companyProfiles, quotes, tickers } from "@/db/schema/gold";
 import { consensus, consensusCoverage } from "@/db/schema/consensus";
+import { goldDailyDigests } from "@/db/schema/daily-email";
 import { runSources, runs } from "@/db/schema/ops";
+import { goldThierryInputs, type InputKind } from "@/db/schema/thierry-inputs";
 
 /** Console reads: gold for business data, ops for run health. Never bronze or silver. */
 
@@ -90,6 +92,34 @@ export async function latestRunPerDimension() {
 export async function lastRun() {
   const [run] = await getDb().select().from(runs).orderBy(desc(runs.startedAt)).limit(1);
   return run ?? null;
+}
+
+/** Thierry's inputs pushed by his Claude (gold.thierry_inputs), newest first. */
+export async function listInputs({ symbol, kind, limit = 300 }: { symbol?: string; kind?: InputKind; limit?: number } = {}) {
+  return getDb()
+    .select()
+    .from(goldThierryInputs)
+    .where(and(symbol ? eq(goldThierryInputs.symbol, symbol) : undefined, kind ? eq(goldThierryInputs.kind, kind) : undefined))
+    .orderBy(desc(goldThierryInputs.saidAt), asc(goldThierryInputs.id))
+    .limit(limit);
+}
+
+export async function getInput(id: string) {
+  const [row] = await getDb().select().from(goldThierryInputs).where(eq(goldThierryInputs.id, id));
+  return row ?? null;
+}
+
+/** How many inputs of each kind (the tabs of the Inputs page). */
+export async function inputCounts(): Promise<Record<string, number>> {
+  const rows = await getDb().select({ kind: goldThierryInputs.kind, n: count() }).from(goldThierryInputs).groupBy(goldThierryInputs.kind);
+  return Object.fromEntries(rows.map((r) => [r.kind, r.n]));
+}
+
+/** The morning email's digest of one Astana day (YYYY-MM-DD), or the latest one built. */
+export async function dailyDigest(day?: string) {
+  const db = getDb();
+  const [row] = day ? await db.select().from(goldDailyDigests).where(eq(goldDailyDigests.day, day)) : await db.select().from(goldDailyDigests).orderBy(desc(goldDailyDigests.day)).limit(1);
+  return row ?? null;
 }
 
 /** The analysis read contract (Signal, Fair Value, Narrative, Drivers, Exhibits, Evidence, Report): `analysis-queries.ts`. */
