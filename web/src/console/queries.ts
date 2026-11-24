@@ -68,6 +68,12 @@ export async function listRuns(limit = 50) {
   return getDb().select().from(runs).orderBy(desc(runs.startedAt)).limit(limit);
 }
 
+/** The latest run of one dimension, however old (the Data page's card for a dimension that is not in the last 50 runs). */
+export async function latestRunOf(dimension: string) {
+  const [row] = await getDb().select().from(runs).where(eq(runs.dimension, dimension)).orderBy(desc(runs.startedAt)).limit(1);
+  return row ?? null;
+}
+
 export async function sourcesOfRuns(runIds: string[]) {
   if (runIds.length === 0) return [];
   return getDb().select().from(runSources).where(inArray(runSources.runId, runIds)).orderBy(asc(runSources.source));
