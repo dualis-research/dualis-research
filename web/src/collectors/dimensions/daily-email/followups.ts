@@ -2,6 +2,7 @@ import { and, eq, gte, inArray, isNotNull } from "drizzle-orm";
 import { fetches } from "@/db/schema/bronze";
 import { dailyItemTexts, dailyItemVerdicts } from "@/db/schema/daily-email";
 import type { Db } from "@/db/types";
+import { isUsageLimit } from "@/llm/usage-limit";
 import { batchSubjects, storedVerdicts } from "../evidence";
 import { MAX_TEXT_TRIES, textKind, textSubject } from "./article";
 import { evidenceRef } from "./drivers";
@@ -38,11 +39,12 @@ export async function followUps(db: Db, now = new Date()): Promise<string[]> {
   }
   if (wantPoints.length) {
     const failed = await db
-      .select({ subject: fetches.subject })
+      .select({ subject: fetches.subject, error: fetches.error })
       .from(fetches)
       .where(and(inArray(fetches.dimension, EMAIL_DIMENSIONS), eq(fetches.source, KEY_POINTS_SOURCE), inArray(fetches.subject, wantPoints), isNotNull(fetches.error)));
     const tries = new Map<string, number>();
-    for (const f of failed) tries.set(f.subject, (tries.get(f.subject) ?? 0) + 1);
+    // A call the usage limit refused never reached the model: it is not a try.
+    for (const f of failed) if (!isUsageLimit(f.error)) tries.set(f.subject, (tries.get(f.subject) ?? 0) + 1);
     out.push(...wantPoints.filter((s) => (tries.get(s) ?? 0) < MAX_POINTS_TRIES));
   }
   for (const symbol of [...new Set(material.map((m) => m.symbol))]) {
