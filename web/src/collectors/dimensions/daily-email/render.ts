@@ -1,4 +1,4 @@
-import type { DigestItem } from "@/db/schema/daily-email";
+import type { DigestItem, DriverImpact } from "@/db/schema/daily-email";
 
 /**
  * The email's words and look (Kevin 2026-11-23 on the first test: a thin header and footer in the brand with the logo,
@@ -83,11 +83,32 @@ const companyRow = (g: { symbol: string; company: string; logo: string | null },
       : ""
   }<td style="vertical-align:middle;font-size:16px;font-weight:600;color:${INK};overflow-wrap:anywhere;word-break:break-word;">${esc(g.company)} <span style="color:${MUTED};font-weight:400;font-size:13px;">${esc(g.symbol)}</span></td></tr></table>`;
 
-/** One item: its kind icon, the bold sentence, then only the arrow linking the source (Kevin 2026-11-23: no outlet name, « on s'en fout »). */
+/** « Net income (strong): strong inflection · Store count (weak): continuation » (the console's words, `tagWord`). */
+export const driversText = (drivers: readonly DriverImpact[]) => drivers.map((d) => `${d.name} (${d.confidence}): ${d.words}`).join(" · ");
+
+/**
+ * Under the sentence (NEWS-KEY-POINTS-1124): « Key points », the 3 bullets read from the item's text (none when no text
+ * was read), then the Price Drivers it bears on. Inline, never a `<details>` (Gmail strips it); same phone rules.
+ */
+const detailHtml = (i: DigestItem) => {
+  const points = i.keyPoints?.length
+    ? `<div style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:${MUTED};margin:6px 0 2px;">KEY POINTS</div>
+<ul style="margin:0;padding:0 0 0 18px;font-size:13px;line-height:1.45;color:${INK};">${i.keyPoints.map((p) => `<li style="margin:0 0 2px;overflow-wrap:anywhere;word-break:break-word;">${esc(plain(p))}</li>`).join("")}</ul>`
+    : "";
+  const drivers = i.drivers?.length
+    ? `<div style="font-size:12px;line-height:1.45;color:${MUTED};margin:6px 0 0;overflow-wrap:anywhere;word-break:break-word;"><span style="color:${INK};font-weight:600;">Price Drivers:</span> ${i.drivers
+        .map((d) => `<span style="white-space:normal;">${esc(d.name)} (${esc(d.confidence)}): <strong style="color:${d.effect === "reversal" ? INDIGO : MUTED};">${esc(d.words)}</strong></span>`)
+        .join(" &middot; ")}</div>`
+    : "";
+  return points + drivers;
+};
+const detailText = (i: DigestItem) => [...(i.keyPoints ?? []).map((p) => `  • ${plain(p)}`), ...(i.drivers?.length ? [`  Price Drivers: ${driversText(i.drivers)}`] : [])];
+
+/** One item: its kind icon, the bold sentence, then only the arrow linking the source (Kevin 2026-11-23: no outlet name, « on s'en fout »), then its key points and Price Drivers. */
 const itemRow = (assets: string, i: DigestItem) => `<tr><td style="width:26px;vertical-align:top;padding:3px 0 8px;">${icon(assets, i.kind, 17)}</td>
-<td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 8px;overflow-wrap:anywhere;word-break:break-word;">${boldHtml(i.summary)}${
+<td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 10px;overflow-wrap:anywhere;word-break:break-word;">${boldHtml(i.summary)}${
   i.url ? `&nbsp;<a href="${esc(i.url)}" title="Open the source" style="color:${INDIGO};text-decoration:none;font-weight:600;">&#8599;</a>` : ""
-}</td></tr>`;
+}${detailHtml(i)}</td></tr>`;
 
 export function renderEmail(day: string, items: readonly DigestItem[], assets: string): { subject: string; text: string; html: string } {
   const groups = byCompany(items);
@@ -98,7 +119,7 @@ export function renderEmail(day: string, items: readonly DigestItem[], assets: s
   const text = [
     `Dualis Research. Your watchlist, ${shortDay(day)}`,
     "",
-    ...groups.flatMap((g) => [`${g.company} (${g.symbol})`, ...g.items.map((i) => `${KIND_LABEL[i.kind]}: ${plain(i.summary)}${i.url ? ` ${i.url}` : ""}`), ""]),
+    ...groups.flatMap((g) => [`${g.company} (${g.symbol})`, ...g.items.flatMap((i) => [`${KIND_LABEL[i.kind]}: ${plain(i.summary)}${i.url ? ` ${i.url}` : ""}`, ...detailText(i)]), ""]),
     FOOTER,
   ].join("\n");
 
@@ -119,6 +140,8 @@ ${g.items.map((i) => itemRow(assets, i)).join("\n")}
 }
 
 export const URGENT_FOOTER = "Not investment advice. An alert on public news and filings on your watchlist, for information only.";
+/** The urgent email's word (Kevin 2026-11-24: « Critical », never « Urgent »), in the subject and the red label. */
+export const CRITICAL = "Critical";
 /** A subject line stays readable in an inbox list: cut at a word, never mid-word. */
 export const SUBJECT_MAX = 110;
 const trimSubject = (s: string) => (s.length <= SUBJECT_MAX ? s : `${s.slice(0, SUBJECT_MAX - 1).replace(/\s+\S*$/, "")}…`);
@@ -127,24 +150,26 @@ const RED_TINT = "#FDECEA";
 
 /**
  * The urgent email (URGENT-NEWS-1124): ONE critical item, in the morning email's look (same bands, logo, kind icon,
- * bold sentence, arrow to the source) under a small red « URGENT » label, then why it matters. The siren sits in the
+ * bold sentence, arrow to the source, key points, Price Drivers) under a small red « CRITICAL » label (Kevin 2026-11-24:
+ * never « Urgent »), then why it matters. The siren sits in the
  * subject only (Gmail did not show emojis in the body). Same phone rules: nothing wider than a 280 px screen.
  */
 export function renderUrgent(day: string, item: DigestItem, assets: string, opts: { test?: boolean } = {}): { subject: string; text: string; html: string } {
-  const subject = `${opts.test ? "[TEST] " : ""}${trimSubject(`🚨 Urgent: ${item.company} (${item.symbol}): ${plain(item.summary)}`)}`;
+  const subject = `${opts.test ? "[TEST] " : ""}${trimSubject(`🚨 ${CRITICAL}: ${item.company} (${item.symbol}): ${plain(item.summary)}`)}`;
   const why = plain(item.why).trim();
   const text = [
-    "Dualis Research. Urgent",
+    `Dualis Research. ${CRITICAL}`,
     "",
     `${item.company} (${item.symbol})`,
     `${KIND_LABEL[item.kind]}: ${plain(item.summary)}${item.url ? ` ${item.url}` : ""}`,
+    ...detailText(item),
     ...(why ? [`Why it matters: ${why}`] : []),
     "",
     URGENT_FOOTER,
   ].join("\n");
 
   const body = `<tr><td style="padding:22px 16px 14px;font-family:${FONT};color:${INK};overflow-wrap:anywhere;word-break:break-word;">
-<span style="display:inline-block;background:${RED_TINT};color:${RED};font-size:11px;font-weight:700;letter-spacing:0.08em;line-height:1;padding:6px 9px;border-radius:4px;">URGENT</span>
+<span style="display:inline-block;background:${RED_TINT};color:${RED};font-size:11px;font-weight:700;letter-spacing:0.08em;line-height:1;padding:6px 9px;border-radius:4px;">${CRITICAL.toUpperCase()}</span>
 ${companyRow({ symbol: item.symbol, company: item.company, logo: item.logo ?? null }, "16px 0 12px")}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
 ${itemRow(assets, item)}

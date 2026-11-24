@@ -8,6 +8,10 @@ import { astanaDay } from "@/growth/daily";
 import { viewsOf } from "@/inputs/notes";
 import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, PromoteResult, Source, SourceContext } from "../../types";
+import { ARTICLE_SOURCE, articleSource, writeTexts } from "./article";
+import { EVIDENCE_JUDGE_SOURCE, evidenceJudge, withDriverImpacts } from "./drivers";
+import { followUps } from "./followups";
+import { KEY_POINTS_SOURCE, keyPointsSource, writeKeyPoints } from "./key-points";
 import { ASSETS_URL, postMail, RECIPIENT_ROLES, recipientsFor } from "./mail";
 import { renderEmail } from "./render";
 import { sendUrgentAlerts } from "./urgent";
@@ -118,7 +122,8 @@ export function parseVerdicts(text: string, count: number): Verdict[] {
 export const judgeSource: Source = {
   name: JUDGE_SOURCE,
   requiredEnv: [],
-  covers: () => true,
+  // Judge batches only (`<symbol>|<n>`): the text, key-points and evidence steps have their own sources.
+  covers: (subject) => /^\d+$/.test(subject.split("|")[1] ?? ""),
   concurrency: 3,
   async fetch(subject, ctx) {
     const b = planned.get(subject);
@@ -135,11 +140,31 @@ export const judgeSource: Source = {
   },
 };
 
+/**
+ * The steps every email dimension runs (NEWS-KEY-POINTS-1124), round by round in one run: judge the new items, then for
+ * the material ones read their text (`article`), write 3 key points from it (`key-points`), and ask the evidence judge
+ * the Price Drivers it bears on (`evidence`) when it has not; each round's answers reach silver before the next is planned.
+ */
+export const EMAIL_SOURCES = [judgeSource, articleSource, keyPointsSource, evidenceJudge];
+export const emailSubjects = async (db: Db, ctx?: SourceContext): Promise<string[]> => [...(await planBatches(db, ctx)), ...(await followUps(db))];
+export async function emailExpand(db: Db, soFar: BronzeFetch[]): Promise<string[]> {
+  await writeSilver(db, soFar);
+  return followUps(db);
+}
+/** Judge verdicts, texts and key points of this run's bronze -> silver (each idempotent: safe mid-run and at promotion). */
+export async function writeSilver(db: Db, fetches: BronzeFetch[]): Promise<Record<string, number>> {
+  const verdicts = await writeVerdicts(db, fetches);
+  const texts = await writeTexts(db, fetches);
+  const points = await writeKeyPoints(db, fetches);
+  return { [JUDGE_SOURCE]: verdicts, [ARTICLE_SOURCE]: texts, [KEY_POINTS_SOURCE]: points, [EVIDENCE_JUDGE_SOURCE]: fetches.filter((f) => f.source === EVIDENCE_JUDGE_SOURCE && !f.error).length };
+}
+
 export const dailyEmailDim: Dimension = {
   name: DAILY_EMAIL_DIMENSION,
-  description: "Morning email: every new material news item, industry item and filing of the watchlist, judged once by Claude.",
-  sources: [judgeSource],
-  subjects: planBatches,
+  description: "Morning email: every new material news item, industry item and filing of the watchlist, judged once by Claude, with 3 key points read from its text and the Price Drivers it bears on.",
+  sources: EMAIL_SOURCES,
+  subjects: emailSubjects,
+  expand: emailExpand,
   promote: promoteDailyEmail,
 };
 
@@ -261,7 +286,7 @@ export async function writeVerdicts(db: Db, fetches: BronzeFetch[]): Promise<num
 
 /** bronze answers -> silver verdicts -> an urgent email per critical item -> gold digest of the Astana day -> the morning email (once a day). */
 export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: SourceContext, now = new Date()): Promise<PromoteResult> {
-  const written = await writeVerdicts(db, fetches);
+  const written = await writeSilver(db, fetches);
   // A failed urgent send never holds the morning email back: it is thrown once the digest is out.
   const urgent = await sendUrgentAlerts(db, ctx, now).then(() => null, (err: Error) => err);
 
@@ -282,8 +307,10 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const fresh = (v: { kind: string; at: Date | null; createdAt: Date }) =>
     (v.at ?? v.createdAt).getTime() >= now.getTime() - (v.kind === "filing" ? FILING_WINDOW_MS : NEWS_WINDOW_MS);
   const material = (await db.select().from(dailyItemVerdicts).where(and(eq(dailyItemVerdicts.material, true), gt(dailyItemVerdicts.createdAt, cutoff)))).filter((v) => rank.has(v.symbol) && fresh(v));
-  const items: DigestItem[] = orderDigest(capPerCompany(material), rank)
-    .map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "", importance: v.importance }));
+  const items: DigestItem[] = await withDriverImpacts(
+    db,
+    orderDigest(capPerCompany(material), rank).map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, itemId: v.itemId, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "", importance: v.importance, keyPoints: v.keyPoints ?? null })),
+  );
   const email = items.length ? renderEmail(day, items, ASSETS_URL) : null;
   await db
     .insert(goldDailyDigests)
@@ -292,7 +319,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
 
   await sendDigest(db, day, items, email, ctx);
   if (urgent) throw urgent;
-  return { silverRowsBySource: { [JUDGE_SOURCE]: written } };
+  return { silverRowsBySource: written };
 }
 
 /**

@@ -1,0 +1,55 @@
+import { and, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { fetches } from "@/db/schema/bronze";
+import { dailyItemTexts, dailyItemVerdicts } from "@/db/schema/daily-email";
+import type { Db } from "@/db/types";
+import { batchSubjects, storedVerdicts } from "../evidence";
+import { MAX_TEXT_TRIES, textKind, textSubject } from "./article";
+import { evidenceRef } from "./drivers";
+import { KEY_POINTS_SOURCE, pointsSubject } from "./key-points";
+
+/** How far back a material item still gets its text, key points and driver verdicts (the digest's widest window). */
+export const FOLLOW_WINDOW_MS = 48 * 3_600_000;
+/** A key-points answer that fails this many times is given up (the item shows its sentence only). */
+export const MAX_POINTS_TRIES = 3;
+/** The dimensions that share these steps (bronze is read across both). */
+export const EMAIL_DIMENSIONS = ["daily-email", "news-alert"];
+
+/**
+ * What the email dimensions still owe the recent MATERIAL items, after the judge (NEWS-KEY-POINTS-1124): its text
+ * (`<symbol>|text|...`, fewer than MAX_TEXT_TRIES failures), then its 3 key points once the text is read
+ * (`<symbol>|points|...`), and the evidence judge's verdict against each Narrative Driver of its ticker when one is
+ * missing (`<symbol>|batch|...`). Read from silver at every round, so one run chains judge -> text -> points.
+ */
+export async function followUps(db: Db, now = new Date()): Promise<string[]> {
+  const material = await db
+    .select({ symbol: dailyItemVerdicts.symbol, kind: dailyItemVerdicts.kind, itemId: dailyItemVerdicts.itemId, keyPoints: dailyItemVerdicts.keyPoints })
+    .from(dailyItemVerdicts)
+    .where(and(eq(dailyItemVerdicts.material, true), gte(dailyItemVerdicts.createdAt, new Date(now.getTime() - FOLLOW_WINDOW_MS))));
+  if (material.length === 0) return [];
+  const texts = new Map(
+    (await db.select({ kind: dailyItemTexts.kind, itemId: dailyItemTexts.itemId, status: dailyItemTexts.status, attempts: dailyItemTexts.attempts }).from(dailyItemTexts).where(inArray(dailyItemTexts.itemId, [...new Set(material.map((m) => m.itemId))]))).map((t) => [`${t.kind}|${t.itemId}`, t]),
+  );
+  const out: string[] = [];
+  const wantPoints: string[] = [];
+  for (const m of material) {
+    const t = texts.get(`${textKind(m.kind)}|${m.itemId}`);
+    if (!t || (t.status !== "ok" && t.attempts < MAX_TEXT_TRIES)) out.push(textSubject(m.symbol, m.kind, m.itemId));
+    else if (t.status === "ok" && !m.keyPoints) wantPoints.push(pointsSubject(m.symbol, m.kind, m.itemId));
+  }
+  if (wantPoints.length) {
+    const failed = await db
+      .select({ subject: fetches.subject })
+      .from(fetches)
+      .where(and(inArray(fetches.dimension, EMAIL_DIMENSIONS), eq(fetches.source, KEY_POINTS_SOURCE), inArray(fetches.subject, wantPoints), isNotNull(fetches.error)));
+    const tries = new Map<string, number>();
+    for (const f of failed) tries.set(f.subject, (tries.get(f.subject) ?? 0) + 1);
+    out.push(...wantPoints.filter((s) => (tries.get(s) ?? 0) < MAX_POINTS_TRIES));
+  }
+  for (const symbol of [...new Set(material.map((m) => m.symbol))]) {
+    const refs = material.filter((m) => m.symbol === symbol).map((m) => evidenceRef(m.kind, m.itemId));
+    const unique = [...new Map(refs.map((r) => [`${r.kind}:${r.id}`, r])).values()];
+    const stored = await storedVerdicts(db, symbol, unique);
+    if (stored?.pending.length) out.push(...batchSubjects(symbol, stored.side, stored.pending));
+  }
+  return out;
+}
