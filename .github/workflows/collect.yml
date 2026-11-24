@@ -1,7 +1,7 @@
 name: Collect
 
-# Every 4 hours (Kevin 2026-11-06): the full collect once a day, the analysis chain (`core`: news, filings, prices,
-# judged evidence, signals) the other five times, and the 02:00 UTC growth slot before the 08:00 Astana Growth brief.
+# Once a day at 02:00 UTC (Kevin 2026-11-24: `all,daily-email`, to spare the Claude subscription): the analysis chain,
+# the Growth brief (08:00 Astana), then the morning email. Anything else is started by hand.
 # The clock is the dualis-cron Worker (`cron/`, Cloudflare Cron Triggers): GitHub's own `schedule:` ran 2-6 h late or
 # never (2026-11-12: no brief). It dispatches this workflow with the slot's dimension and `trigger: schedule`.
 on:
@@ -87,12 +87,12 @@ jobs:
       - run: echo "FFMPEG_PATH=$HOME/ffmpeg/bin/ffmpeg" >> "$GITHUB_ENV" && ~/ffmpeg/bin/ffmpeg -version | head -1
       - run: pnpm db:migrate
       - run: pnpm collect ${{ github.event.inputs.dimension }}
-      # The Sandbox loop (Kevin 2026-11-11/12): each pass draws the pictures, corrects them (skill image-correction, 3
+      # The Sandbox loop (Kevin 2026-11-11/12; only when a run names a sandbox dimension since 2026-11-24): each pass draws the pictures, corrects them (skill image-correction, 3
       # passes), reviews the round (skill content-review, which edits the writing skills) and writes a failed day again,
       # 3 rounds max. A pass with nothing to do is a few queries; a failed pass never stops the next one.
       - name: Sandbox loop (pictures, corrections, review, rounds)
         # always(): one account failing its round (a Claude limit) never stops the others' rounds.
-        if: always() && (github.event.inputs.dimension == 'all' || contains(github.event.inputs.dimension, 'sandbox'))
+        if: always() && contains(github.event.inputs.dimension, 'sandbox')
         run: |
           failed=0
           for i in $(seq 14); do pnpm collect sandbox-posts,sandbox-visuals,sandbox-image-fix,sandbox-review || failed=1; done

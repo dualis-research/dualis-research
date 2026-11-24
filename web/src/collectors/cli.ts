@@ -1,6 +1,6 @@
 import { connectNode } from "@/db/node";
 import { completeWithSubscription } from "@/llm/complete";
-import { collectPlan, DIMENSIONS, dimensionsFor, stagesFor } from "./registry";
+import { DIMENSIONS, dimensionsFor, stagesFor } from "./registry";
 import { runDimension } from "./runner";
 
 /**
@@ -9,12 +9,7 @@ import { runDimension } from "./runner";
  */
 async function main() {
   const arg = process.argv[2];
-  if (!arg) throw new Error(`usage: pnpm collect <${["all", "core", "growth", "from:<dimension>", "plan <files...>", ...DIMENSIONS.map((d) => d.name)].join("|")}>`);
-  // `plan <files...>`: print what a merge touching these files must collect (empty = nothing), for deploy.yml.
-  if (arg === "plan") {
-    console.log(collectPlan(process.argv.slice(3)) ?? "");
-    return;
-  }
+  if (!arg) throw new Error(`usage: pnpm collect <${["all", "core", "growth", "from:<dimension>", ...DIMENSIONS.map((d) => d.name)].join("|")}>`);
   const stages = stagesFor(dimensionsFor(arg));
   const trigger = process.env.COLLECT_TRIGGER ?? "local";
   const ciUrl = process.env.GITHUB_RUN_ID

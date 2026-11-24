@@ -72,27 +72,29 @@ import type { Dimension } from "./types";
  * One signal engine since 2026-11-09: the legacy catalysts / thesis-confidence chain is gone; the WhatsApp alert is the Signal Change.
  * Signal alerts right after signals: a Signal Change that makes the signal better goes to Kevin and Thierry with its picture.
  * News history (NEWS-HISTORY-1123) after news, in its own stage: 3 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
- * Daily email (DAILY-EMAIL-1123) runs only when named, last: the 02:00 UTC slot names it right after news and filings
- * (every watchlist ticker); it judges each new item once and sends the morning email. A merge never runs it.
- * News alert (URGENT-NEWS-1124) runs only when named too (news-alert.yml, every hour after news and filings): the same
+ * Daily email (DAILY-EMAIL-1123) runs only when named, last: the one daily run (02:00 UTC, `all,daily-email`) names it
+ * (every watchlist ticker); it judges each new item once and sends the morning email.
+ * News alert (URGENT-NEWS-1124) runs only when named too (news-alert.yml, every 6 hours after news and filings): the same
  * judge and verdicts, an urgent email per critical item, never the morning digest.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
 export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, kpiDriversDim, analysis, kpiReversalDim, narrativeSinceDim, evidenceDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
 
 /**
- * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts): the daily schedule only. A deploy's
- * collect runs `core` = everything else, the analysis chain, so it lands in minutes (Kevin 2026-11-05: speed).
+ * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts); `core` = everything else, the analysis chain.
  */
-export const GROWTH_DIMENSIONS: readonly string[] = ["content-accounts", "content-posts", "cover-photos", "content-voices", "content-ideas", "content-picks", "content-drafts", "content-visuals", "sandbox-accounts", "sandbox-posts", "sandbox-visuals", "sandbox-image-fix", "sandbox-review", "content-dispatch", "content-replies", "growth-outreach", "substack-network", "growth-brief"];
+export const GROWTH_DIMENSIONS: readonly string[] = ["content-accounts", "content-posts", "cover-photos", "content-voices", "content-ideas", "content-picks", "content-drafts", "content-visuals", "sandbox-accounts", "content-dispatch", "content-replies", "growth-outreach", "substack-network", "growth-brief"];
 
 /**
  * Stages of a collect (Kevin 2026-11-06: « comment speeder x10 »): the dimensions of one stage run at the same time,
  * stages one after the other. A stage only reads what earlier stages wrote; Yahoo users (company-profile, price,
  * consensus, financials, peers) sit in different stages so they never hit its rate limit together.
  */
-/** Dimensions that run only when named: never part of `all`, `core` or `growth`. */
-export const ON_DEMAND_DIMENSIONS: readonly string[] = ["x-publish", "daily-email", "news-alert"];
+/**
+ * Dimensions that run only when named: never part of `all`, `core` or `growth`. The Sandbox writers are off the daily run
+ * since 2026-11-24 (Kevin: the Claude subscription ran out every few hours; ~95 calls a day, most refused at the limit).
+ */
+export const ON_DEMAND_DIMENSIONS: readonly string[] = ["sandbox-posts", "sandbox-visuals", "sandbox-image-fix", "sandbox-review", "x-publish", "daily-email", "news-alert"];
 
 export const STAGES: readonly (readonly string[])[] = [
   ["watchlist"],
@@ -148,28 +150,6 @@ export function dimensionsFor(arg: string): readonly Dimension[] {
     return DIMENSIONS.slice(i).filter((d) => d === DIMENSIONS[i] || (!GROWTH_DIMENSIONS.includes(d.name) && !ON_DEMAND_DIMENSIONS.includes(d.name)));
   }
   return [dimensionByName(arg)];
-}
-
-/**
- * What a merge must collect (the deploy's "Refresh data now"), from the files it changed: a dimension's folder ->
- * `from:<the earliest one>`; shared collector, schema, LLM or migration code -> `core`; console / site / docs only -> nothing.
- */
-export function collectPlan(files: readonly string[]): string | null {
-  let core = false;
-  const touched = new Set<string>();
-  for (const f of files) {
-    const dim = /^web\/src\/collectors\/dimensions\/([^/]+)\//.exec(f)?.[1];
-    // An on-demand dimension (x-publish posts for real) never runs from a merge: its own schedule picks the change up.
-    if (dim && ON_DEMAND_DIMENSIONS.includes(dim)) continue;
-    if (dim && DIMENSIONS.some((d) => d.name === dim)) touched.add(dim);
-    else if (/^web\/(src\/(collectors|llm|bsg|db|private|growth|content|onedrive)\/|drizzle\/)/.test(f) && !/\.test\.ts$/.test(f)) core = true;
-  }
-  if (core) return "core";
-  const order = DIMENSIONS.map((d) => d.name).filter((n) => touched.has(n));
-  if (order.length === 0) return null;
-  const growth = order.filter((n) => GROWTH_DIMENSIONS.includes(n));
-  const firstCore = order.find((n) => !GROWTH_DIMENSIONS.includes(n));
-  return [...(firstCore ? [`from:${firstCore}`] : []), ...growth].join(",");
 }
 
 export function dimensionByName(name: string): Dimension {
