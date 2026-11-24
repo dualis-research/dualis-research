@@ -23,7 +23,7 @@ const SYSTEM = [
   "You read a news article or a company filing for an equity analyst and give him its key points.",
   `Write exactly ${POINTS} bullets on what the text itself says: the facts, figures, who, when. Each bullet one plain sentence of at most 20 words, the most important first.`,
   "Only what the text states: never an opinion, advice, a price target, upside or what the analyst should do. Plain English, never a dash.",
-  "If the text is not this article at all (a cookie or subscription wall, a list of other stories), answer {\"points\": []}.",
+  "If the text does not hold this item's content (a cookie or subscription wall, a list of other stories, page scripts or navigation, a title with no detail), answer {\"points\": []}: never a bullet about the text itself or what it lacks.",
   `Answer with JSON only, no prose, no code fence: {"points": ["...", "...", "..."]}.`,
 ].join(" ");
 
@@ -31,10 +31,14 @@ export function pointsPrompt(company: string, symbol: string, title: string, tex
   return [`Company: ${company} (${symbol})`, `Headline: ${title}`, "", "Text:", text].join("\n");
 }
 
-/** The answer -> exactly POINTS bullets (dashes stripped, the copy rule). Throws on any other count. */
+/**
+ * The answer -> exactly POINTS bullets (dashes stripped, the copy rule), or none when the text held no content (stored
+ * as an empty list: the item shows no bullets and is never asked again). Throws on any other count.
+ */
 export function parsePoints(text: string): string[] {
   const o = JSON.parse(firstJsonObject(text)) as { points?: unknown };
   const points = Array.isArray(o.points) ? o.points.filter((p): p is string => typeof p === "string" && p.trim().length > 0).map((p) => noDash(p.trim())) : [];
+  if (Array.isArray(o.points) && o.points.length === 0) return [];
   if (points.length !== POINTS || (Array.isArray(o.points) && o.points.length !== POINTS)) {
     throw new Error(`key points: expected exactly ${POINTS} bullets, got ${Array.isArray(o.points) ? o.points.length : "none"}: ${text.slice(0, 200)}`);
   }
