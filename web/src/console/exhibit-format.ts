@@ -29,8 +29,8 @@ export function formatUnit(v: number, unit: ExhibitUnit, currency: string | null
   return unit === "currency" && currency ? `${n} ${currency}` : n;
 }
 
-/** The period type of an Exhibit series, read from its stored key: quarterly (`q…`), market (`price`), else annual. */
+/** The period type of an Exhibit series, read from its stored key: quarterly (`q…`) and half-yearly (`h…`) read as their period-end month, market (`price`), else annual. */
 export function seriesPeriod(key: string): ExhibitPeriod {
   if (key === "price") return "market";
-  return key.startsWith("q") ? "quarterly" : "annual";
+  return key.startsWith("q") || key.startsWith("h") ? "quarterly" : "annual";
 }

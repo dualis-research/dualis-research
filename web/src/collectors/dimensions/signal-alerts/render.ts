@@ -180,9 +180,9 @@ export function alertSvg(a: AlertInput): string {
     y += chartH;
   }
 
-  // Narrative Drivers with their Status, like the panel's table.
+  // The trusted Price Drivers with their Status, like the panel's table.
   y += 64;
-  text(out, P, y, "NARRATIVE DRIVERS", { size: 22, color: C.muted, spacing: 2 });
+  text(out, P, y, "PRICE DRIVERS", { size: 22, color: C.muted, spacing: 2 });
   y += 24;
   const tableTop = y;
   const leftW = 560;
@@ -194,16 +194,13 @@ export function alertSvg(a: AlertInput): string {
   text(body, rightX, tableTop + 37, "Status", { size: 22, color: C.muted, anchor: "end" });
   body.push(`<line x1="${P}" y1="${ry}" x2="${P + INNER}" y2="${ry}" stroke="${C.rule}" stroke-width="2"/>`);
   if (a.drivers.length === 0) {
-    text(body, P + 24, ry + 48, "No drivers on this thesis yet.", { size: 22, color: C.muted });
+    text(body, P + 24, ry + 48, "No trusted price driver yet.", { size: 22, color: C.muted });
     ry += 80;
   }
   a.drivers.forEach((d, i) => {
     const top = ry + 28;
-    // Left: category, title, one sentence.
-    const catW = Math.round(textWidth(d.category, 20) * 0.96 + 34);
-    body.push(`<rect x="${P + 24}" y="${top}" width="${catW}" height="36" rx="18" fill="#fff" stroke="${C.ink}" stroke-width="1.5"/>`);
-    text(body, P + 40, top + 25, d.category, { size: 20 });
-    let ly = lines(body, P + 24, top + 84, d.title, leftW, { size: 28, weight: "semibold", lead: 36 });
+    // Left: the Price Driver's name, then what the market believes about it.
+    let ly = lines(body, P + 24, top + 30, d.title, leftW, { size: 28, weight: "semibold", lead: 36 });
     if (d.summary) ly = lines(body, P + 24, ly + 40, d.summary, leftW, { size: 23, lead: 32 });
     // Right: the Status (tag, current state, since, priced in).
     let sy = top;

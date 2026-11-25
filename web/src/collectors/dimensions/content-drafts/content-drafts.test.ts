@@ -5,7 +5,7 @@ import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { addAccount, requestDraft, setDraftStatus } from "@/content/manual";
-import { seedAnalysedTicker } from "@/test/content-seed";
+import { SEED_NEWS_ID, seedAnalysedTicker } from "@/test/content-seed";
 import { testDb } from "@/test/db";
 import { runDimension } from "../../runner";
 import { contentDrafts } from ".";
@@ -44,7 +44,7 @@ beforeEach(async () => {
     .values({
       generationBronzeId: crypto.randomUUID(), rank: 1, day: new Date().toISOString().slice(0, 10), symbol: "CCLD",
       title: "CareCloud replaced the client the market thinks it lost.", angle: "Reuters reports a new hospital client.",
-      sourceRefs: [{ kind: "evidence", ref: "evidence:CCLD|news:n1", symbol: "CCLD", label: "CCLD signs a new hospital client" }],
+      sourceRefs: [{ kind: "event", ref: `event:CCLD|news:${SEED_NEWS_ID}`, symbol: "CCLD", label: "CCLD signs a new hospital client" }],
       model: "fake", sources: ["claude"], bronzeIds: [],
     })
     .returning();
@@ -78,7 +78,10 @@ describe("content-drafts dimension", () => {
     expect(system).toContain("Tone: alarm.");
     expect(system).not.toMatch(/Stay honest about what is not proven|calm, precise/);
     expect(prompt).toContain("Idea: CareCloud replaced the client the market thinks it lost.");
-    expect(prompt).toContain("CCLD signs a new hospital client");
+    // One chain: the event the Idea cites, then each Price Driver under its name with its belief, reversal and own figures.
+    expect(prompt).toContain("CCLD signs a new hospital client (https://news.example/n1)");
+    expect(prompt).toContain("- Client revenue: The market thinks the lost client is gone for good. Now: Strong inflection, Q2 client revenue $46.0M, up 15% (Not in the price yet)");
+    expect(prompt).toContain("- Client revenue, quarters (Client revenue, quarters): Sep-25 40M USD, Dec-25 38M USD, Mar-26 39M USD, Jun-26 46M USD");
     // No fair value, quote vs it or gap reaches the writer (Thierry 2026-11-16): it cannot print what it is not given.
     expect(prompt).not.toMatch(/fair value|8x EV\/EBITDA|% vs/i);
     expect(prompt).toContain("Signal: BUY (strong inflection)");
@@ -145,7 +148,7 @@ describe("draft format", () => {
         signal: "BUY (strong inflection)",
         signalSince: "2026-11-10",
         figures: [{ title: "Operating margin per quarter (Operating margin)", values: "Sep-25 12.1%, Sep-26 19.6%" }],
-        evidence: [],
+        events: [],
         drivers: [
           { title: "Margins in decline", summary: null, state: { word: "Strong inflection", since: "2026-11-10", headline: "Q3 operating margin 19.6%", pricedIn: "Not in the price yet" } },
           { title: "Debt load", summary: null, state: null },

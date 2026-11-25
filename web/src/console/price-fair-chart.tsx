@@ -55,7 +55,7 @@ export function PriceFairValueChart({
   fair: FairLine | null;
   currency: string | null;
   sources: string[];
-  /** Significant moves (Analysis page only): a marker each, a click opens its cause. */
+  /** Significant unbiased 1-week moves (Analysis page only): a marker each, a click opens its events. */
   moves?: MoveMarker[];
   /** The two figures the chart draws each open their own panel: the price history, how the fair value was computed. */
   priceHref: string;
@@ -109,7 +109,7 @@ export function PriceFairValueChart({
       ]
     : [];
 
-  // A marker at the move's last close: indigo when a business fact caused it, grey otherwise (macro, technical, not found).
+  // A marker at each significant unbiased move's last close.
   const from = shown[0]?.date ?? "";
   const closeOn = (d: string) => {
     let c: number | null = null;
@@ -124,8 +124,7 @@ export function PriceFairValueChart({
     .flatMap((m) => {
       const c = closeOn(m.endDay);
       if (c === null) return [];
-      const fundamental = m.kind === "fundamental";
-      return [{ value: [Date.parse(`${m.endDay}T00:00:00Z`), c], id: m.id, symbol: m.returnPct >= 0 ? "triangle" : "path://M0,0 L10,0 L5,10 Z", itemStyle: { color: fundamental ? ink.navy : ink.muted, opacity: fundamental ? 1 : 0.7 } }];
+      return [{ value: [Date.parse(`${m.endDay}T00:00:00Z`), c], id: m.id, symbol: m.returnPct >= 0 ? "triangle" : "path://M0,0 L10,0 L5,10 Z", itemStyle: { color: ink.navy } }];
     });
   const moveHref = (id: string) => `/tickers/${encodeURIComponent(symbol)}?item=${encodeURIComponent(`move:${id}`)}`;
 

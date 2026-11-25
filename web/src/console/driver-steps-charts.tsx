@@ -30,8 +30,8 @@ function Legend({ items }: { items: { color: string; words: string; dot?: boolea
 }
 
 /**
- * Step 1 in one sight: every event of 3 years on one time axis, one lane per kind (results, news, filings); a dot is
- * dark when the stock moved that week (step 2), pale otherwise.
+ * The events in one sight: every event of 3 years on one time axis, one lane per kind (results, news, filings); a dot is
+ * dark when the week after it was a significant unbiased move, pale otherwise.
  */
 export function EventsTimeline({ events, from, to }: { events: { day: string; kind: (typeof KINDS)[number]; title: string; moved: boolean }[]; from: string; to: string }) {
   const dark = usePageDark();
@@ -70,7 +70,7 @@ export function EventsTimeline({ events, from, to }: { events: { day: string; ki
 }
 
 /**
- * Step 4 in one sight: the KPI at each period (half years for a Hong Kong company), a column per period labelled with
+ * A KPI in one sight: its value at each period (half years for a Hong Kong company), a column per period labelled with
  * its value and the stretch it covers; coloured when its change on a year earlier was judged big enough to matter.
  */
 export function KpiPeriodsChart({ periods, unit, currency, label }: { periods: { date: string; period: string; value: number; significant: boolean }[]; unit: ExhibitUnit; currency: string | null; label: string }) {

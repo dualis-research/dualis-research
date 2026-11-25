@@ -1,5 +1,5 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
-import { exhibits, kpiDrivers, narrativeDrivers, narratives, signals, type ThesisSide } from "@/db/schema/analysis";
+import { asc, eq } from "drizzle-orm";
+import { kpiDrivers, narratives, signals, type ThesisSide } from "@/db/schema/analysis";
 import { reversalHeadline, reversalWord, turnsAgainst } from "@/content/reversal-words";
 import type * as content from "@/db/schema/content";
 import type { Db } from "@/db/types";
@@ -7,7 +7,7 @@ import { tagWord } from "@/content/signal-words";
 import type { Complete } from "@/llm/complete";
 import { judge } from "@/llm/judge";
 import { formatUnit, periodLabel, seriesPeriod } from "../../../console/exhibit-format";
-import { visualInput, type VisualExhibit, type VisualInput } from "./data";
+import { driverExhibit, visualInput, type VisualExhibit, type VisualInput } from "./data";
 
 /**
  * The story break of a ticker (Kevin 2026-11-12, the frame of every Sandbox picture, all 6 accounts; Thierry 2026-11-16:
@@ -83,7 +83,7 @@ export async function comparedPeriod(db: Db, complete: Complete, driverId: strin
 
 /**
  * The ticker's narrative and the Price Drivers turning AGAINST it now (kpi-reversal: stance against, strong or weak),
- * strongest first, each with the first chart of its Narrative Driver. `only` = the side a signal alert speaks for: a
+ * strongest first, each under its own name with its own measured series (`driverExhibit`). `only` = the side a signal alert speaks for: a
  * narrative of the other side shows nothing.
  */
 export async function storyBreak(db: Db, symbol: string, complete?: Complete, only?: ThesisSide): Promise<StoryBreak | null> {
@@ -92,7 +92,7 @@ export async function storyBreak(db: Db, symbol: string, complete?: Complete, on
     visualInput(db, idea),
     db.select({ side: signals.side, signal: signals.signal, strength: signals.strength }).from(signals).where(eq(signals.symbol, symbol)),
     db.select({ side: narratives.side, text: narratives.text }).from(narratives).where(eq(narratives.symbol, symbol)),
-    db.select({ id: kpiDrivers.id, rank: kpiDrivers.rank, reversal: kpiDrivers.reversal }).from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)).orderBy(asc(kpiDrivers.rank)),
+    db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)).orderBy(asc(kpiDrivers.rank)),
   ]);
   if (!story || (only && story.side !== only)) return null;
   const side = story.side;
@@ -100,19 +100,14 @@ export async function storyBreak(db: Db, symbol: string, complete?: Complete, on
     .filter((k): k is typeof k & { reversal: NonNullable<typeof k.reversal> } => turnsAgainst(k.reversal) && k.reversal?.side === side)
     .sort((a, b) => (a.reversal.strength === b.reversal.strength ? a.rank - b.rank : a.reversal.strength === "strong" ? -1 : 1));
   if (reversing.length === 0) return null;
-  const drivers = await db.select({ id: narrativeDrivers.id, title: narrativeDrivers.title, kpiDriverId: narrativeDrivers.kpiDriverId }).from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.side, side)));
-  const ids = drivers.map((d) => d.id);
-  const charts = ids.length ? await db.select().from(exhibits).where(inArray(exhibits.driverId, ids)).orderBy(asc(exhibits.rank)) : [];
   const out: StoryBreak["drivers"] = [];
   for (const k of reversing) {
-    const d = drivers.find((x) => x.kpiDriverId === k.id);
-    // Its first chart that carries numbers (a driver with no chart, a policy or an industry fact, cannot be shown).
-    const e = d && charts.find((c) => c.driverId === d.id && c.points.some((p) => typeof p.values[c.series[0]?.key] === "number"));
-    if (!d || !e) continue;
-    const exhibit: VisualExhibit = { id: e.id, driverTitle: d.title, side, title: e.title, chart: e.chart, series: e.series, points: e.points, takeaway: e.takeaway, sources: e.sources };
+    // Its own measured series (a policy or an industry fact has no figure: it cannot be shown).
+    const exhibit = driverExhibit(k, side);
+    if (!exhibit) continue;
     const headline = reversalHeadline(k.reversal);
-    const base = complete && headline ? await comparedPeriod(db, complete, d.id, headline, exhibit) : null;
-    out.push({ title: d.title, tag: reversalWord(k.reversal).word.toUpperCase(), headline, exhibit, base });
+    const base = complete && headline ? await comparedPeriod(db, complete, k.id, headline, exhibit) : null;
+    out.push({ title: k.name, tag: reversalWord(k.reversal).word.toUpperCase(), headline, exhibit, base });
     if (out.length === MAX_PANELS) break;
   }
   const signal = sig && sig.signal !== "none" && sig.side === side ? { signal: sig.signal, strength: sig.strength } : null;

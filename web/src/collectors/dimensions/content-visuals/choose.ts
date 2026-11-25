@@ -3,7 +3,7 @@ import type { Complete } from "@/llm/complete";
 import { judge } from "@/llm/judge";
 import type { VisualExhibit, VisualInput } from "./data";
 
-/** The chart of a post: the most striking Exhibit of the drivers the Idea cites, or the price when the Idea is about price. */
+/** The chart of a post: the most striking own series of the Price Drivers the Idea rests on, or the price when the Idea is about price. */
 export type ChartChoice = { kind: "price"; reason: string | null } | { kind: "exhibit"; exhibit: VisualExhibit; reason: string | null };
 
 export const PRICE_CHOICE = "price";
@@ -135,7 +135,7 @@ export function calloutPrompt(input: VisualInput, choice: ChartChoice, points: C
     `Angle: ${input.angle}`,
     "",
     ...input.narratives.map((n) => `What the price says (${n.side === "long" ? "pessimistic" : "optimistic"} narrative): ${n.text}`),
-    ...(input.drivers.length ? ["Drivers of that narrative (index: title: summary):", ...input.drivers.map((d, i) => `- ${i}: ${d.title}${d.summary ? `: ${d.summary}` : ""}`)] : []),
+    ...(input.drivers.length ? ["Price Drivers of that narrative (index: name: what the market believes about it):", ...input.drivers.map((d, i) => `- ${i}: ${d.title}${d.summary ? `: ${d.summary}` : ""}`)] : []),
     "",
     `Chart: ${chart}`,
     "Points (id: value):",

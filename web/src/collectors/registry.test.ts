@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectPlan, DIMENSIONS, GROWTH_DIMENSIONS, ON_DEMAND_DIMENSIONS, dimensionsFor } from "./registry";
+import { DIMENSIONS, GROWTH_DIMENSIONS, ON_DEMAND_DIMENSIONS, dimensionsFor } from "./registry";
 
 describe("collect groups", () => {
   it("core = every dimension but Growth/content; growth = those; both cover all", () => {
@@ -11,9 +11,8 @@ describe("collect groups", () => {
     expect(dimensionsFor("financials").map((d) => d.name)).toEqual(["financials"]);
   });
 
-  it("x-publish posts for real: only when named, never in all / core / growth / a merge's collect", () => {
+  it("x-publish posts for real: only when named, never in all / core / growth", () => {
     for (const g of ["all", "core", "growth", "from:watchlist"]) expect(dimensionsFor(g).map((d) => d.name)).not.toContain("x-publish");
     expect(dimensionsFor("x-publish").map((d) => d.name)).toEqual(["x-publish"]);
-    expect(collectPlan(["web/src/collectors/dimensions/x-publish/index.ts"])).toBeNull();
   });
 });

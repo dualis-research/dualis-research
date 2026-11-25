@@ -13,7 +13,7 @@ import { analysedSymbols } from "../watchlist";
 /**
  * Bold for skimming (Kevin 2026-11-23: « add bold wherever necessary to make the reading faster for the human »,
  * « Same in ALL text the AI writes, check everywhere »). A second, separate Claude pass over every text the console
- * shows that Claude wrote (narratives, drivers, reasons, explanations, verdicts, valuation and research reports, Ideas):
+ * shows that Claude wrote (narratives and their beliefs, Price Drivers, reasons, verdicts, valuation reports, Ideas):
  * it returns the same text with its key words in `**…**`, once per exact text (`emphasisKey`). The writers and their
  * stored texts stay as they are, so no judgment key, thesis version or published post changes; the console swaps the
  * bold copy in where it shows the text. Texts first seen at the top of a panel go first.
@@ -24,18 +24,12 @@ export const EMPHASIS_DIMENSION = "emphasis";
 /** Where Claude's prose lives, first-sight texts first; the fields are the prose ones (never a title or a quote). */
 export const EMPHASIS_SOURCES: readonly { table: PgTable; fields: readonly string[] }[] = [
   { table: analysis.narratives, fields: ["text", "detail", "sideWhy"] },
-  { table: analysis.narrativeDrivers, fields: ["summary", "text"] },
-  { table: analysis.kpiDrivers, fields: ["why", "reason", "signalWhy"] },
+  { table: analysis.kpiDrivers, fields: ["marketBelief", "why", "reason", "signalWhy"] },
   { table: analysis.signals, fields: ["why"] },
   { table: analysis.signalChanges, fields: ["updateNote"] },
   { table: analysis.signalEvents, fields: ["updateNote"] },
-  { table: analysis.narrativeRationales, fields: ["summary", "text"] },
-  { table: analysis.exhibits, fields: ["takeaway"] },
-  { table: analysis.priceMoveCauses, fields: ["fact"] },
-  { table: analysis.evidence, fields: ["why"] },
   { table: valuation.goldMethodValuations, fields: ["reason", "why", "summary", "report"] },
   { table: valuation.valuationReports, fields: ["summary", "markdown", "why"] },
-  { table: analysis.researchReports, fields: ["markdown"] },
   { table: valuation.peers, fields: ["why"] },
   { table: content.goldContentIdeas, fields: ["angle", "why"] },
 ];

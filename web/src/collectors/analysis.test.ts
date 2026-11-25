@@ -1,25 +1,23 @@
 import { resolve } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { analyses, evidence, exhibits, fairValueHistory, fairValues, kpiDrivers, marketReactions, narrativeDrivers, narrativeRationales, narratives, priceMoveCauses, priceMoves, researchReports, signalChanges, signals, signalStates } from "@/db/schema/analysis";
+import { analyses, driverEvents, fairValueHistory, fairValues, kpiDrivers, narratives, priceMoves, signalChanges, signals, signalStates, type Strength } from "@/db/schema/analysis";
+import * as silver from "@/db/schema/silver";
 import { fetches as bronze } from "@/db/schema/bronze";
 import { valuationSyntheses } from "@/db/schema/valuation";
 import { goldFinancialLines, financialMetrics } from "@/db/schema/financials";
 import * as gold from "@/db/schema/gold";
-import { theses } from "@/db/schema/thesis";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
-import { priceDriver, reversal, seedPriceDrivers } from "@/test/price-drivers";
+import { priceDriver, reversal, seedNote, seedPriceDrivers } from "@/test/price-drivers";
 import { analysis, NO_TRUSTED_DRIVER } from "./dimensions/analysis";
 import { movesText } from "./dimensions/analysis/facts";
-import { fairValueAt, marketReactionDim, reactionLine, reactionOf } from "./dimensions/market-reaction";
-import { analysisPrompt, parseAnalysis } from "./dimensions/analysis/prompt";
-import { narrativeSinceDim, sinceChoices } from "./dimensions/narrative-since";
-import { batchSubject, evidenceDim, parseBatch, parseBatchSubject, parseEvidenceSubject, verdictRank } from "./dimensions/evidence";
+import { marketReactionDim } from "./dimensions/market-reaction";
+import { analysisPrompt, holdsNarrative, parseAnalysis } from "./dimensions/analysis/prompt";
 import { kpiReversalDim } from "./dimensions/kpi-reversal";
 import { dimensionsFor, stagesFor, STAGES, DIMENSIONS, ON_DEMAND_DIMENSIONS } from "./registry";
-import { driversAgainst, readingOf, signalFrom, signalsDim } from "./dimensions/signals";
+import { driversAgainst, eventsBehind, parseTurning, readingOf, signalFrom, signalsDim, SIGNAL_SYSTEM, type Turning } from "./dimensions/signals";
 import { watchlist } from "./dimensions/watchlist";
 import { runDimension } from "./runner";
 import type { SourceContext } from "./types";
@@ -29,24 +27,27 @@ const SYMBOL = "101160.KQ";
 const PD_CYCLE = `${SYMBOL}:kpi:revenue`;
 const PD_CASH = `${SYMBOL}:kpi:net-cash`;
 
-/** The narrative as the model writes it: its side, and one driver per Price Driver (P1 = Revenue, P2 = Net cash). */
-const answerOf = (side: "long" | "short", drivers = ["P1", "P2"]) => ({
+/** Step C as the model answers it: side, confidence, and one belief per Price Driver that explains the narrative (P1 = Revenue, P2 = Net cash). */
+const answerOf = (side: "long" | "short", labels = ["P1", "P2"], confidence: Strength = "strong") => ({
   side,
+  confidence,
   sideWhy: side === "long" ? "The price sits a quarter under the fair value while sales dip." : "The price prices a recovery the figures do not show.",
   narrative: "The market prices Worldex as a cyclical parts maker.",
   narrativeDetail: "Its margins held while sales dipped.",
-  drivers: [
-    { priceDriver: "P1", category: "Industry & cycle", title: "Memory capex drives etch parts demand", summary: "Chip makers buy fewer parts when they cut spending.", text: "Revenue fell 5% in 2025.", exhibits: [{ title: "Revenue by year", chart: "bar", series: ["line:revenue", "line:not-stored"], takeaway: "Sales dipped in 2025." }] },
-    { priceDriver: "P2", category: "Balance sheet & capital", title: "Net cash is seen as idle", text: "Net cash of KRW 100B.", exhibits: [{ title: "Invented", chart: "line", series: ["metric:made-up"], takeaway: "x" }, { title: "Operating margin", chart: "line", series: ["metric:operating-margin"], takeaway: "Margins held." }] },
-    // A reason the model invents (no Price Driver of the list): dropped, never a driver.
-    { priceDriver: "P9", category: "Macro & policy", title: "Rates stay high", text: "x", exhibits: [] },
-  ].filter((d) => d.priceDriver === "P9" || drivers.includes(d.priceDriver)),
+  beliefs: [
+    { priceDriver: "P1", belief: "The market believes chip makers will keep cutting parts orders." },
+    { priceDriver: "P2", belief: "The market sees the net cash as idle." },
+    // A reason the model invents (no Price Driver of the list): dropped, never a belief.
+    { priceDriver: "P9", belief: "Rates stay high." },
+  ].filter((b) => b.priceDriver === "P9" || labels.includes(b.priceDriver)),
 });
 
 let calls: string[] = [];
-let lastEvidencePrompt = "";
 let analysisPrompts: string[] = [];
 let reversalPrompts: string[] = [];
+let signalPrompts: string[] = [];
+/** Step E's answer: is the narrative turning? */
+let turning: { turning: Strength; lead: string | null; why: string } = { turning: "strong", lead: "P2", why: "Net cash turns: the buyback puts 10% of the idle cash to work." };
 let answer: ReturnType<typeof answerOf> = answerOf("long");
 /** What the reversal judge says of the cash driver (the cycle driver never turns here). */
 let cash: { stance: "against" | "with" | "none"; strength: "strong" | "weak" | "none" } = { stance: "against", strength: "strong" };
@@ -57,33 +58,17 @@ const fake: Complete = async ({ prompt, system }) => {
     expect(prompt).not.toMatch(/Fair value \d/);
     return { text: prompt.includes("to BUY (strong inflection)") ? "BUY: a buyback trust turns the cash story." : "Signal moved.", model: "fake" };
   }
-  if (system.includes("equity research reports")) {
-    calls.push("report");
-    return { text: "## Executive Summary\nWorldex — fair value KRW 40,000.\n[EXHIBIT 1]", model: "fake" };
-  }
-  if (system.includes("WHY the market holds")) {
-    calls.push("rationale");
-    return { text: JSON.stringify({ summary: "The market sees a cyclical parts maker after a 2025 dip.", claims: [{ text: "Revenue fell to KRW 291.8B in 2025.", drivers: [1, 7], sources: [{ type: "exhibit", ref: "1", label: "Revenue" }, { type: "bogus", ref: "x" }] }], exhibits: [{ title: "Share price", chart: "line", series: ["line:revenue", "nope"], takeaway: "Back to a year ago." }, { title: "Invented", chart: "bar", series: ["nope"], takeaway: "x" }] }), model: "fake" };
+  if (system === SIGNAL_SYSTEM) {
+    calls.push("signal");
+    signalPrompts.push(prompt);
+    return { text: JSON.stringify(turning), model: "fake" };
   }
   if (system.includes("TURNS AGAINST that story")) {
     calls.push("reversal");
     reversalPrompts.push(prompt);
     const mine = prompt.includes("Price Driver (kpi, strong confidence): Net cash") ? cash : { stance: "none" as const, strength: "none" as const };
-    return { text: JSON.stringify({ intrinsic: { state: mine.stance === "against" ? "reversing-down" : "flat", period: null, why: "Cash went to a buyback." }, leading: { probability: "none", events: [], why: "Nothing recent says more." }, durability: "structural", magnitude: null, pricedIn: "none", stance: mine.stance, strength: mine.strength, direction: mine.stance === "none" ? null : "down", headline: "Buyback returns 10% of cash", why: "The buyback puts the idle cash to work.", citations: [] }), model: "fake" };
-  }
-  const verdict = (v: string, reason: string) => ({ text: JSON.stringify({ verdict: v, probability: 0.8, cited_sentence: "buyback", reason }), model: "fake" });
-  if (prompt.includes("Since which month has the market held THIS story")) {
-    calls.push("since");
-    expect(prompt).toContain("vs today's fair value");
-    // The story took hold 2 months ago.
-    return verdict(sinceChoices()[4], "The price fell below fair value two months ago.");
-  }
-  if (prompt.includes("For EACH item below and EACH driver")) {
-    lastEvidencePrompt = prompt;
-    calls.push("evidence");
-    // The buyback reverses the cash reason (driver 2) and is noise for the cycle reason (driver 1).
-    const n = (prompt.match(/^\[\d+\]/gm) ?? []).length;
-    return { text: JSON.stringify({ items: Array.from({ length: n }, (_, i) => ({ n: i + 1, pricedIn: "none", drivers: { "1": { tag: "noise", p: 0.8, why: "Nothing on the cycle.", cited: null }, "2": { tag: "reversal:strong", p: 0.8, why: "A buyback trust returns cash.", cited: "buyback" } } })) }), model: "fake" };
+    // The buyback (event L1 of the prompt) is the leading indicator of the cash driver.
+    return { text: JSON.stringify({ intrinsic: { state: mine.stance === "against" ? "reversing-down" : "flat", period: null, why: "Cash went to a buyback." }, leading: { probability: mine.stance === "against" ? "high" : "none", events: mine.stance === "against" ? ["L1", "L9"] : [], why: "A buyback trust was filed." }, durability: "structural", magnitude: null, pricedIn: "none", stance: mine.stance, strength: mine.strength, direction: mine.stance === "none" ? null : "down", headline: "Buyback returns 10% of cash", why: "The buyback puts the idle cash to work.", citations: [] }), model: "fake" };
   }
   analysisPrompts.push(prompt);
   calls.push("analysis");
@@ -100,6 +85,8 @@ beforeEach(async () => {
   calls = [];
   analysisPrompts = [];
   reversalPrompts = [];
+  signalPrompts = [];
+  turning = { turning: "strong", lead: "P2", why: "Net cash turns: the buyback puts 10% of the idle cash to work." };
   answer = answerOf("long");
   cash = { stance: "against", strength: "strong" };
   ({ db, close } = await testDb());
@@ -110,20 +97,27 @@ beforeEach(async () => {
   // The Fair Value is the valuation pyramid's (valuation.test.ts); the analysis reads it.
   await db.insert(fairValues).values({ symbol: SYMBOL, value: 40000, currency: "KRW", low: 35000, high: 46000, method: "EV/EBITDA 60%, Listed peers 40%", label: "Mostly EV/EBITDA", author: "claude", claudeValue: 40000, inputs: [] });
   await db.insert(fairValueHistory).values({ id: `${SYMBOL}|2026-10-01`, symbol: SYMBOL, day: "2026-10-01", value: 38000, low: 33000, high: 44000, currency: "KRW" });
-  await db.insert(theses).values({ symbol: SYMBOL, narrative: "A generic chip-parts supplier." }).onConflictDoUpdate({ target: theses.symbol, set: { narrative: "A generic chip-parts supplier." } });
 });
 afterEach(async () => close());
 
 /** The trusted Price Drivers `kpi-drivers` found: Revenue (strong, a stored series) and Net cash (strong); Headcount is not trusted. */
 async function trustPriceDrivers() {
   await seedPriceDrivers(db, [
-    priceDriver(SYMBOL, 1, "Revenue", { series: "line:revenue", measure: { source: "series", label: "Revenue, years", periodType: "year", unit: "currency", currency: "KRW", providers: ["dart"] }, periods: [{ period: "2025-12", periodType: "year", value: 291.8e9, prior: 306.8e9, change: -0.049, changeKind: "relative", significant: true, why: "sales fell 5%", releaseId: null, releaseDay: "2026-02-10", cite: null }], tests: { changes: 2, followed: 2, against: 0, moves: 3, fundamentalMoves: 2, explained: 2, explainedMoveIds: [`${SYMBOL}:2026-02-10`], both: 2, bothAgree: 2 } }),
+    priceDriver(SYMBOL, 1, "Revenue", { series: "line:revenue", measure: { source: "series", label: "Revenue, years", periodType: "year", unit: "currency", currency: "KRW", providers: ["dart"] }, periods: [{ period: "2025-12", periodType: "year", value: 291.8e9, prior: 306.8e9, change: -0.049, changeKind: "relative", significant: true, why: "sales fell 5%", releaseId: null, releaseDay: "2026-02-10", cite: null }], tests: { changes: 2, followed: 2, against: 0, moves: 3, explained: 2, explainedMoveIds: [`${SYMBOL}:2026-02-10`] } }),
     priceDriver(SYMBOL, 2, "Net cash"),
     priceDriver(SYMBOL, 3, "Headcount", { level: "none" }),
   ]);
 }
 
-describe("analysis dimension: ONE narrative written on the trusted Price Drivers (Kevin 2026-11-24)", () => {
+/** A filing the reversal reads: a recent event of the ticker (gold.driver_events). */
+async function seedBuyback(daysAgo = 2) {
+  const day = new Date(Date.now() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+  const id = `${SYMBOL}|filing:6f1d1a52-1111-4a3b-9c1d-000000000001`;
+  await db.insert(driverEvents).values({ id, symbol: SYMBOL, kind: "filing", sourceId: "6f1d1a52-1111-4a3b-9c1d-000000000001", day, title: "Share buyback trust", url: "https://dart/x", stock: null, benchReturn: null, beta: null, reaction: null, z: null, bench: "KOSDAQ", moveId: null });
+  return id;
+}
+
+describe("step C, the narrative: side, confidence and the Price Drivers that explain it (docs/architecture.md)", () => {
   it("no trusted Price Driver: no call, a failed fetch saying why, never a silent skip", async () => {
     await seedPriceDrivers(db, [priceDriver(SYMBOL, 1, "Headcount", { level: "none" })]);
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
@@ -134,352 +128,306 @@ describe("analysis dimension: ONE narrative written on the trusted Price Drivers
     expect(await db.select().from(narratives)).toEqual([]);
   });
 
-  it("the call receives the trusted Price Drivers, the price, the fair value and its history; its drivers ARE those Price Drivers; once per input", async () => {
+  it("ONE call reads the price, the fair value and its range, Thierry's notes and the Price Drivers; it stores the side, the confidence and one belief ON each Price Driver that explains it", async () => {
     await trustPriceDrivers();
+    await seedNote(db, SYMBOL, "I see Worldex as mispriced on its cash pile.");
+    // A news item of the year: the narrative never reads it (the Reversal does).
+    await db.insert(gold.filings).values({ id: "6f1d1a52-3333-4a3b-9c1d-000000000001", symbol: SYMBOL, registry: "dart", filingKey: "h1", form: null, title: "Q3 results notice", filedAt: new Date(), url: null, language: "ko", sources: ["dart"] });
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
     const p = analysisPrompts[0];
-    // Every trusted Price Driver with its kind, measure, changes, confidence and tests A, B and C; the untrusted one never.
+    // Every Price Driver with its kind, measure, changes, confidence and step B's two tests; a noise candidate never.
     expect(p).toContain("P1 [a company KPI, strong confidence] Revenue. Revenue moves this business. When it goes up, the share price should go up.");
     expect(p).toContain("Measured as: Revenue, years.");
     expect(p).toContain("12 months to Dec-25: 291.80B KRW (-4.9% on a year earlier), a change that matters: sales fell 5%");
     expect(p).toContain("Confidence: strong. The stock trades on revenue.");
-    expect(p).toContain("Tests: A) 2 of 2 big changes were followed by the price the expected way in a fundamental week, 0 were not; B) it changed in 2 of the 2 fundamental weeks (3 unusual weeks in all); C) 2 events where both moved, 2 the expected way.");
+    expect(p).toContain("Tests: A) of 2 significant changes, 2 were followed by a significant unbiased 1-week move the expected way, 0 were not; B) it changed on the first day of 2 of the 3 significant 1-week moves.");
+    expect(p).not.toMatch(/fundamental week/);
+    // Thierry's own view, an input the model weighs.
+    expect(p).toContain("I see Worldex as mispriced on its cash pile.");
     expect(p).toContain("P2 [a company KPI, strong confidence] Net cash.");
     expect(p).not.toContain("Headcount");
-    // The price, the fair value (base, low, high) and how it moved.
+    // The price, the fair value (base, low, high) and how it moved; no news, no chart menu.
     expect(p).toContain("Quote: 30000 KRW");
     expect(p).toContain("Fair value (weighted from several valuation methods): 40000 KRW, range 35000 to 46000");
     expect(p).toContain("Fair value over time (base, range): 2026-10-01 38000 (33000.00 to 44000.00)");
+    expect(p).not.toContain("Q3 results notice");
+    expect(p).not.toContain("Stored chart series");
     expect(p).toContain('"side": "long" | "short"');
-    expect(p).toContain("exactly one per Price Driver (P1, P2)");
+    expect(p).toContain('"confidence": "strong" | "weak" | "noise"');
+    expect(p).toContain("one per Price Driver that EXPLAINS the narrative (among P1, P2; at least one)");
 
-    const [fv] = await db.select().from(fairValues).where(eq(fairValues.symbol, SYMBOL));
-    expect(fv).toMatchObject({ value: 40000, label: "Mostly EV/EBITDA" });
-    expect(await db.select().from(narratives)).toMatchObject([{ id: `${SYMBOL}:long`, side: "long", sideWhy: "The price sits a quarter under the fair value while sales dip.", text: "The market prices Worldex as a cyclical parts maker.", detail: "Its margins held while sales dipped." }]);
-    const drivers = (await db.select().from(narrativeDrivers).where(eq(narrativeDrivers.symbol, SYMBOL))).sort((a, b) => a.rank - b.rank);
-    // One Narrative Driver per trusted Price Driver, pointing to it, with the category the model assigned; the invented reason is gone.
-    expect(drivers.map((d) => [d.rank, d.category, d.kpiDriverId])).toEqual([[1, "Industry & cycle", PD_CYCLE], [2, "Balance sheet & capital", PD_CASH]]);
-    expect(drivers[0].summary).toBe("Chip makers buy fewer parts when they cut spending.");
-    // The unusual weeks its Price Driver explains (test B, by code).
-    expect(drivers[0].moveIds).toEqual([`${SYMBOL}:2026-02-10`]);
-    const ex = (await db.select().from(exhibits).where(eq(exhibits.symbol, SYMBOL))).sort((a, b) => a.number - b.number);
-    // The unknown series key and the invented exhibit are dropped; the numbers come from gold.
-    expect(ex.map((e) => [e.number, e.driverId, e.series.map((s) => s.key)])).toEqual([[1, `${SYMBOL}:long:1`, ["line:revenue"]], [2, `${SYMBOL}:long:2`, ["metric:operating-margin"]], [3, `${SYMBOL}:long:rationale`, ["line:revenue"]]]);
-    expect(ex[0].points).toEqual([{ period: "2024-12", values: { "line:revenue": 306.8e9 } }, { period: "2025-12", values: { "line:revenue": 291.8e9 } }]);
-    const [report] = await db.select().from(researchReports);
-    expect(report.markdown).not.toMatch(/[—–]/);
-    expect(report.markdown).toContain("not investment advice");
-    expect(calls).toEqual(["analysis", "rationale", "report"]);
-    // Narrative Rationale: claims with valid drivers and sources only; its exhibit numbered after the drivers'.
-    const [rat] = await db.select().from(narrativeRationales);
-    expect(rat.claims).toEqual([{ text: "Revenue fell to KRW 291.8B in 2025.", drivers: [1], sources: [{ type: "exhibit", ref: "1", label: "Revenue" }] }]);
-    // Same inputs: never asked again.
+    expect(await db.select().from(narratives)).toMatchObject([{ id: `${SYMBOL}:long`, side: "long", confidence: "strong", sideWhy: "The price sits a quarter under the fair value while sales dip.", text: "The market prices Worldex as a cyclical parts maker.", detail: "Its margins held while sales dipped." }]);
+    // One belief per Price Driver that explains it, on the Price Driver itself; the invented one is dropped; the noise candidate has none.
+    const pds = await db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, SYMBOL));
+    expect(Object.fromEntries(pds.map((k) => [k.name, k.marketBelief]))).toEqual({ Revenue: "The market believes chip makers will keep cutting parts orders.", "Net cash": "The market sees the net cash as idle.", Headcount: null });
+    expect(calls).toEqual(["analysis"]);
+    // Same inputs: never asked again, even after Thierry said something new (his notes are outside the hash).
+    await seedNote(db, SYMBOL, "A later thought.");
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["analysis", "rationale", "report"]);
+    expect(calls).toEqual(["analysis"]);
   });
 
-  it("the side is the model's call, no code rule: a price BELOW the fair value range can carry an optimistic story", async () => {
+  it("the side is the model's call, no coded rule: a price ABOVE the fair value range answered long stores long", async () => {
     await trustPriceDrivers();
-    // 30,000 sits under the range 35,000 to 46,000: the deleted rule forced the long thesis here.
-    answer = answerOf("short");
+    // 50,000 sits above the range 35,000 to 46,000; the model still answers long, with its stated reason.
+    await db.update(gold.quotes).set({ close: 50000 }).where(eq(gold.quotes.symbol, SYMBOL));
+    answer = answerOf("long");
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect((await db.select().from(narratives)).map((n) => [n.id, n.side, n.sideWhy])).toEqual([[`${SYMBOL}:short`, "short", "The price prices a recovery the figures do not show."]]);
-    expect((await db.select().from(narrativeDrivers)).map((d) => d.id).sort()).toEqual([`${SYMBOL}:short:1`, `${SYMBOL}:short:2`]);
-    expect((await db.select().from(analyses)).map((a) => a.side)).toEqual(["short"]);
-    // One narrative per ticker, never two in parallel, wherever the price sits.
-    await db.update(gold.quotes).set({ close: 41000 }).where(eq(gold.quotes.symbol, SYMBOL));
+    expect((await db.select().from(narratives)).map((n) => [n.id, n.side])).toEqual([[`${SYMBOL}:long`, "long"]]);
+    expect((await db.select().from(analyses)).map((a) => a.side)).toEqual(["long"]);
+    // His game is explained to the model, never enforced: a long priced above its value is not a trade, depart only with a reason.
+    expect(analysisPrompts[0]).toContain("Quote: 50000 KRW");
+    const [row] = await db.select().from(bronze).where(and(eq(bronze.dimension, "analysis"), eq(bronze.subject, SYMBOL)));
+    expect(row.error).toBeNull();
+    // The other way: a price BELOW the range can carry an optimistic story; one narrative per ticker, wherever the price sits.
+    answer = answerOf("short");
+    await db.update(gold.quotes).set({ close: 30000 }).where(eq(gold.quotes.symbol, SYMBOL));
     calls = [];
     analysisPrompts = [];
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect(calls.filter((c) => c === "analysis")).toHaveLength(1);
-    expect(await db.select().from(narratives)).toHaveLength(1);
-    // The previous version is handed back to keep word for word.
-    expect(analysisPrompts[0]).toContain("Your previous version of this narrative");
+    expect(calls).toEqual(["analysis"]);
+    expect((await db.select().from(narratives)).map((n) => [n.id, n.side, n.sideWhy])).toEqual([[`${SYMBOL}:short`, "short", "The price prices a recovery the figures do not show."]]);
+    // The previous version is handed back to keep word for word, beliefs by label.
+    expect(analysisPrompts[0]).toContain("Your previous answer:");
     expect(analysisPrompts[0]).toContain("Keep it WORD FOR WORD");
     expect(analysisPrompts[0]).toContain('"priceDriver": "P1"');
   });
 
-  it("a Price Driver left out is asked once more, then fails loud; a driver without a chart of its own gets its Price Driver's series", async () => {
+  it("which Price Drivers explain it is the model's call: one left out simply has no belief; a noise narrative carries none and clears step D's old readings", async () => {
     await trustPriceDrivers();
-    answer = answerOf("long", ["P2"]);
+    answer = answerOf("long", ["P2"], "weak");
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["analysis", "analysis"]);
-    expect(analysisPrompts[1]).toContain("Price Drivers P1 had no narrative driver.");
-    const [row] = await db.select().from(bronze).where(and(eq(bronze.dimension, "analysis"), eq(bronze.subject, SYMBOL)));
-    expect(row.error).toBe("Price Drivers P1 have no narrative driver");
-    expect(await db.select().from(narratives)).toEqual([]);
-    // Its own figure as its chart when the model gave none it could bind.
-    const full = answerOf("long");
-    answer = { ...full, drivers: full.drivers.map((d) => ({ ...d, exhibits: [] })) };
+    expect(calls).toEqual(["analysis"]);
+    expect(await db.select().from(narratives)).toMatchObject([{ side: "long", confidence: "weak" }]);
+    const beliefs = async () => Object.fromEntries((await db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, SYMBOL))).map((k) => [k.name, k.marketBelief]));
+    expect(await beliefs()).toEqual({ Revenue: null, "Net cash": "The market sees the net cash as idle.", Headcount: null });
+    // Step C answers noise: no story explains the gap. The narrative row says so; no belief; the readings made against the old story go.
+    await db.update(kpiDrivers).set({ reversal: reversal("long"), signal: "strong", signalWhy: "old" }).where(eq(kpiDrivers.id, PD_CASH));
+    await db.update(kpiDrivers).set({ level: "weak" }).where(eq(kpiDrivers.id, PD_CYCLE));
+    answer = { ...answerOf("long", ["P1", "P2"], "noise"), narrative: "No clear story explains where Worldex trades." };
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect((await db.select().from(exhibits)).filter((e) => !e.driverId.endsWith("rationale")).map((e) => [e.driverId, e.title, e.series.map((s) => s.key)])).toEqual([[`${SYMBOL}:long:1`, "Revenue", ["line:revenue"]]]);
+    const [n] = await db.select().from(narratives);
+    expect(n).toMatchObject({ confidence: "noise", text: "No clear story explains where Worldex trades." });
+    expect(holdsNarrative(n)).toBe(false);
+    expect(await beliefs()).toEqual({ Revenue: null, "Net cash": null, Headcount: null });
+    expect((await db.select().from(kpiDrivers).where(eq(kpiDrivers.id, PD_CASH)))[0]).toMatchObject({ reversal: null, signal: null, signalWhy: null });
   });
 
-  it("a news item never re-writes the narrative (news stay out of the hash); a change in a Price Driver does", async () => {
+  it("an unreadable answer is asked once more, then fails loud", async () => {
+    await trustPriceDrivers();
+    answer = { ...answerOf("long"), confidence: "certain" as never };
+    await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
+    expect(calls).toEqual(["analysis", "analysis"]);
+    expect(analysisPrompts[1]).toContain('It could not be read (analysis: confidence "certain" is not strong, weak or noise)');
+    const [row] = await db.select().from(bronze).where(and(eq(bronze.dimension, "analysis"), eq(bronze.subject, SYMBOL)));
+    expect(row.error).toContain('confidence "certain"');
+    expect(await db.select().from(narratives)).toEqual([]);
+  });
+
+  it("a news item or a reversal never re-writes the narrative; a change in a Price Driver does", async () => {
     await trustPriceDrivers();
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    await db.insert(gold.filings).values({ id: "6f1d1a52-3333-4a3b-9c1d-000000000001", symbol: SYMBOL, registry: "dart", filingKey: "h1", form: null, title: "Q3 results", filedAt: new Date(), url: null, language: "ko", sources: ["dart"] });
-    // Its reversal is read after the narrative: never a reason to rewrite it either.
+    await seedBuyback();
     await db.update(kpiDrivers).set({ reversal: reversal("long") }).where(eq(kpiDrivers.id, PD_CASH));
     calls = [];
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
     expect(calls).toEqual([]);
     await db.update(kpiDrivers).set({ level: "weak" }).where(eq(kpiDrivers.id, PD_CASH));
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["analysis", "rationale", "report"]);
-    // Same words = same version: the judgments built on the narrative stay valid.
-    expect(new Set((await db.select().from(analyses)).map((a) => a.side))).toEqual(new Set(["long"]));
+    expect(calls).toEqual(["analysis"]);
     expect(await db.select().from(analyses)).toHaveLength(2);
+    // The rewrite states the belief again, on the Price Driver.
+    expect((await db.select().from(kpiDrivers).where(eq(kpiDrivers.id, PD_CASH)))[0].marketBelief).toBe("The market sees the net cash as idle.");
   });
 
-  it("the whole chain: narrative, reversals against it, evidence per driver, then the signal; the first signal is the baseline", async () => {
+  it("the whole chain C -> D -> E: the narrative, each Price Driver read against it, then step E's own stored judgment gives the signal", async () => {
     await trustPriceDrivers();
+    await seedNote(db, SYMBOL, "I see Worldex as mispriced on its cash pile.");
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
+    calls = [];
     await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
-    // No reversal read yet: no signal, the baseline.
+    // Step D has read nothing yet: step E is not asked, no signal, the baseline.
+    expect(calls).toEqual([]);
     expect((await db.select().from(signals).where(eq(signals.symbol, SYMBOL)))[0]).toMatchObject({ signal: "none", strength: "noise" });
     expect(await db.select().from(signalChanges)).toHaveLength(0);
 
-    const filingId = "6f1d1a52-1111-4a3b-9c1d-000000000001";
-    await db.insert(gold.filings).values({ id: filingId, symbol: SYMBOL, registry: "dart", filingKey: "r1", form: null, title: "Share buyback trust", filedAt: new Date(), url: "https://dart/x", language: "ko", sources: ["dart"] });
-    // A filing older than the 12-month window is not judged.
-    await db.insert(gold.filings).values({ id: "6f1d1a52-1111-4a3b-9c1d-000000000002", symbol: SYMBOL, registry: "dart", filingKey: "r0", form: null, title: "Old notice", filedAt: new Date(Date.now() - 400 * 86_400_000), url: null, language: "ko", sources: ["dart"] });
-    calls = [];
+    const buyback = await seedBuyback();
     await runDimension(db, kpiReversalDim, { trigger: "test", ctx: ctx() });
-    // One reading per trusted Price Driver, each against the narrative the analysis just wrote.
+    // D: one reading per Price Driver, each against the narrative and THAT driver's belief.
     expect(calls).toEqual(["reversal", "reversal"]);
     expect(reversalPrompts[0]).toContain("The narrative (side long: the PESSIMISTIC story");
-    expect(reversalPrompts[1]).toContain("What the market believes about this Price Driver (Balance sheet & capital): Net cash is seen as idle.");
+    expect(reversalPrompts[0]).toContain("held with strong confidence");
+    expect(reversalPrompts[1]).toContain("What the market believes about this Price Driver: The market sees the net cash as idle.");
+    expect(reversalPrompts[1]).toContain("Share buyback trust");
+    expect(reversalPrompts[1]).toContain("I see Worldex as mispriced on its cash pile.");
     const pds = await db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, SYMBOL));
     expect(Object.fromEntries(pds.map((k) => [k.name, k.reversal ? `${k.reversal.stance}:${k.reversal.strength}:${k.reversal.turn}` : null]))).toEqual({ Revenue: "none:none:null", "Net cash": "against:strong:inflection", Headcount: null });
+    // The leading indicator keeps the known label only (L9 dropped).
+    expect(pds.find((k) => k.id === PD_CASH)!.reversal!.leading.events.map((e) => e.id)).toEqual([buyback]);
 
+    // E: ONE call, given C and D (and Thierry's inputs), stored as its own judgment.
     calls = [];
-    await runDimension(db, evidenceDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["evidence"]);
-    const all = await db.select().from(evidence);
-    expect(all).toHaveLength(1);
-    const [e] = all;
-    // One verdict per driver; the item's top line is its strongest verdict.
-    expect(e.verdicts.map((v) => [v.driverId, v.effect, v.strength, v.pricedIn])).toEqual([[`${SYMBOL}:long:1`, "noise", "noise", "none"], [`${SYMBOL}:long:2`, "reversal", "strong", "none"]]);
-    expect(e).toMatchObject({ id: `${SYMBOL}|filing:${filingId}`, headline: "Share buyback trust", filingIds: [filingId], driverId: `${SYMBOL}:long:2`, effect: "reversal", strength: "strong", exhibitId: `${SYMBOL}:long:2:1` });
-    expect(lastEvidencePrompt).toContain("pessimistic narrative: the PESSIMISTIC story");
-    expect(lastEvidencePrompt).toContain("fair value 40000 (range 35000 to 46000)");
-
     await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
+    expect(calls).toEqual(["signal", "note"]);
+    const sp = signalPrompts[0];
+    expect(sp).toContain("Step C, the narrative (side long: the PESSIMISTIC story");
+    expect(sp).toContain("held with strong confidence): The market prices Worldex as a cyclical parts maker.");
+    expect(sp).toContain("Step D, each Price Driver read against the narrative:");
+    expect(sp).toContain("P1 Revenue (strong confidence that the price trades on it).");
+    expect(sp).toContain("  Reading: noise.");
+    expect(sp).toContain("P2 Net cash (strong confidence that the price trades on it).");
+    expect(sp).toContain("  The market believes: The market sees the net cash as idle.");
+    expect(sp).toContain("  Reading: in REVERSAL against the narrative, strong. The buyback puts the idle cash to work.");
+    expect(sp).toContain("I see Worldex as mispriced on its cash pile.");
+    expect(sp).not.toContain("Headcount");
+    const stored = await db.select().from(silver.judgments).where(eq(silver.judgments.subjectKind, "signal"));
+    expect(stored).toMatchObject([{ subjectId: SYMBOL, verdict: "strong", reason: "Net cash turns: the buyback puts 10% of the idle cash to work." }]);
+    expect(stored[0].questionKey).toMatch(/^signal@v1:/);
     const [s] = await db.select().from(signals).where(eq(signals.symbol, SYMBOL));
-    // A pessimistic story + a Price Driver turning against it = BUY, at that reversal's strength, with the news behind it.
-    expect(s).toMatchObject({ signal: "BUY", strength: "strong", side: "long", fairValue: 40000, quote: 30000, evidenceIds: [e.id], why: "Net cash: The buyback puts the idle cash to work." });
-    expect(s.theses).toEqual([{ side: "long", signal: "strong", effect: "reversal", strength: "strong", why: "Net cash: The buyback puts the idle cash to work.", since: null }]);
+    // A pessimistic narrative turning = BUY, at step E's confidence; why = E's sentence; its ids = the events the leading Price Driver's reversal read.
+    expect(s).toMatchObject({ signal: "BUY", strength: "strong", side: "long", fairValue: 40000, quote: 30000, evidenceIds: [buyback], why: "Net cash turns: the buyback puts 10% of the idle cash to work." });
+    expect(s.theses).toEqual([{ side: "long", signal: "strong", effect: "reversal", strength: "strong", why: "Net cash turns: the buyback puts 10% of the idle cash to work.", since: null }]);
     expect(s.gapPct).toBeCloseTo(-0.25, 6);
     const [change] = await db.select().from(signalChanges);
-    expect(change).toMatchObject({ symbol: SYMBOL, fromSignal: "none", toSignal: "BUY", toStrength: "strong", updateNote: "BUY: a buyback trust turns the cash story." });
+    expect(change).toMatchObject({ symbol: SYMBOL, fromSignal: "none", toSignal: "BUY", toStrength: "strong", updateNote: "BUY: a buyback trust turns the cash story.", evidenceIds: [buyback] });
+
+    // Stored once per input: the same C and D ask nothing, a new input of Thierry's neither.
+    calls = [];
+    await seedNote(db, SYMBOL, "A later thought.");
+    await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
+    expect(calls).toEqual([]);
 
     // A note written by an older prompt is written again once.
     await db.update(signalStates).set({ updateNote: "A long paragraph of fair value arithmetic.", noteVersion: null }).where(eq(signalStates.baseline, 0));
-    calls = [];
     await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
     expect(calls).toEqual(["note"]);
-    expect((await db.select().from(signalChanges))[0].updateNote).toBe("BUY: a buyback trust turns the cash story.");
-    calls = [];
-    await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual([]);
 
-    // The judge now reads the driver as going WITH the story: nothing against it, no signal.
+    // The signal is E's call, not a rule on D: the same reversal, and E answers weak, then noise.
+    turning = { turning: "weak", lead: "P2", why: "The buyback is small against the cash pile." };
+    await db.delete(silver.judgments).where(eq(silver.judgments.subjectKind, "signal"));
+    await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
+    expect((await db.select().from(signals).where(eq(signals.symbol, SYMBOL)))[0]).toMatchObject({ signal: "BUY", strength: "weak", why: "The buyback is small against the cash pile." });
+    turning = { turning: "noise", lead: null, why: "One buyback does not turn the cyclical story." };
+    await db.delete(silver.judgments).where(eq(silver.judgments.subjectKind, "signal"));
+    await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
+    expect((await db.select().from(signals).where(eq(signals.symbol, SYMBOL)))[0]).toMatchObject({ signal: "none", strength: "noise", side: null, evidenceIds: [], why: "One buyback does not turn the cyclical story." });
+
+    // A new D reading (the driver now in continuation) is a new input: E is asked again.
     cash = { stance: "with", strength: "strong" };
     await db.update(narratives).set({ version: "v-next" });
     await runDimension(db, kpiReversalDim, { trigger: "test", ctx: ctx() });
+    calls = [];
+    signalPrompts = [];
     await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
-    expect((await db.select().from(signals).where(eq(signals.symbol, SYMBOL)))[0]).toMatchObject({ signal: "none", strength: "noise", side: null, evidenceIds: [] });
+    expect(calls).toContain("signal");
+    expect(signalPrompts[0]).toContain("  Reading: in CONTINUATION of the narrative, strong.");
   });
 
-  it("an item is judged again only for the driver whose words changed", async () => {
+  it("D and E run only when C holds the narrative with weak or strong confidence", async () => {
     await trustPriceDrivers();
+    answer = answerOf("long", ["P1", "P2"], "noise");
     await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    await db.insert(gold.filings).values({ id: "6f1d1a52-4444-4a3b-9c1d-000000000001", symbol: SYMBOL, registry: "dart", filingKey: "s1", form: null, title: "Share buyback trust", filedAt: new Date(), url: null, language: "ko", sources: ["dart"] });
-    await runDimension(db, evidenceDim, { trigger: "test", ctx: ctx() });
-    const before = (await db.select().from(evidence))[0].verdicts.find((v) => v.rank === 2)!.judgmentId;
-    await db.update(narrativeDrivers).set({ text: "Revenue fell 5% in 2025 as memory makers cut capex." }).where(eq(narrativeDrivers.id, `${SYMBOL}:long:1`));
+    await seedBuyback();
     calls = [];
-    await runDimension(db, evidenceDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["evidence"]);
-    const [e] = await db.select().from(evidence);
-    expect(e.verdicts.find((v) => v.rank === 2)!.judgmentId).toBe(before);
-    expect(e.verdicts).toHaveLength(2);
-    calls = [];
-    await runDimension(db, evidenceDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual([]);
-  });
-
-  it("the prompt: the side is the model's call, the drivers are the Price Drivers and nothing else", () => {
-    const p = analysisPrompt("facts", "PRICE DRIVERS BLOCK", ["P1", "P2", "P3"]);
-    expect(p).toContain("PRICE DRIVERS BLOCK");
-    expect(p).toContain("The side is YOUR call");
-    expect(p).toContain("No rule decides it for you");
-    expect(p).toContain("never add a reason of your own, never leave a Price Driver out");
-    expect(p).toContain("exactly one per Price Driver (P1, P2, P3)");
-    expect(p).not.toContain("Your previous version");
-  });
-
-  it("parses the side and one driver per known label; an unknown label or a repeat is dropped, a bad category or side fails loud", () => {
-    const labels = new Map([["P1", "X:kpi:a"], ["P2", "X:kpi:b"]]);
-    const d = (priceDriver: string, category = "Consensus expectations") => ({ priceDriver, category, title: `About ${priceDriver}`, text: "t", exhibits: [] });
-    const a = parseAnalysis(JSON.stringify({ side: "short", sideWhy: "why", narrative: "n", drivers: [d("P2"), d("P7"), d("P2"), d("P1")] }), labels);
-    expect(a).toMatchObject({ side: "short", sideWhy: "why" });
-    expect(a.drivers.map((x) => [x.title, x.kpiDriverId])).toEqual([["About P2", "X:kpi:b"], ["About P1", "X:kpi:a"]]);
-    expect(() => parseAnalysis(JSON.stringify({ side: "short", narrative: "n", drivers: [d("P1", "Expectations")] }), labels)).toThrow(/not a Driver Category/);
-    expect(() => parseAnalysis(JSON.stringify({ side: "both", narrative: "n", drivers: [d("P1")] }), labels)).toThrow(/not long or short/);
-    expect(() => parseAnalysis(JSON.stringify({ side: "long", narrative: "n", drivers: [d("P9")] }), labels)).toThrow(/no narrative driver names a Price Driver/);
-  });
-
-  it("still reads the moves the market made on the business, as context (INFLECTION-1117)", async () => {
-    const move = (day: string, z: number, kind: "fundamental" | "macro", fact: string) => ({ m: { id: `${SYMBOL}:${day}`, symbol: SYMBOL, startDay: day, endDay: day, lastStart: day, bench: "KOSDAQ", days: 1, currency: "KRW", closeBefore: 1000, closeEnd: 1200, returnPct: 0.2, benchReturn: 0.01, abnormal: 0.19, z, beta: 1, direction: "up" as const }, c: { id: `${SYMBOL}:${day}`, symbol: SYMBOL, kind, fact, category: kind === "fundamental" ? ("Business economics" as const) : null, cites: [], candidates: 1, confidence: 0.8, judgmentId: null } });
-    const rows = [move("2026-06-01", 5.1, "fundamental", "First-half orders doubled on two multi-year contracts."), move("2026-03-10", 3, "macro", "The KOSDAQ fell on rate fears.")];
-    await db.insert(priceMoves).values(rows.map((r) => r.m));
-    await db.insert(priceMoveCauses).values(rows.map((r) => r.c));
-    const m = await movesText(db, SYMBOL, new Date("2026-11-17T00:00:00Z"));
-    expect(m.text).toContain("[move 2026-06-01]");
-    expect(m.text).toContain("First-half orders doubled");
-    expect(m.text).not.toContain("rate fears");
-    expect(m.text).toContain("Also 1 significant move caused by the market at large or by trading");
-  });
-});
-
-describe("Too old (Kevin 2026-11-06)", () => {
-  it("news from before the month the current story took hold are Too old: never judged, never under a driver, never a signal", async () => {
-    await trustPriceDrivers();
-    await runDimension(db, analysis, { trigger: "test", ctx: ctx() });
-    await db.insert(gold.priceBars).values([{ symbol: SYMBOL, date: new Date(Date.now() - 100 * 86_400_000).toISOString().slice(0, 10), open: 40000, high: 40000, low: 40000, close: 40000, volume: 1, sources: ["naver"], alternatives: [] }, { symbol: SYMBOL, date: new Date().toISOString().slice(0, 10), open: 30000, high: 30000, low: 30000, close: 30000, volume: 1, sources: ["naver"], alternatives: [] }]);
-    // Its local index (KOSDAQ): the significant moves are measured against it.
-    await db.insert(gold.priceBars).values([100, 0].map((d) => ({ symbol: "^KQ11", date: new Date(Date.now() - d * 86_400_000).toISOString().slice(0, 10), close: 800, sources: ["yahoo"], alternatives: [] })) as never);
-    calls = [];
-    await runDimension(db, narrativeSinceDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["since"]);
-    calls = [];
-    await runDimension(db, narrativeSinceDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual([]);
-
-    const recent = "6f1d1a52-2222-4a3b-9c1d-000000000001";
-    const old = "6f1d1a52-2222-4a3b-9c1d-000000000002";
-    await db.insert(gold.filings).values([
-      { id: recent, symbol: SYMBOL, registry: "dart", filingKey: "n1", form: null, title: "Share buyback trust", filedAt: new Date(), url: null, language: "ko", sources: ["dart"] },
-      { id: old, symbol: SYMBOL, registry: "dart", filingKey: "n0", form: null, title: "New debt agreement", filedAt: new Date(Date.now() - 120 * 86_400_000), url: null, language: "ko", sources: ["dart"] },
-    ]);
-    calls = [];
-    await runDimension(db, evidenceDim, { trigger: "test", ctx: ctx() });
-    expect(calls).toEqual(["evidence"]);
-    expect(lastEvidencePrompt).toContain("Share buyback trust");
-    expect(lastEvidencePrompt).not.toContain("New debt agreement");
-    const rows = await db.select().from(evidence);
-    const tooOld = rows.find((r) => r.id === `${SYMBOL}|filing:${old}`)!;
-    expect(tooOld).toMatchObject({ effect: "too-old", strength: "noise", driverId: null, verdicts: [] });
-    expect(tooOld.why).toMatch(/^Before \w+ \d{4}, when the market adopted its current story/);
-    expect(rows.find((r) => r.id === `${SYMBOL}|filing:${recent}`)).toMatchObject({ effect: "reversal", strength: "strong" });
-
-    // The signal's news are the reversals judged on the turning driver: a Too old item is never one.
     await runDimension(db, kpiReversalDim, { trigger: "test", ctx: ctx() });
     await runDimension(db, signalsDim, { trigger: "test", ctx: ctx() });
-    const [s] = await db.select().from(signals).where(eq(signals.symbol, SYMBOL));
-    expect(s.evidenceIds).toEqual([`${SYMBOL}|filing:${recent}`]);
+    expect(calls).toEqual([]);
+    expect(await db.select().from(bronze).where(eq(bronze.dimension, "kpi-reversal"))).toEqual([]);
+    expect((await db.select().from(signals).where(eq(signals.symbol, SYMBOL)))[0]).toMatchObject({ signal: "none", strength: "noise", side: null });
+  });
+
+  it("the prompt asks the architecture's question and explains the game, never a coded rule", () => {
+    const p = analysisPrompt("facts", "PRICE DRIVERS BLOCK", ["P1", "P2", "P3"]);
+    expect(p).toContain("PRICE DRIVERS BLOCK");
+    expect(p).toContain("The side and the confidence are YOUR call");
+    expect(p).toContain("never add a reason of your own");
+    expect(p).toContain("one per Price Driver that EXPLAINS the narrative (among P1, P2, P3; at least one)");
+    expect(p).not.toContain("Your previous answer");
+    expect(p).not.toContain("category");
+    expect(p).not.toContain("exhibits");
+  });
+
+  it("parses side, confidence and one belief per known label; an unknown label or a repeat is dropped; a bad side or confidence fails loud", () => {
+    const labels = new Map([["P1", "X:kpi:a"], ["P2", "X:kpi:b"]]);
+    const b = (priceDriver: string) => ({ priceDriver, belief: `About ${priceDriver}` });
+    const a = parseAnalysis(JSON.stringify({ side: "short", sideWhy: "why", confidence: "weak", narrative: "n", beliefs: [b("P2"), b("P7"), b("P2"), b("P1")] }), labels);
+    expect(a).toMatchObject({ side: "short", sideWhy: "why", confidence: "weak" });
+    expect(a.beliefs!.map((x) => [x.belief, x.kpiDriverId])).toEqual([["About P2", "X:kpi:b"], ["About P1", "X:kpi:a"]]);
+    expect(() => parseAnalysis(JSON.stringify({ side: "both", confidence: "weak", narrative: "n", beliefs: [b("P1")] }), labels)).toThrow(/not long or short/);
+    expect(() => parseAnalysis(JSON.stringify({ side: "long", narrative: "n", beliefs: [b("P1")] }), labels)).toThrow(/not strong, weak or noise/);
+    expect(() => parseAnalysis(JSON.stringify({ side: "long", confidence: "strong", narrative: "n", beliefs: [b("P9")] }), labels)).toThrow(/names no Price Driver/);
+    // Noise: no narrative explains the gap, so no Price Driver explains it either.
+    expect(parseAnalysis(JSON.stringify({ side: "long", confidence: "noise", narrative: "n", beliefs: [b("P1")] }), labels).beliefs).toEqual([]);
+  });
+
+  it("reads every significant unbiased move with the events of its week, no verdict on any of them", async () => {
+    const move = (day: string, z: number) => ({ id: `${SYMBOL}:${day}`, symbol: SYMBOL, startDay: day, endDay: day, lastStart: day, bench: "KOSDAQ", days: 1, currency: "KRW", closeBefore: 1000, closeEnd: 1200, returnPct: 0.2, benchReturn: 0.01, abnormal: 0.19, z, beta: 1, direction: "up" as const });
+    await db.insert(priceMoves).values([move("2026-06-01", 5.1), move("2026-03-10", 3)]);
+    await db.insert(driverEvents).values({ id: `${SYMBOL}|news:n1`, symbol: SYMBOL, kind: "news", sourceId: "n1", day: "2026-03-10", title: "Korean chip parts makers fall on rate fears", url: null, stock: 0.2, benchReturn: 0.01, beta: 1, reaction: 0.19, z: 3, bench: "KOSDAQ", moveId: `${SYMBOL}:2026-03-10` });
+    const m = await movesText(db, SYMBOL, new Date("2026-11-17T00:00:00Z"));
+    expect(m.text).toContain("- 2026-06-01: stock +20.0%, KOSDAQ +1.0% (5.1x its usual 1-week move). Events that week: none stored");
+    // An industry or market-wide news that week is listed like any other: nothing is filtered out.
+    expect(m.text).toContain("Events that week: 2026-03-10 Korean chip parts makers fall on rate fears");
+    expect(m.text).not.toMatch(/caused by the market|business cause/);
   });
 });
 
-describe("the signal (Kevin 2026-11-24): the narrative's side x the strongest reversal against it", () => {
+describe("step E, the signal: the narrative reversal is its own LLM judgment", () => {
   const pd = (rank: number, name: string, r: ReturnType<typeof reversal> | null) => ({ id: `X:kpi:${rank}`, name, rank, reversal: r });
-  it("a pessimistic story + a Price Driver turning against it = BUY at that reversal's strength; an optimistic one = SELL", () => {
-    expect(signalFrom("long", [pd(1, "Net income", reversal("long", { strength: "weak", why: "Profit turns up." }))])).toMatchObject({ signal: "BUY", strength: "weak", side: "long", kpiDriverId: "X:kpi:1", why: "Net income: Profit turns up." });
-    expect(signalFrom("short", [pd(1, "Store sales", reversal("short"))])).toMatchObject({ signal: "SELL", strength: "strong", side: "short" });
+  const t = (strength: Strength, kpiDriverId: string | null = "X:kpi:1", why = "Profit turns up."): Turning => ({ strength, why, kpiDriverId });
+  it("a pessimistic narrative turning = BUY at step E's confidence; an optimistic one = SELL; noise or no reading = no signal", () => {
+    expect(signalFrom("long", t("weak"))).toEqual({ signal: "BUY", strength: "weak", side: "long", kpiDriverId: "X:kpi:1", why: "Profit turns up.", effect: "reversal" });
+    expect(signalFrom("short", t("strong"))).toMatchObject({ signal: "SELL", strength: "strong", side: "short" });
+    const none = { signal: "none", strength: "noise", side: null, kpiDriverId: null, effect: "noise" };
+    expect(signalFrom("long", t("noise", null, "Nothing turns."))).toEqual({ ...none, why: "Nothing turns." });
+    expect(signalFrom("long", null)).toEqual({ ...none, why: null });
+    expect(signalFrom(null, t("strong"))).toMatchObject(none);
   });
-  it("the strongest one against the narrative is the signal: strong before weak, then by rank", () => {
-    const drivers = [pd(1, "A", reversal("long", { strength: "weak" })), pd(2, "B", reversal("long")), pd(3, "C", reversal("long"))];
+  it("the answer, typed: strong | weak | noise, the lead by its label (an unknown one dropped), a bad word fails loud", () => {
+    const labels = new Map([["P1", "X:kpi:1"]]);
+    expect(parseTurning(JSON.stringify({ turning: "strong", lead: "P1", why: "w" }), labels)).toEqual({ strength: "strong", why: "w", kpiDriverId: "X:kpi:1" });
+    expect(parseTurning(JSON.stringify({ turning: "weak", lead: "P9", why: "w" }), labels)).toEqual({ strength: "weak", why: "w", kpiDriverId: null });
+    expect(parseTurning(JSON.stringify({ turning: "noise", lead: "P1", why: "w" }), labels).kpiDriverId).toBeNull();
+    expect(() => parseTurning(JSON.stringify({ turning: "maybe", why: "w" }), labels)).toThrow(/strong, weak or noise/);
+    expect(SIGNAL_SYSTEM).toContain("Decide yourself, never by counting");
+  });
+  it("what the outputs draw: the Price Drivers step D read in reversal against the narrative, strong before weak, then by rank", () => {
+    const drivers = [pd(1, "A", reversal("long", { strength: "weak" })), pd(2, "B", reversal("long")), pd(3, "C", reversal("long")), pd(4, "D", reversal("long", { stance: "with" })), pd(5, "E", reversal("short"))];
     expect(driversAgainst("long", drivers).map((k) => k.name)).toEqual(["B", "C", "A"]);
-    expect(signalFrom("long", drivers)).toMatchObject({ signal: "BUY", strength: "strong", kpiDriverId: "X:kpi:2" });
   });
-  it("nothing against the narrative = no signal: with it, none, not read yet, read against another side, or a v1 reading without a stance", () => {
-    const none = { signal: "none", strength: "noise", side: null, kpiDriverId: null };
-    expect(signalFrom("long", [pd(1, "A", reversal("long", { stance: "with", strength: "none", turn: null }))])).toMatchObject({ ...none, effect: "continuation" });
-    expect(signalFrom("long", [pd(1, "A", reversal("long", { stance: "none", strength: "none", turn: null }))])).toMatchObject({ ...none, effect: "noise" });
-    expect(signalFrom("long", [pd(1, "A", null)])).toMatchObject(none);
-    // Read against the story's old side (the narrative flipped since): not a turn against today's story.
-    expect(signalFrom("short", [pd(1, "A", reversal("long"))])).toMatchObject(none);
-    expect(signalFrom("long", [pd(1, "A", { ...reversal("long"), stance: undefined, side: undefined })])).toMatchObject(none);
-    expect(signalFrom(null, [pd(1, "A", reversal("long"))])).toMatchObject(none);
-    expect(signalFrom("long", [])).toMatchObject({ ...none, why: null });
-  });
-  it("no rule on the price: the side is the analysis' call, so a BUY above the fair value stands when the judges say so", () => {
-    const r = readingOf({ value: 100, currency: "USD", method: "m" }, { close: 105, currency: "USD", date: "2026-11-20" }, "long", [pd(1, "A", reversal("long"))], ["e1"]);
+  it("no rule on the price: a BUY above the fair value stands when step E says the narrative turns", () => {
+    const r = readingOf({ value: 100, currency: "USD", method: "m" }, { close: 105, currency: "USD", date: "2026-11-20" }, "long", t("strong"), ["e1"]);
     expect(r).toMatchObject({ signal: "BUY", strength: "strong", side: "long", evidenceIds: ["e1"] });
     expect(r.gapPct).toBeCloseTo(0.05, 6);
-    expect(readingOf(null, null, "long", [], ["e1"])).toMatchObject({ signal: "none", evidenceIds: [], theses: [{ side: "long", signal: "noise", effect: "noise" }] });
+    expect(readingOf(null, null, "long", t("noise"), ["e1"])).toMatchObject({ signal: "none", evidenceIds: [], theses: [{ side: "long", signal: "noise", effect: "noise" }] });
   });
-  it("subject grammar and verdict order", () => {
-    expect(parseEvidenceSubject("101160.KQ|news:abc-1#long:2")).toEqual({ symbol: "101160.KQ", kind: "news", id: "abc-1", side: "long", rank: 2 });
-    expect(parseBatchSubject(batchSubject("CCLD", "short", [{ kind: "news", id: "a:1" }, { kind: "filing", id: "b" }]))).toEqual({ symbol: "CCLD", side: "short", items: [{ kind: "news", id: "a:1" }, { kind: "filing", id: "b" }] });
-    const order = (["continuation:weak", "reversal:weak", "noise:noise", "continuation:strong", "reversal:strong"] as const).map((t) => t.split(":") as [string, string]);
-    expect([...order].sort((a, b) => verdictRank({ effect: a[0] as never, strength: a[1] as never }) - verdictRank({ effect: b[0] as never, strength: b[1] as never })).map((x) => x.join(":"))).toEqual(["reversal:strong", "continuation:strong", "reversal:weak", "continuation:weak", "noise:noise"]);
+  it("the signal's ids are the events the leading Price Driver's reversal read, newest first", () => {
+    const e = (id: string, day: string) => ({ id, day, kind: "news" as const, title: id, sourceId: id, url: null });
+    expect(eventsBehind({ reversal: reversal("long", { leading: { probability: "high", why: "w", events: [e("a", "2026-10-01"), e("b", "2026-11-01")] } }) })).toEqual(["b", "a"]);
+    expect(eventsBehind(undefined)).toEqual([]);
   });
 });
 
-describe("Market Reaction (Kevin 2026-11-09)", () => {
-  const bars = [
-    { date: "2026-10-30", close: 18.42 },
-    { date: "2026-11-02", close: 17.98 },
-    { date: "2026-11-03", close: 19.03 },
-    { date: "2026-11-04", close: 20.51 },
-    { date: "2026-11-05", close: 23.36 },
-    { date: "2026-11-06", close: 23.85 },
-  ];
-  const bench = bars.map((b) => ({ date: b.date, close: 100 }));
-  const history = [{ day: "2026-11-06", value: 22.43, low: 17.05, high: 31.23 }];
-  it("what the price did around a news item vs the S&P 500, and the fair value then (the first one when the news is older) and now", () => {
-    const r = reactionOf({ id: "NVRI|news:x", symbol: "NVRI", day: "2026-11-05" }, bars, bench, history, { day: "2026-11-09", value: 23.8, low: 18.34, high: 27.45 }, "USD");
-    expect(r).toMatchObject({ beforeDay: "2026-11-04", closeBefore: 20.51, closeNext: 23.36, closeNow: 23.85, benchNext: 0, fvDay: "2026-11-06", fvThen: 22.43, fvNow: 23.8 });
-    expect(r.returnNext).toBeCloseTo(0.139, 3);
-    expect(reactionLine(r)).toContain("23.85 today (+16.3% since, S&P 500 +0.0%)");
-    expect(reactionLine(r)).toContain("fair value then 22.43 (range 17.05 to 31.23) (first computed 2026-11-06)");
-    expect(fairValueAt(history, "2026-11-07")?.value).toBe(22.43);
-  });
-  it("the minute view: the price when the news came out and now, 5-minute bars during a session, the close when shut", () => {
-    const at = new Date("2026-11-05T15:12:00Z");
-    const minute = {
-      eventAt: at,
-      atEvent: { price: 21, date: "2026-11-05", at: new Date("2026-11-05T15:10:00Z"), source: "intraday" as const },
-      now: { price: 23.1, date: "2026-11-09", at: new Date("2026-11-09T15:05:00Z"), source: "intraday" as const },
-      benchAtEvent: { price: 100, date: "2026-11-04", at: new Date("2026-11-04T21:00:00Z"), source: "close" as const },
-      benchNow: { price: 101, date: "2026-11-09", at: new Date("2026-11-09T15:05:00Z"), source: "intraday" as const },
-    };
-    const r = reactionOf({ id: "NVRI|news:x", symbol: "NVRI", day: "2026-11-05" }, bars, bench, history, null, "USD", minute);
-    expect(r.returnSinceEvent).toBeCloseTo(0.1);
-    expect(r.benchSinceEvent).toBeCloseTo(0.01);
-    expect(reactionLine(r)).toMatch(/^When it came out \(2026-11-05 15:12 UTC\) the price was 21\.00 \(2026-11-05 15:10 UTC\), now 23\.10 \(2026-11-09 15:05 UTC\): \+10\.0% since, S&P 500 \+1\.0%\. Daily closes: Price: 20\.51 the close before/);
-    const shut = reactionOf({ id: "NVRI|news:x", symbol: "NVRI", day: "2026-11-05" }, bars, bench, history, null, "USD", { ...minute, atEvent: { price: 20.51, date: "2026-11-04", at: new Date("2026-11-04T21:00:00Z"), source: "close" } });
-    expect(reactionLine(shut)).toContain("the price was 20.51 (2026-11-04 close, market shut)");
-    expect(reactionLine(reactionOf({ id: "NVRI|news:x", symbol: "NVRI", day: "2026-11-05" }, bars, bench, history, null, "USD"))).toMatch(/^Price: /);
-  });
-  it("the dimension writes the fair value history (last synthesis of each day) and one reaction per news item and filing", async () => {
+describe("Fair Value History (Kevin 2026-11-09)", () => {
+  it("the dimension writes the fair value history (last synthesis of each day); no per-news reaction any more", async () => {
     const synth = (at: string, base: number) => ({ symbol: SYMBOL, inputHash: at, result: { currency: "KRW", low: base * 0.9, base, high: base * 1.1, weights: [], label: "l", summary: "s", report: "r" }, model: "m", bronzeId: crypto.randomUUID(), createdAt: new Date(at) });
     await db.insert(valuationSyntheses).values([synth("2026-11-06T10:00:00Z", 38000), synth("2026-11-06T20:00:00Z", 39000), synth("2026-11-08T10:00:00Z", 40000)]);
-    await db.insert(gold.filings).values({ id: "6f1d1a52-4444-4a3b-9c1d-000000000001", symbol: SYMBOL, registry: "dart", filingKey: "m1", form: null, title: "Q3", filedAt: new Date(), url: null, language: "ko", sources: ["dart"] });
     await runDimension(db, marketReactionDim, { trigger: "test", ctx: ctx() });
     expect((await db.select().from(fairValueHistory)).map((h) => [h.day, h.value]).sort()).toEqual([["2026-11-06", 39000], ["2026-11-08", 40000]]);
-    expect(await db.select().from(marketReactions)).toMatchObject([{ id: `${SYMBOL}|filing:6f1d1a52-4444-4a3b-9c1d-000000000001`, fvNow: 40000 }]);
   });
 });
 
 describe("speed (Kevin 2026-11-06)", () => {
-  it("a batch answer missing an item x driver pair fails loud", () => {
-    expect(() => parseBatch(JSON.stringify({ items: [{ n: 1, drivers: { "1": { tag: "noise" } } }] }), 2, [1])).toThrow(/2#1/);
-    expect(parseBatch(JSON.stringify({ items: [{ n: 1, drivers: { "1": { tag: "reversal:weak", p: 2, why: "x" } } }] }), 1, [1]).get("1#1")).toEqual({ tag: "reversal:weak", p: 0.5, why: "x", cited: null, pricedIn: null });
-  });
   it("every dimension sits in exactly one stage, after the ones it reads", () => {
     expect(STAGES.flat().sort()).toEqual(DIMENSIONS.map((d) => d.name).sort());
     const at = (n: string) => STAGES.findIndex((s) => s.includes(n));
-    for (const [before, after] of [["company-profile", "news"], ["price", "financials"], ["filings", "financials"], ["consensus", "peers"], ["peers", "valuation"], ["valuation", "analysis"], ["valuation", "market-reaction"], ["move-causes", "analysis"], ["market-reaction", "evidence"], ["market-reaction", "move-causes"], ["move-causes", "kpi-drivers"], ["kpi-drivers", "analysis"], ["analysis", "kpi-reversal"], ["kpi-reversal", "signals"], ["analysis", "evidence"], ["analysis", "narrative-since"], ["narrative-since", "evidence"], ["evidence", "signals"], ["price", "intraday-price"], ["intraday-price", "financials"], ["intraday-price", "market-reaction"], ["intraday-price", "signals"], ["signals", "signal-alerts"]]) expect(at(before)).toBeLessThan(at(after));
-    expect(stagesFor(dimensionsFor("from:valuation")).map((s) => s.map((d) => d.name))).toEqual([["valuation"], ["market-reaction"], ["move-causes"], ["kpi-drivers"], ["analysis"], ["kpi-reversal", "narrative-since"], ["evidence"], ["signals"], ["signal-alerts"], ["emphasis"]]);
-    // kpi-drivers runs inside the normal chain (its judgments are stored once per input), and the chain rebuilds one ticker end to end.
+    for (const [before, after] of [["company-profile", "news"], ["price", "financials"], ["filings", "financials"], ["consensus", "peers"], ["peers", "valuation"], ["valuation", "analysis"], ["valuation", "market-reaction"], ["market-reaction", "kpi-drivers"], ["kpi-drivers", "analysis"], ["analysis", "kpi-reversal"], ["kpi-reversal", "signals"], ["price", "intraday-price"], ["intraday-price", "financials"], ["intraday-price", "market-reaction"], ["intraday-price", "signals"], ["signals", "signal-alerts"]]) expect(at(before)).toBeLessThan(at(after));
+    expect(stagesFor(dimensionsFor("from:valuation")).map((s) => s.map((d) => d.name))).toEqual([["valuation"], ["market-reaction"], ["kpi-drivers"], ["analysis"], ["kpi-reversal"], ["signals"], ["signal-alerts"], ["emphasis"]]);
+    // ONE chain in the order of docs/architecture.md: common objects, A + B, C, D, E; nothing else beside them.
     expect(ON_DEMAND_DIMENSIONS).not.toContain("kpi-drivers");
     expect(dimensionsFor("core").map((d) => d.name)).toEqual(expect.arrayContaining(["kpi-drivers", "analysis", "kpi-reversal", "signals"]));
-    for (const gone of ["narrative-state", "driver-confidence"]) expect(DIMENSIONS.map((d) => d.name)).not.toContain(gone);
-    expect(stagesFor(dimensionsFor("market-reaction,move-causes,kpi-drivers,analysis,kpi-reversal,signals")).map((s) => s.map((d) => d.name))).toEqual([["market-reaction"], ["move-causes"], ["kpi-drivers"], ["analysis"], ["kpi-reversal"], ["signals"]]);
+    for (const gone of ["narrative-state", "driver-confidence", "thesis", "evidence", "narrative-since", "move-causes"]) expect(DIMENSIONS.map((d) => d.name)).not.toContain(gone);
+    expect(stagesFor(dimensionsFor("market-reaction,kpi-drivers,analysis,kpi-reversal,signals")).map((s) => s.map((d) => d.name))).toEqual([["market-reaction"], ["kpi-drivers"], ["analysis"], ["kpi-reversal"], ["signals"]]);
   });
   it("the Sandbox writers never run in the daily collect", () => {
     for (const d of ["sandbox-posts", "sandbox-visuals", "sandbox-image-fix", "sandbox-review"]) expect(dimensionsFor("all").map((x) => x.name)).not.toContain(d);

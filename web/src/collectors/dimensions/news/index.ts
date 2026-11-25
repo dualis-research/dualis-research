@@ -19,7 +19,7 @@ const CHUNK = 200;
  * -> bronze.fetches -> silver.news_items + silver.news_mentions (one article, every source) -> gold feeds.
  * Runs after company-profile: Google News queries the resolved company name.
  * Every ACTIVE ticker, not only the analysis scope (DAILY-EMAIL-1123): the morning email covers the whole watchlist,
- * and a news fetch is a few HTTP calls; the heavy readers (evidence, move causes...) stay on the analysis scope.
+ * and a news fetch is a few HTTP calls; the heavy readers (price drivers, reversals...) stay on the analysis scope.
  */
 export const news: Dimension = {
   name: NEWS_DIMENSION,

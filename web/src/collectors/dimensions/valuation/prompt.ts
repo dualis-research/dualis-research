@@ -1,6 +1,6 @@
 import type { MethodResult, MethodWeight, PeerPricing, ValuationAssumption, ValuationMethodId } from "@/db/schema/valuation";
 import { firstJsonObject } from "@/llm/judge";
-import { stripDashes } from "../thesis/structure";
+import { stripDashes } from "@/llm/dashes";
 import { FACT_LABEL, peerMedian, peerPriced, bridgeTotal, type MethodSpec, type ValuationFacts } from "./methods";
 
 /** Bump when a prompt or the arithmetic changes meaning: every method and synthesis is asked again. */

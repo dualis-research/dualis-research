@@ -1,9 +1,10 @@
+import { sql } from "drizzle-orm";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { exhibits } from "@/db/schema/analysis";
+import { kpiDrivers } from "@/db/schema/analysis";
 import { reversal, setReversal } from "@/test/price-drivers";
 import * as content from "@/db/schema/content";
 import * as gold from "@/db/schema/gold";
@@ -179,6 +180,8 @@ describe("sandbox-posts", () => {
   });
 
   it("every post gets its OWN picture, drawn as its writer specified; X Article covers at 5:2", async () => {
+    // No Price Driver turning against the story: the story-break frame stays out, each post's own picture is what this reads.
+    await db.execute(sql`update gold.kpi_drivers set reversal = reversal || '{"stance":"none","strength":"none"}'::jsonb where reversal is not null`);
     await run(sandboxAccounts);
     await run(sandboxPosts);
     const report = await run(sandboxVisuals);
@@ -300,11 +303,15 @@ describe("sandbox-posts", () => {
 
   it("story-break frame: a company with a Price Driver turning against its narrative now gets the narrative + one reported-figure chart per reversing driver, on every account; no fair value anywhere", async () => {
     const day = (i: number) => new Date(Date.now() - (8 - i) * 91 * 86400_000).toISOString().slice(0, 10);
-    await db.insert(exhibits).values({ id: "CCLD:long:1:1", symbol: "CCLD", driverId: "CCLD:long:1", rank: 1, number: 1, title: "Revenue per quarter, $", chart: "line", series: [{ key: "revenue", label: "Revenue", unit: "usd", currency: "USD" } as never], points: Array.from({ length: 8 }, (_, i) => ({ period: day(i), values: { revenue: (40 + i) * 1e6 } })), takeaway: "t", sources: ["Company filings (SEC EDGAR)"] });
+    // The reversing Price Driver's own series is its chart: 8 quarters of revenue.
+    await db
+      .update(kpiDrivers)
+      .set({ measure: { source: "series", label: "Revenue per quarter", periodType: "quarter", unit: "currency", currency: "USD", providers: ["sec"] }, periods: Array.from({ length: 8 }, (_, i) => ({ period: day(i), periodType: "quarter" as const, value: (40 + i) * 1e6, prior: null, change: null, changeKind: "relative" as const, significant: false, why: null, releaseId: null, releaseDay: null, cite: null })) })
+      .where(eq(kpiDrivers.id, "CCLD:kpi:client-revenue"));
     await setReversal(db, "CCLD", reversal("long", { headline: "Revenue up 7% in Q3" }));
     const story = await storyBreak(db, "CCLD");
     expect(story?.signal).toEqual({ signal: "BUY", strength: "strong" });
-    expect(story?.drivers.map((d) => [d.title, d.tag, d.headline])).toEqual([["Client loss", "STRONG INFLECTION", "Revenue up 7% in Q3"]]);
+    expect(story?.drivers.map((d) => [d.title, d.tag, d.headline])).toEqual([["Client revenue", "STRONG INFLECTION", "Revenue up 7% in Q3"]]);
     // With a judge, the line's compared period is the one before the latest (boxed with it, the arrow between them).
     const judged = await storyBreak(db, "CCLD", complete);
     expect(judged?.drivers[0].base).toBe(day(6));
@@ -314,14 +321,14 @@ describe("sandbox-posts", () => {
     expect(report.error ?? report.sources.flatMap((x) => x.errors)).toEqual([]);
     const own = await db.select({ caption: sandbox.sandboxVisuals.caption, kind: sandbox.sandboxVisuals.kind }).from(sandbox.sandboxVisuals);
     expect(own).toHaveLength(6 * POSTS_PER_DAY);
-    expect(own.every((v) => v.caption === "Story break: Client loss")).toBe(true);
+    expect(own.every((v) => v.caption === "Story break: Client revenue")).toBe(true);
     // The writer is never given a fair value or a gap (Thierry 2026-11-16): it reads reported figures only.
     const writer = complete.mock.calls.filter(([req]) => req.system.startsWith("You write for the fake"));
     expect(writer.length).toBeGreaterThan(0);
     for (const [req] of writer) {
       expect(req.prompt).not.toMatch(/fair value|% vs fair|8x EV\/EBITDA/i);
       expect(req.prompt).toContain("Reported figures (the only numbers a post may compare):");
-      expect(req.prompt).toMatch(/Revenue per quarter, \$ \(Revenue\): .*47M$/m);
+      expect(req.prompt).toMatch(/Revenue per quarter \(Revenue per quarter\): .*47M USD$/m);
     }
     // The frame comes from the analysis: no chart callout asked, and the compared period judged ONCE for 30 pictures.
     expect(complete.mock.calls.filter(([req]) => /CALLOUT/.test(req.system))).toHaveLength(0);

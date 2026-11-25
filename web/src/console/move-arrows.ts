@@ -1,12 +1,12 @@
-import { weekVerdict, type GoldPriceMove, type GoldPriceMoveCause, type MoveCite, type WeekVerdict } from "@/db/schema/analysis";
+import type { GoldDriverEvent, GoldPriceMove } from "@/db/schema/analysis";
 
 /**
  * MOVE-ARROWS-1123 (Thierry, meeting 2026-11-23: « a chart with arrows pointing at each thing, telling me: this is
- * what happened here »): one arrow per unusual week (step 1), numbered in date order, with step 4's ONE verdict on it
- * (fundamental / market / unknown, from `gold.price_move_causes`) and its fact; the events that explain it (step 3) are
- * the cause's cites. Read from what is stored, never a new AI call. No candidate words here (PROOF-STRUCTURE-1123: « Rent
- * changed » beside « the news does not explain it » read as two verdicts on one week).
+ * what happened here »): one arrow per significant unbiased 1-week move, numbered in date order, with the events whose
+ * week it was (the ones step A reads). Read from what is stored, never an AI call; no verdict on a move: a significant
+ * unbiased move is always valid (docs/architecture.md).
  */
+export type MoveEvent = Pick<GoldDriverEvent, "id" | "day" | "kind" | "title" | "sourceId" | "url">;
 export type MoveArrow = {
   n: number;
   id: string;
@@ -16,36 +16,21 @@ export type MoveArrow = {
   /** The move once its market is taken out (ratio). */
   abnormal: number;
   bench: string;
-  /** Step 4's verdict on the week. */
-  week: WeekVerdict;
-  /** What happened, one sentence, or null when no item explains it. */
-  fact: string | null;
-  /** Step 3: the items the verdict rests on. */
-  cites: MoveCite[];
+  /** The events whose 1 week after was this move, oldest first. */
+  events: MoveEvent[];
 };
 
-export const WEEK_WORD: Record<WeekVerdict, string> = { fundamental: "Fundamental", market: "Market", unknown: "Unknown" };
-/** Step 4's verdict on a week as a badge: one verdict per week, the same on every surface. */
-export const WEEK_BADGE = { fundamental: "primary", market: "neutral", unknown: "outline" } as const;
-export const NO_ITEM_EXPLAINS = "No news or filing explains it";
+export const NO_EVENT = "No event stored that week";
 
 export function moveArrows(
   moves: Pick<GoldPriceMove, "id" | "startDay" | "endDay" | "direction" | "abnormal" | "bench">[],
-  causes: Pick<GoldPriceMoveCause, "id" | "kind" | "fact" | "cites">[],
+  events: (MoveEvent & Pick<GoldDriverEvent, "moveId">)[] = [],
 ): MoveArrow[] {
-  const cause = new Map(causes.map((c) => [c.id, c]));
+  const byMove = new Map<string, MoveEvent[]>();
+  for (const e of events) if (e.moveId) byMove.set(e.moveId, [...(byMove.get(e.moveId) ?? []), { id: e.id, day: e.day, kind: e.kind, title: e.title, sourceId: e.sourceId, url: e.url }]);
   return [...moves]
     .sort((a, b) => a.startDay.localeCompare(b.startDay) || a.id.localeCompare(b.id))
-    .map((m, i) => {
-      const c = cause.get(m.id);
-      const week = weekVerdict(c?.kind);
-      return { n: i + 1, id: m.id, startDay: m.startDay, endDay: m.endDay, direction: m.direction, abnormal: m.abnormal, bench: m.bench, week, fact: week === "unknown" ? null : c?.fact?.trim() || null, cites: c?.cites ?? [] };
-    });
-}
-
-/** The words beside an arrow's verdict: what happened, or that nothing explains it. */
-export function arrowWords(a: Pick<MoveArrow, "fact">): string {
-  return a.fact ?? NO_ITEM_EXPLAINS;
+    .map((m, i) => ({ n: i + 1, id: m.id, startDay: m.startDay, endDay: m.endDay, direction: m.direction, abnormal: m.abnormal, bench: m.bench, events: (byMove.get(m.id) ?? []).sort((a, b) => a.day.localeCompare(b.day) || a.id.localeCompare(b.id)) }));
 }
 
 /**

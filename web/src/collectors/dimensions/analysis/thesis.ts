@@ -8,18 +8,10 @@ import { majorUnit } from "../financials/derive";
 /**
  * A ticker has ONE narrative (Kevin 2026-11-24): the analysis writes it on the trusted Price Drivers and decides its
  * side itself, reading the price, the fair value (base, low, high) and its history. No code rule picks the side.
- * Ids keep the side: narrative `<symbol>:<side>`, its drivers `<symbol>:<side>:<rank>`.
+ * The narrative's id keeps the side: `<symbol>:<side>`.
  */
 
 export const thesisId = (symbol: string, side: ThesisSide) => `${symbol}:${side}`;
-export function parseThesisId(id: string): { symbol: string; side: ThesisSide } {
-  const i = id.lastIndexOf(":");
-  const side = id.slice(i + 1);
-  if (side !== "long" && side !== "short") throw new Error(`"${id}" is not a narrative id <symbol>:<long|short>`);
-  return { symbol: id.slice(0, i), side };
-}
-export const driverIdOf = (symbol: string, side: ThesisSide, rank: number) => `${symbol}:${side}:${rank}`;
-
 /** The ticker's narrative as gold holds it (one row), or undefined when the analysis has not written one yet. */
 export async function narrativeOf(db: Db, symbol: string): Promise<GoldNarrative | undefined> {
   return (await db.select().from(narratives).where(eq(narratives.symbol, symbol)))[0];
@@ -67,11 +59,6 @@ export const SIDE = {
     turn: "crack",
   },
 } as const satisfies Record<ThesisSide, { label: string; story: string; reversal: string; continuation: string; signal: "BUY" | "SELL"; turn: "inflection" | "crack" }>;
-
-/** The side content speaks for: the ticker's one narrative (null when none is written yet). */
-export function publicSide(_signal: { side: ThesisSide | null } | null | undefined, theses: { side: ThesisSide }[]): ThesisSide | null {
-  return theses[0]?.side ?? null;
-}
 
 /** Price and fair value enter a judgment key in 5% buckets (Kevin 2026-11-12): a tick never re-asks, a real move does. */
 const STEP = Math.log(1.05);

@@ -9,7 +9,7 @@ import { viewsOf } from "@/inputs/notes";
 import { firstJsonObject } from "@/llm/judge";
 import type { Dimension, PromoteResult, Source, SourceContext } from "../../types";
 import { ARTICLE_SOURCE, articleSource, writeTexts } from "./article";
-import { EVIDENCE_JUDGE_SOURCE, evidenceJudge, withDriverImpacts } from "./drivers";
+import { withDriverImpacts } from "./drivers";
 import { followUps } from "./followups";
 import { KEY_POINTS_SOURCE, keyPointsSource, writeKeyPoints } from "./key-points";
 import { ASSETS_URL, postMail, RECIPIENT_ROLES, recipientsFor } from "./mail";
@@ -122,7 +122,7 @@ export function parseVerdicts(text: string, count: number): Verdict[] {
 export const judgeSource: Source = {
   name: JUDGE_SOURCE,
   requiredEnv: [],
-  // Judge batches only (`<symbol>|<n>`): the text, key-points and evidence steps have their own sources.
+  // Judge batches only (`<symbol>|<n>`): the text and key-points steps have their own sources.
   covers: (subject) => /^\d+$/.test(subject.split("|")[1] ?? ""),
   concurrency: 3,
   async fetch(subject, ctx) {
@@ -142,10 +142,10 @@ export const judgeSource: Source = {
 
 /**
  * The steps every email dimension runs (NEWS-KEY-POINTS-1124), round by round in one run: judge the new items, then for
- * the material ones read their text (`article`), write 3 key points from it (`key-points`), and ask the evidence judge
- * the Price Drivers it bears on (`evidence`) when it has not; each round's answers reach silver before the next is planned.
+ * the material ones read their text (`article`) and write 3 key points from it (`key-points`); each round's answers
+ * reach silver before the next is planned. The Price Drivers an item bears on are read from step D, never asked here.
  */
-export const EMAIL_SOURCES = [judgeSource, articleSource, keyPointsSource, evidenceJudge];
+export const EMAIL_SOURCES = [judgeSource, articleSource, keyPointsSource];
 export const emailSubjects = async (db: Db, ctx?: SourceContext): Promise<string[]> => [...(await planBatches(db, ctx)), ...(await followUps(db))];
 export async function emailExpand(db: Db, soFar: BronzeFetch[]): Promise<string[]> {
   await writeSilver(db, soFar);
@@ -156,7 +156,7 @@ export async function writeSilver(db: Db, fetches: BronzeFetch[]): Promise<Recor
   const verdicts = await writeVerdicts(db, fetches);
   const texts = await writeTexts(db, fetches);
   const points = await writeKeyPoints(db, fetches);
-  return { [JUDGE_SOURCE]: verdicts, [ARTICLE_SOURCE]: texts, [KEY_POINTS_SOURCE]: points, [EVIDENCE_JUDGE_SOURCE]: fetches.filter((f) => f.source === EVIDENCE_JUDGE_SOURCE && !f.error).length };
+  return { [JUDGE_SOURCE]: verdicts, [ARTICLE_SOURCE]: texts, [KEY_POINTS_SOURCE]: points };
 }
 
 export const dailyEmailDim: Dimension = {

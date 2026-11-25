@@ -21,7 +21,7 @@ export const RESEARCH_TOOLS = [
   {
     name: "get_ticker",
     description:
-      "Dualis's analysis of one ticker of Thierry's watchlist, as the console shows it: signal with its strength and side, the narrative (one sentence + detail), fair value (base, low, high), last quote, the trusted Price Drivers with their confidence and reversal, and the latest material news and filings with dates. Call it (after record_inputs) before answering any message of his about a company, and build your answer on it together with his own context.",
+      "Dualis's analysis of one ticker of Thierry's watchlist, as the console shows it: signal with its strength and side, the narrative (one sentence + detail), fair value (base, low, high), last quote, the trusted Price Drivers with their confidence, what the market believes about each and its reversal, with the recent events each reversal reads (dated, linked). Call it (after record_inputs) before answering any message of his about a company, and build your answer on it together with his own context.",
     inputSchema: { type: "object", properties: { symbol: SYMBOL }, required: ["symbol"], additionalProperties: false },
   },
   {
@@ -77,7 +77,6 @@ export async function callResearchTool(name: string, args: Record<string, unknow
       const [a, kpis] = await Promise.all([getTickerAnalysis(symbol), kpiDriversOf(symbol)]);
       const fv = a.fairValue;
       const trusted = kpis.filter((k) => k.level === "strong" || k.level === "weak");
-      const news = a.evidence.filter((e) => e.effect !== "noise" && e.effect !== "too-old" && e.strength !== "noise").slice(0, 10);
       const lines = [
         head,
         `Signal: ${signalOf(row)}${row.call && row.since ? `, since ${day(row.since)}` : ""}.${a.signal?.why ? ` ${a.signal.why}` : ""}`,
@@ -86,17 +85,17 @@ export async function callResearchTool(name: string, args: Record<string, unknow
         "",
         a.narrative ? `Narrative (${a.side === "short" ? "an optimistic story, a crack would be a SELL" : "a pessimistic story, an inflection would be a BUY"}): ${a.narrative.text}` : "Narrative: not written yet.",
         a.narrative?.sideWhy ? `Why that side: ${a.narrative.sideWhy}` : null,
+        a.narrative?.confidence ? `Confidence that the market holds it: ${a.narrative.confidence}` : null,
         a.narrative?.detail ? `Detail: ${a.narrative.detail}` : null,
         "",
         trusted.length ? "Price Drivers (what moved the price on fundamentals, trusted ones):" : "Price Drivers: none trusted yet.",
         ...trusted.map((k, i) => {
           const r = k.reversal;
           const reversal = r ? `Reversal: ${reversalWord(r).word} (${STATE_WORD[r.intrinsic.state]}). ${r.why}` : "Reversal: not assessed yet.";
-          return `${i + 1}. ${k.name}: ${k.level} confidence${k.reason ? `, ${k.reason}` : ""} ${reversal}`;
+          // Each news item is read once, by the Reversal: the events it cites are what moves the driver now.
+          const events = (r?.leading.events ?? []).map((e) => `\n   - ${e.day} ${e.kind}: ${e.title.replace(/\s+/g, " ")}${e.url ? ` ${e.url}` : ""}`).join("");
+          return `${i + 1}. ${k.name}: ${k.level} confidence${k.reason ? `, ${k.reason}` : ""}${k.marketBelief ? ` What the market believes: ${k.marketBelief}` : ""} ${reversal}${events}`;
         }),
-        "",
-        news.length ? "Latest material news and filings (newest first):" : "Latest material news and filings: none judged material.",
-        ...news.map((e) => `- ${e.eventDay} ${e.kind}${e.publisher ? `, ${e.publisher}` : ""}: ${e.headline}. ${tagWord(e.effect, e.strength, a.side)}${e.why ? `: ${e.why}` : ""}${e.url ? ` ${e.url}` : ""}`),
       ];
       return { text: lines.filter((l) => l !== null).join("\n") };
     }

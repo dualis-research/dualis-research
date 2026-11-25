@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { driverEvents, fairValues, kpiDrivers, narrativeDrivers, narratives, type GoldDriverEvent, type GoldKpiDriver } from "@/db/schema/analysis";
+import { driverEvents, fairValues, kpiDrivers, narratives, type GoldDriverEvent, type GoldKpiDriver } from "@/db/schema/analysis";
 import { fetches as bronze } from "@/db/schema/bronze";
 import { documentPages, documents } from "@/db/schema/documents";
 import * as gold from "@/db/schema/gold";
@@ -8,14 +8,15 @@ import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
-import { priceDriver, seedPriceDrivers } from "@/test/price-drivers";
+import { priceDriver, seedNote, seedPriceDrivers } from "@/test/price-drivers";
 import { keepPrintedCitations, kpiReversalDim, pagesToRead, parseReversal, REVERSAL_SYSTEM, type ReversalContext } from "./dimensions/kpi-reversal";
 import { runDimension } from "./runner";
 import type { SourceContext } from "./types";
 
 /**
- * Reversals, the step after the narrative (Kevin 2026-11-24): each trusted Price Driver read against the narrative and
- * its side; five states; durability, magnitude, priced in and citations ported from the old driver judge.
+ * Step D of docs/architecture.md: only when the narrative's confidence is weak or strong, each Price Driver read
+ * against it: continuation (weak | strong), reversal (weak | strong) or noise; five states of its own value; a leading
+ * indicator; durability, magnitude, priced in, citations checked on their page.
  */
 
 const SYMBOL = "1161.HK";
@@ -37,9 +38,9 @@ const ANSWER = {
   why: "Profit turns up while the market prices a decline.",
   citations: [{ doc: "D1", page: 2, quote: "bookings for the Lunar New Year were full" }, { doc: "D1", page: 2, quote: "Profit tripled on a new flagship" }, { doc: "D9", page: 2, quote: "bookings for the Lunar New Year were full" }],
 };
-const ctxOf = (over: Partial<ReversalContext> = {}): ReversalContext => ({ level: "strong", side: "long", labels: new Map([["L1", event("n1", "Lunar New Year bookings full")]]), periods: new Set(["2025-03"]), measured: true, ...over });
+const ctxOf = (over: Partial<ReversalContext> = {}): ReversalContext => ({ side: "long", labels: new Map([["L1", event("n1", "Lunar New Year bookings full")]]), periods: new Set(["2025-03"]), measured: true, ...over });
 
-describe("kpi-reversal@v2: the answer, typed", () => {
+describe("kpi-reversal@v4: the answer, typed", () => {
   it("reads the five states, durability, magnitude, priced in, the stance against the narrative and the turn's word", () => {
     const { reversal: r, cited } = parseReversal(JSON.stringify(ANSWER), ctxOf());
     expect(r).toMatchObject({ intrinsic: { state: "reversing-up", period: "2025-03" }, durability: "structural", magnitude: { figure: "Net income", change: "+88%", size: "material" }, pricedIn: "none", stance: "against", side: "long", strength: "strong", turn: "inflection", direction: "up", headline: "H1 net income up 88%" });
@@ -53,16 +54,16 @@ describe("kpi-reversal@v2: the answer, typed", () => {
     expect(() => parseReversal(JSON.stringify({ ...ANSWER, stance: "maybe" }), ctxOf())).toThrow(/stance/);
   });
 
-  it("a strong turn needs a strong-confidence driver: clamped to weak for a weak one", () => {
-    expect(parseReversal(JSON.stringify(ANSWER), ctxOf({ level: "weak" })).reversal).toMatchObject({ strength: "weak", stance: "against", turn: "inflection" });
-  });
-
-  it("the word comes from the judge's stance and the narrative's side, never from the direction", () => {
+  it("continuation (weak | strong), reversal (weak | strong) or noise: the strength is the judge's on both sides, never clamped by code", () => {
     // The same rising figure against an optimistic story is a crack when the judge says so.
-    expect(parseReversal(JSON.stringify(ANSWER), ctxOf({ side: "short" })).reversal).toMatchObject({ turn: "crack", direction: "up" });
-    // With the story, or nowhere: no reversal, whatever strength was written.
-    expect(parseReversal(JSON.stringify({ ...ANSWER, stance: "with" }), ctxOf()).reversal).toMatchObject({ stance: "with", strength: "none", turn: null });
-    expect(parseReversal(JSON.stringify({ ...ANSWER, stance: "none" }), ctxOf()).reversal).toMatchObject({ strength: "none", turn: null });
+    expect(parseReversal(JSON.stringify(ANSWER), ctxOf({ side: "short" })).reversal).toMatchObject({ stance: "against", strength: "strong", turn: "crack", direction: "up" });
+    // In continuation of the story: its own strength, and no turn word.
+    expect(parseReversal(JSON.stringify({ ...ANSWER, stance: "with" }), ctxOf()).reversal).toMatchObject({ stance: "with", strength: "strong", turn: null });
+    expect(parseReversal(JSON.stringify({ ...ANSWER, stance: "with", strength: "weak" }), ctxOf()).reversal).toMatchObject({ stance: "with", strength: "weak", turn: null });
+    // Noise carries no strength, whatever was written; the architecture's word « noise » is read as none.
+    expect(parseReversal(JSON.stringify({ ...ANSWER, stance: "none" }), ctxOf()).reversal).toMatchObject({ stance: "none", strength: "none", turn: null });
+    expect(parseReversal(JSON.stringify({ ...ANSWER, stance: "against", strength: "noise" }), ctxOf()).reversal).toMatchObject({ strength: "none", turn: null });
+    expect(() => parseReversal(JSON.stringify({ ...ANSWER, strength: "huge" }), ctxOf())).toThrow(/strong, weak or noise/);
   });
 
   it("a policy or an industry fact has no figure: no magnitude, no period", () => {
@@ -74,6 +75,8 @@ describe("kpi-reversal@v2: the answer, typed", () => {
 
   it("the game is in the prompt: strong = structural AND material, the judge decides the stance, beliefs move with facts", () => {
     expect(REVERSAL_SYSTEM).toContain("strong needs a structural AND material change");
+    expect(REVERSAL_SYSTEM).toContain("in REVERSAL against that belief");
+    expect(REVERSAL_SYSTEM).toContain("in CONTINUATION of it");
     expect(REVERSAL_SYSTEM).toContain("a temporary or small change is weak at most");
     expect(REVERSAL_SYSTEM).toContain("never a mechanical rule from the direction");
     expect(REVERSAL_SYSTEM).toContain("over weeks and months");
@@ -113,44 +116,59 @@ describe("kpi-reversal dimension", () => {
   });
   afterEach(async () => close());
 
-  const writeNarrative = async (side: "long" | "short" = "long") => {
-    await db.insert(narratives).values({ id: `${SYMBOL}:${side}`, symbol: SYMBOL, side, sideWhy: "The price sits a third under the fair value.", text: "The market prices Water Oasis as a flat, mature chain.", detail: null, version: "v1", asOf: new Date() });
-    await db.insert(narrativeDrivers).values({ id: `${SYMBOL}:${side}:1`, symbol: SYMBOL, side, rank: 1, category: "Business economics", title: "Profit is seen as stuck after the rent shock", summary: "The market assumes profit stays low.", text: "Net income halved in 2024.", kpiDriverId: `${SYMBOL}:kpi:net-income`, version: "v1" });
+  const writeNarrative = async (side: "long" | "short" = "long", confidence: "strong" | "weak" | "noise" | null = "strong") => {
+    await db.insert(narratives).values({ id: `${SYMBOL}:${side}`, symbol: SYMBOL, side, confidence, sideWhy: "The price sits a third under the fair value.", text: "The market prices Water Oasis as a flat, mature chain.", detail: null, version: "v1", asOf: new Date() });
+    // The narrative's one belief about the Net income Price Driver, stored on it (analysis).
+    await db.update(kpiDrivers).set({ marketBelief: "The market assumes profit stays stuck after the rent shock." }).where(eq(kpiDrivers.id, `${SYMBOL}:kpi:net-income`));
   };
 
-  it("without a narrative: a failed fetch saying so, no call", async () => {
+  it("runs ONLY when step C holds the narrative with weak or strong confidence: no narrative, a noise one or one not read yet = no subject, no call", async () => {
     await run();
-    const [row] = await db.select().from(bronze).where(eq(bronze.dimension, "kpi-reversal"));
-    expect(row.error).toMatch(/^no narrative yet/);
+    expect(await db.select().from(bronze).where(eq(bronze.dimension, "kpi-reversal"))).toEqual([]);
+    await writeNarrative("long", "noise");
+    await run();
+    await db.update(narratives).set({ confidence: null });
+    await run();
+    expect(await db.select().from(bronze).where(eq(bronze.dimension, "kpi-reversal"))).toEqual([]);
     expect(prompts).toEqual([]);
+    expect((await pds()).map((k) => k.reversal)).toEqual([null, null, null]);
+    // Weak is enough.
+    await db.update(narratives).set({ confidence: "weak" });
+    await run();
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain("held with weak confidence");
   });
 
-  it("reads each trusted Price Driver against the narrative, its values, the recent events, the documents and the price; stores the reversal and its bottom line", async () => {
+  it("reads each Price Driver against the narrative, its values, the recent events (a leading indicator), the documents, the price and Thierry's inputs; stores the reading and its bottom line", async () => {
     await writeNarrative();
+    await seedNote(db, SYMBOL, "Bookings looked full when I visited the Central store.");
     await run();
     // One call per trusted driver (strong and weak), none for the untrusted one.
     expect(prompts).toHaveLength(2);
     const p = prompts[0];
     expect(p).toContain("The narrative (side long: the PESSIMISTIC story");
     expect(p).toContain("The market prices Water Oasis as a flat, mature chain.");
-    expect(p).toContain("What the market believes about this Price Driver (Business economics): Profit is seen as stuck after the rent shock.");
+    expect(p).toContain("What the market believes about this Price Driver: The market assumes profit stays stuck after the rent shock.");
     expect(p).toContain("Price Driver (kpi, strong confidence): Net income.");
     expect(p).toContain("6 months to Mar-25 [2025-03]: 60.0M HKD (+87.5% on a year earlier), judged a change that matters: profit nearly doubled");
     expect(p).toContain(`L1 ${today} News: Lunar New Year bookings full`);
     expect(p).toContain("[D1 page 2] Interim results 2025");
     expect(p).toContain("price 1.00 HKD, fair value 1.50 (range 1.30 to 1.80)");
     expect(p).toContain("Month-end closes");
-    // The narrative does not speak of the rent driver yet: said so, never invented.
-    expect(prompts[1]).toContain("The narrative does not speak of this Price Driver yet.");
+    expect(p).toContain("Bookings looked full when I visited the Central store.");
+    // The narrative does not rest on the rent driver: said so, never invented.
+    expect(prompts[1]).toContain("The narrative does not rest on this Price Driver.");
     expect(prompts[1]).toContain("No figure: a policy or an industry fact");
     const [income, rent, stores] = await pds();
     // A quote not printed on its page, and one from a document the judge was not shown, are dropped.
     expect(income.reversal).toMatchObject({ stance: "against", strength: "strong", turn: "inflection", side: "long", durability: "structural", pricedIn: "none", intrinsic: { state: "reversing-up", period: "2025-03" }, citations: [{ documentId: DOC, page: 2, quote: "bookings for the Lunar New Year were full", title: "Interim results 2025" }] });
     expect(income.reversal!.judgedAt).toBeTruthy();
     expect(income).toMatchObject({ signal: "strong", signalWhy: "Profit turns up while the market prices a decline.", direction: "up" });
-    // The weak-confidence driver's strong turn is weak at most; it has no figure, so no magnitude.
-    expect(rent.reversal).toMatchObject({ strength: "weak", magnitude: null });
-    expect(rent.signal).toBe("weak");
+    // The strength is the judge's (no clamp for a weak-confidence driver); it has no figure, so no magnitude.
+    expect(rent.reversal).toMatchObject({ strength: "strong", magnitude: null });
+    expect(rent.signal).toBe("strong");
+    // The leading indicator the reading cites (an unknown label dropped).
+    expect(income.reversal!.leading).toMatchObject({ probability: "high", events: [{ id: `${SYMBOL}|news:n1` }] });
     expect(stores.reversal).toBeNull();
   });
 
@@ -158,9 +176,10 @@ describe("kpi-reversal dimension", () => {
     await writeNarrative();
     await run();
     expect(prompts[0]).not.toContain("Your last reading");
-    // +1%: the same 5% bucket.
+    // +1%: the same 5% bucket; a new input of Thierry's is in no key either.
     prompts = [];
     await db.update(gold.quotes).set({ close: 1.01 });
+    await seedNote(db, SYMBOL, "A later thought.");
     await run();
     expect(prompts).toEqual([]);
     expect((await pds())[0].reversal).toMatchObject({ stance: "against", strength: "strong" });
@@ -171,12 +190,20 @@ describe("kpi-reversal dimension", () => {
     expect(prompts).toHaveLength(2);
     expect(prompts[0]).toContain(`Your last reading, on ${today}: reversing up, against the story, strength strong, structural. Profit turns up while the market prices a decline.`);
     expect((await pds())[0].reversal).toMatchObject({ pricedIn: "partly" });
+    // A continuation keeps its strength on the reading; the driver's reversal column (`signal`) is none.
+    answer = { ...ANSWER, stance: "with", strength: "weak" };
+    await db.update(gold.quotes).set({ close: 1.3 });
+    await run();
+    expect((await pds())[0]).toMatchObject({ signal: "none", reversal: { stance: "with", strength: "weak", turn: null } });
+    await db.update(gold.quotes).set({ close: 1.12 });
+    answer = { ...ANSWER, pricedIn: "partly" };
+    await run();
     // The narrative rewritten (another version): every driver is read against the new words.
     prompts = [];
     await db.update(narratives).set({ version: "v2" });
     await run();
     expect(prompts).toHaveLength(2);
-    expect((await db.select().from(silver.judgments).where(eq(silver.judgments.subjectKind, "kpi-reversal"))).length).toBe(6);
+    expect((await db.select().from(silver.judgments).where(eq(silver.judgments.subjectKind, "kpi-reversal"))).length).toBe(8);
   });
 });
 

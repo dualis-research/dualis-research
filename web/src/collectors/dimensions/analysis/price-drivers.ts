@@ -5,9 +5,8 @@ import { kpiChange, kpiValue, periodWords } from "../kpi-drivers/steps";
 import { fnv } from "./facts";
 
 /**
- * The trusted Price Drivers of a ticker as the narrative reads them (Kevin 2026-11-24: « on rajoute cette étape sur le
- * Narrative Driver »): the candidates `kpi-drivers` gave a strong or weak confidence, strong first. The Narrative
- * Drivers ARE these, one each; the analysis never invents a reason of its own.
+ * The Price Drivers of a ticker (step B: the candidates given a strong or weak confidence), strong first, as the
+ * narrative (step C) reads them. The narrative names the ones that explain it; it never invents a reason.
  */
 
 const RANK = { strong: 0, weak: 1, none: 2 } as const;
@@ -22,7 +21,7 @@ const KIND = { kpi: "a company KPI", policy: "a policy", industry: "an industry 
 /** How many periods (a KPI) or changes (a policy, an industry fact) of a driver the narrative reads. */
 const SHOWN = 8;
 
-/** One Price Driver in words: what it is, how it is measured, when it changed, its confidence and tests A, B and C. */
+/** One Price Driver in words: what it is, how it is measured, when it changed, its confidence and step B's two tests. */
 export function driverLines(k: GoldKpiDriver, label: string): string {
   const t = k.tests;
   const m = k.measure;
@@ -35,7 +34,7 @@ export function driverLines(k: GoldKpiDriver, label: string): string {
     ...(own.length ? own : ["    none stored"]),
     `  Confidence: ${k.level}. ${k.reason ?? ""}`.trimEnd(),
     t
-      ? `  Tests: A) ${t.followed} of ${t.changes} big changes were followed by the price the expected way in a fundamental week, ${t.against} were not; B) it changed in ${t.explained} of the ${t.fundamentalMoves} fundamental weeks (${t.moves} unusual weeks in all); C) ${t.both} events where both moved, ${t.bothAgree} the expected way.`
+      ? `  Tests: A) of ${t.changes} significant changes, ${t.followed} were followed by a significant unbiased 1-week move the expected way, ${t.against} were not; B) it changed on the first day of ${t.explained} of the ${t.moves} significant 1-week moves.`
       : "  Tests: not counted.",
   ].join("\n");
 }
@@ -48,7 +47,7 @@ const driverKey = (k: GoldKpiDriver) =>
 export function priceDriversText(drivers: GoldKpiDriver[]): { text: string; hash: string; labels: Map<string, GoldKpiDriver> } {
   const labels = new Map(drivers.map((k, i) => [`P${i + 1}`, k]));
   return {
-    text: ["The Price Drivers of this stock: the fundamental facts the market has been SHOWN to trade it on (each tested on 3 years of events and unusual weeks), strong confidence first:", ...[...labels].map(([l, k]) => driverLines(k, l))].join("\n"),
+    text: ["The Price Drivers of this stock: the fundamental facts the market has been SHOWN to trade it on (each tested on 3 years of events and significant unbiased 1-week moves), strong confidence first:", ...[...labels].map(([l, k]) => driverLines(k, l))].join("\n"),
     hash: fnv(drivers.map(driverKey).join("\n")),
     labels,
   };

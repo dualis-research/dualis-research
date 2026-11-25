@@ -1,6 +1,6 @@
 ---
 name: angle-signal
-description: The SIGNAL angle of a Dualis post - the idea comes from our own analysis (the day's Ideas, Signal Changes, Narrative Drivers, Evidence). Load to write or judge a post built on our signals.
+description: The SIGNAL angle of a Dualis post - the idea comes from our own analysis (the day's Ideas, Signal Changes, Price Drivers and their reversals). Load to write or judge a post built on our signals.
 ---
 
 # Angle: signal
@@ -10,8 +10,8 @@ Our own edge: a narrative cracking or inflecting, read by our analysis. It is th
 **Never a fair value** (Thierry 2026-11-16: « not confident in our fair values »): a post proves the narrative break with a REPORTED figure and the shortest convincing why.
 
 ## Where the input comes from
-- `gold.content_ideas` (the day's Ideas, scored per format; content-ideas), each citing its sources: Signal (`gold.signals`), Signal Changes (`gold.signal_changes`), Evidence (`gold.evidence`), Narrative Drivers (`gold.narrative_drivers`).
-- The writer gets, per Idea: the title, why now, the narrative, the signal side, the cited evidence, the drivers with their `Now:` line, and **Reported figures** (each driver Exhibit's values with their period) (`content-drafts/format.ts` `draftPrompt`). It never gets a fair value, so it never prints one.
+- `gold.content_ideas` (the day's Ideas, scored per format; content-ideas), each citing its sources: Signal (`gold.signals`), Signal Changes (`gold.signal_changes`), Price Drivers with their belief and reversal (`gold.kpi_drivers`), the events a reversal read (`gold.driver_events`).
+- The writer gets, per Idea: the title, why now, the narrative, the signal side, the cited events, the Price Drivers with their reversal, and **Reported figures** (each Price Driver's own measured series with its periods) (`content-drafts/format.ts` `draftPrompt`). It never gets a fair value, so it never prints one.
 
 ## How to write it: 3 lines
 **Every signal post, X and Substack, every tone, is these 3 lines in order, a blank line between them:**

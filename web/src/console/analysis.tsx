@@ -1,10 +1,8 @@
-import { ArrowSquareOutIcon, CaretRightIcon, ClockCounterClockwiseIcon, FileTextIcon, NewspaperIcon, ScalesIcon, TargetIcon } from "@phosphor-icons/react/ssr";
+import { ArrowSquareOutIcon, CaretRightIcon, ClockCounterClockwiseIcon, ScalesIcon, TargetIcon } from "@phosphor-icons/react/ssr";
 import Link from "@/console/link";
-import type { GoldEvidence, GoldExhibit, ThesisSide } from "@/db/schema/analysis";
 import type { GoldConsensus } from "@/db/schema/consensus";
 import { getTickerAnalysis, getValuation, priceMoveMarkers } from "./analysis-queries";
 import { MethodsTable, ValuationField } from "./valuation-ui";
-import { ArticleBody } from "./article";
 import { type BoardRow, boardRowOf, priceVsFairValue } from "./board-queries";
 import { CallBadge, TickerTag } from "./board";
 import { Drawer, Drawers } from "./drawer";
@@ -12,14 +10,9 @@ import { ProofSections } from "./proof";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "./kumo";
 import { RowLink } from "./row-link";
 import { signalWordsOf } from "./signal-history";
-import { ExhibitChart } from "./driver-chart";
-import { NewsTable, type NewsRow } from "./news-table";
 import { PriceFairValueChart } from "./price-fair-chart";
-import { TagBadge } from "./tag-badge";
 import { day, numberFormat, utc } from "./format";
 import { consensusOf, getTicker } from "./queries";
-import { Section } from "./signal";
-import { PRICED_WORD } from "@/content/signal-words";
 import { Rich } from "./rich";
 import { SourcedFigure } from "./sourced";
 
@@ -146,55 +139,14 @@ function SignalHistory({ changes }: { changes: Analysis["objects"]["signalChange
   );
 }
 
-/** One exhibit, its title opening the exhibit's own panel. */
-export function Exhibit({ symbol, exhibit, linked = true }: { symbol: string; exhibit: GoldExhibit; linked?: boolean }) {
-  const chart = <ExhibitChart number={exhibit.number} title={exhibit.title} chart={exhibit.chart} series={exhibit.series} points={exhibit.points} sources={exhibit.sources} symbol={symbol} />;
-  if (!linked) return chart;
-  return (
-    <div className="flex flex-col gap-2">
-      {chart}
-      <Link href={itemHref(symbol, `exhibit:${exhibit.id}`)} scroll={false} className="self-start text-sm font-medium text-kumo-link hover:underline">
-        <Rich text={exhibit.takeaway} />
-      </Link>
-    </div>
-  );
-}
 
-/** News judged against ONE driver: its tag against that driver, the headline (opens its panel). */
-export function EvidenceRows({ symbol, rows, driverId, side }: { symbol: string; rows: GoldEvidence[]; driverId: string; side: ThesisSide }) {
-  return (
-    <ol className="flex flex-col gap-1">
-      {rows.map((e) => {
-        const v = e.verdicts.find((x) => x.driverId === driverId);
-        return (
-        <li key={e.id}>
-          <Link href={itemHref(symbol, `news:${e.id}`, side)} scroll={false} className="-mx-3 flex flex-col gap-1 rounded-lg px-3 py-2.5 transition-colors hover:bg-kumo-tint">
-            <span className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-kumo-subtle">
-              {v && <TagBadge effect={v.effect} strength={v.strength} side={side} />}
-              {v?.pricedIn && v.effect !== "noise" && <span>{PRICED_WORD[v.pricedIn]}</span>}
-              <span className="tabular">{day(e.eventDay)}</span>
-              {e.publisher && <span>{e.publisher}</span>}
-            </span>
-            <span className="text-base font-medium text-kumo-strong">{e.headline}</span>
-          </Link>
-        </li>
-        );
-      })}
-    </ol>
-  );
-}
-
-export { PRICED_WORD };
-
-/** One story per ticker (Kevin 2026-11-24): the narrative written on its trusted Price Drivers, its side decided by the analysis. */
+/**
+ * One ticker: the price vs fair value chart, then steps A to E of docs/architecture.md, closed, each title carrying
+ * its conclusion (the narrative sentence is step C's title); no other analysis section.
+ */
 export function AnalysisBody({ analysis, variant }: { analysis: Analysis; variant: "panel" | "page" }) {
   const { row, consensus, objects, chart, valuation, moves } = analysis;
-  const exhibitByNumber = new Map(objects.drivers.flatMap((d) => d.exhibits).map((x) => [x.number, x]));
   const symbol = row.symbol;
-  // The analysis writes the narrative; nobody edits it by hand (Kevin 2026-11-09).
-  const narrative = objects.narrative?.text ?? null;
-  const side = objects.side;
-  const keep = null;
   const gap = variant === "page" ? "gap-14" : "gap-10";
   return (
     <div className={`flex flex-col ${gap}`}>
@@ -205,20 +157,7 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
         <PriceFairValueChart symbol={symbol} bars={chart.bars} fair={chart.fair} currency={chart.fair?.currency ?? row.currency} sources={chart.sources} moves={variant === "page" ? moves : []} priceHref={itemHref(symbol, "price")} fairHref={chart.fair ? itemHref(symbol, "fair-value") : null} />
       )}
 
-      <Section title="Narrative">
-        {narrative ? (
-          <>
-            <p className={`max-w-prose leading-snug text-kumo-default ${variant === "page" ? "text-2xl" : "text-xl"}`}><Rich text={narrative} /></p>
-            <Link href={itemHref(symbol, "narrative", keep)} scroll={false} className="inline-flex items-center gap-1 self-start text-sm font-medium text-kumo-link hover:underline">
-              Why <CaretRightIcon size={14} weight="bold" aria-hidden />
-            </Link>
-          </>
-        ) : (
-          <p className="text-lg text-kumo-subtle">Not drafted yet.</p>
-        )}
-      </Section>
-
-      {/* The proof of the Price Drivers, closed (PROOF-STRUCTURE-1123): candidates, confidence, narrative, reversals. */}
+      {/* Steps A to E, closed: candidates, price drivers, narrative, reversals, signal. */}
       <ProofSections symbol={symbol} />
 
       {variant === "page" && (
@@ -237,51 +176,10 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
               <MethodsTable symbol={symbol} v={valuation} />
             </Drawer>
           )}
-          {objects.drivers.length > 0 && objects.evidence.length > 0 && (
-            <Drawer icon={<NewspaperIcon size={16} aria-hidden />} title={`News · ${objects.evidence.length}`}>
-              <NewsTable rows={newsRows(symbol, objects, keep)} drivers={objects.drivers.map((d) => ({ rank: d.rank, title: d.title }))} side={side} />
-            </Drawer>
-          )}
-          {objects.report && (
-            <Drawer icon={<FileTextIcon size={16} aria-hidden />} title="Research report">
-              <article className="flex max-w-3xl flex-col gap-4">
-                <h3 className="text-2xl font-bold text-kumo-strong">{objects.report.title}</h3>
-                <ArticleBody
-                  markdown={objects.report.markdown}
-                  renderExhibit={(n) => {
-                    const x = exhibitByNumber.get(n);
-                    return x ? <Exhibit symbol={symbol} exhibit={x} /> : null;
-                  }}
-                />
-              </article>
-            </Drawer>
-          )}
         </Drawers>
       )}
     </div>
   );
-}
-
-/** The News table's rows: importance = the strongest tag the item carries on one of its drivers. */
-function newsRows(symbol: string, objects: Analysis["objects"], keep: ThesisSide | null): NewsRow[] {
-  const ids = new Set(objects.drivers.map((d) => d.id));
-  return objects.evidence.map((e) => {
-    const mine = e.verdicts.filter((v) => ids.has(v.driverId));
-    const top = mine.some((v) => v.strength === "strong") ? "strong" : mine.some((v) => v.strength === "weak") ? "weak" : "noise";
-    return {
-      id: e.id,
-      href: itemHref(symbol, `news:${e.id}`, keep),
-      day: day(e.eventDay),
-      headline: e.headline,
-      publisher: e.publisher,
-      strength: e.effect === "too-old" || (mine.length === 0 && e.verdicts.length > 0) ? "too-old" : top,
-      tags: objects.drivers.map((d) => {
-        if (e.effect === "too-old") return { effect: "too-old", strength: "noise" };
-        const v = e.verdicts.find((x) => x.driverId === d.id);
-        return v ? { effect: v.effect, strength: v.strength } : null;
-      }),
-    };
-  });
 }
 
 /** Title of the panel / page: the company and its ticker. */

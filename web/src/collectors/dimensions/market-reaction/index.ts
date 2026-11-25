@@ -1,38 +1,36 @@
 import { and, asc, eq, gte, inArray, sql } from "drizzle-orm";
 import type { BronzeFetch } from "@/db/schema/bronze";
-import { driverEvents, fairValueHistory, fairValues, marketReactions, priceMoves, type FxConversion, type GoldDriverEvent, type GoldFairValueHistory, type GoldMarketReaction, type GoldPriceMove } from "@/db/schema/analysis";
+import { driverEvents, fairValueHistory, priceMoves, type FxConversion, type GoldDriverEvent, type GoldFairValueHistory, type GoldPriceMove } from "@/db/schema/analysis";
 import * as gold from "@/db/schema/gold";
 import { valuationSyntheses } from "@/db/schema/valuation";
 import type { Db } from "@/db/types";
-import { BENCHMARK, localIndex } from "../../benchmark";
+import { localIndex } from "../../benchmark";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
-import { itemsOf, EVIDENCE_WINDOW_DAYS } from "../evidence/items";
 import { majorUnit } from "../financials/derive";
 import { fxReader } from "../fx";
 import { analysedSymbols } from "../watchlist";
-import { reactionOf, type Bar, type FvPoint, type Minute } from "./compute";
+import type { Bar, FvPoint } from "./compute";
 import { findMoves, moveWindows } from "./moves";
 import { pricedEvents, rawEventsOf } from "./events";
-import { latestPrice, priceKnownAt } from "@/console/live-test";
-import { latestTicks, mergeTicks, ticksKnownAt } from "../intraday-price/read";
 
 export * from "./compute";
 export * from "./moves";
 export * from "./events";
 
 /**
- * Market Reaction + Fair Value History (Kevin 2026-11-09: the judges must see the fair value, its range and the price
- * at each key moment). Pure code over stored data, no fetch, no LLM: the history of the fair value (one point a day,
- * from every valuation synthesis) and, per news item and filing of the year, what the price did around it vs the
- * S&P 500. Runs after `valuation`, before the judges.
+ * The common objects of the analysis (docs/architecture.md), pure code over stored data, no fetch, no LLM: the fair
+ * value as it stood each day (one point a day, from every valuation synthesis), every significant unbiased 1-week move
+ * (the stock's 5 trading days with its own market taken out), and every event of 3 years (release, company news,
+ * industry news, filing) with the 1 week after it and the significant move it sits in. Runs after `valuation`, before
+ * step A (`kpi-drivers`).
  */
 
 export const MARKET_REACTION_DIMENSION = "market-reaction";
 
-type Payload = { history: Omit<GoldFairValueHistory, "rebuiltAt">[]; reactions: Omit<GoldMarketReaction, "rebuiltAt">[]; moves?: Omit<GoldPriceMove, "rebuiltAt">[]; events?: Omit<GoldDriverEvent, "rebuiltAt">[] };
+type Payload = { history: Omit<GoldFairValueHistory, "rebuiltAt">[]; moves?: Omit<GoldPriceMove, "rebuiltAt">[]; events?: Omit<GoldDriverEvent, "rebuiltAt">[] };
 
-/** Closes from `days` ago (default: the evidence window plus a margin), oldest first, in major units. */
-async function closes(db: Db, symbol: string, currency: string | null, days = EVIDENCE_WINDOW_DAYS + 20): Promise<Bar[]> {
+/** Closes from `days` ago, oldest first, in major units. */
+async function closes(db: Db, symbol: string, currency: string | null, days: number): Promise<Bar[]> {
   const from = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
   const bars = await db.select({ date: gold.priceBars.date, close: gold.priceBars.close }).from(gold.priceBars).where(and(eq(gold.priceBars.symbol, symbol), gte(gold.priceBars.date, from))).orderBy(asc(gold.priceBars.date));
   return bars.map((b) => ({ date: b.date, close: majorUnit(b.close, currency).price }));
@@ -94,55 +92,28 @@ export const marketReactionSource: Source = {
   async fetch(symbol: string, ctx: SourceContext): Promise<FetchOutcome> {
     if (!ctx.db) throw new Error("market-reaction: needs the database");
     const db = ctx.db;
-    const [[q], [fv]] = await Promise.all([db.select().from(gold.quotes).where(eq(gold.quotes.symbol, symbol)), db.select().from(fairValues).where(eq(fairValues.symbol, symbol))]);
+    const [q] = await db.select().from(gold.quotes).where(eq(gold.quotes.symbol, symbol));
     const currency = q?.currency ?? null;
     const local = localIndex(symbol);
-    const [longBars, benchLongBars, localBars, rawPoints, items, rawEvents] = await Promise.all([
-      closes(db, symbol, currency, MOVE_HISTORY_DAYS),
-      indexBars(db, ctx.fetch, BENCHMARK),
-      indexBars(db, ctx.fetch, local.symbol),
-      fairValuePoints(db, symbol),
-      itemsOf(db, symbol),
-      rawEventsOf(db, symbol),
-    ]);
-    // The reactions read the evidence window only; the moves every stored close.
-    const from = new Date(Date.now() - (EVIDENCE_WINDOW_DAYS + 20) * 86_400_000).toISOString().slice(0, 10);
-    const bars = longBars.filter((b) => b.date >= from);
-    const benchBars = benchLongBars.filter((b) => b.date >= from);
-    const points = await inQuoteCurrency(db, rawPoints, currency ? majorUnit(1, currency).currency : null);
-    const now: FvPoint | null = fv ? { day: (fv.asOf ?? new Date()).toISOString().slice(0, 10), value: fv.value, low: fv.low, high: fv.high } : null;
+    const [longBars, localBars, rawPoints, rawEvents] = await Promise.all([closes(db, symbol, currency, MOVE_HISTORY_DAYS), indexBars(db, ctx.fetch, local.symbol), fairValuePoints(db, symbol), rawEventsOf(db, symbol)]);
     const major = currency ? majorUnit(1, currency).currency : null;
-    // The minute view: the 5-minute bar already closed when each item came out (one query), and the latest bar.
-    const [[ticker], known, latest] = await Promise.all([
-      db.select({ market: gold.tickers.market }).from(gold.tickers).where(eq(gold.tickers.symbol, symbol)),
-      ticksKnownAt(db, items.flatMap((it) => [{ symbol, at: it.at }, { symbol: BENCHMARK, at: it.at }])),
-      latestTicks(db, [symbol, BENCHMARK]),
-    ]);
-    const ticks = mergeTicks(known, latest);
-    const own = (ticks.get(symbol) ?? []).map((t) => ({ ...t, close: majorUnit(t.close, currency).price }));
-    const spx = ticks.get(BENCHMARK) ?? [];
-    const market = ticker?.market ?? null;
-    const minuteOf = (at: Date): Minute | null =>
-      market
-        ? { eventAt: at, atEvent: priceKnownAt(bars, own, at, market), now: latestPrice(bars, own, market), benchAtEvent: priceKnownAt(benchBars, spx, at, "US"), benchNow: latestPrice(benchBars, spx, "US") }
-        : null;
-    const reactions = items.map((it) => reactionOf({ id: `${symbol}|${it.kind}:${it.id}`, symbol, day: it.at.toISOString().slice(0, 10) }, bars, benchBars, points, now, fv?.currency ?? major, minuteOf(it.at)));
+    const points = await inQuoteCurrency(db, rawPoints, major);
     const history = points.map((p) => ({ id: `${symbol}|${p.day}`, symbol, day: p.day, value: p.value, low: p.low, high: p.high, currency: p.currency, conversion: p.conversion }));
-    // Steps 1 and 2 of the drivers: one definition of a significant move, against the stock's OWN market (DRIVERS-SIX-STEPS-1123).
+    // One definition of a significant unbiased move: against the stock's OWN market.
     // A ticker with no closes yet has no move to find; one with closes but no index to measure them against is a gap, said loud.
     if (longBars.length > 1 && localBars.length === 0) throw new Error(`market-reaction: no closes stored for ${local.name} (${local.symbol}), the price dimension fetches it`);
     const windows = moveWindows(longBars, localBars);
     const found = findMoves(symbol, longBars, localBars, local.name, windows);
     const moves = found.map((m) => ({ ...m, currency: major }));
     const events = pricedEvents(symbol, rawEvents, windows, found, local.name);
-    const payload: Payload = { history, reactions, moves, events };
-    return { request: { symbol, items: items.length, bars: longBars.length, moves: moves.length, events: events.length, index: local.symbol }, httpStatus: null, payload };
+    const payload: Payload = { history, moves, events };
+    return { request: { symbol, bars: longBars.length, moves: moves.length, events: events.length, index: local.symbol }, httpStatus: null, payload };
   },
 };
 
 export const marketReactionDim: Dimension = {
   name: MARKET_REACTION_DIMENSION,
-  description: "Per analysed ticker: the fair value as it stood each day (base, low, high), for every news item and filing of the year what the price did around it (close before, next close, five closes later, today) vs the S&P 500, with the fair value then and now; every significant price move (a 5-trading-day move, its local market taken out, at least twice its usual one); and every release, news item and filing of 3 years with its own 5-day move and the move it sits in. Code only, from stored data.",
+  description: "Per analysed ticker: the fair value as it stood each day (base, low, high); every significant price move (a 5-trading-day move, its local market taken out, at least twice its usual one); and every release, news item and filing of 3 years with its own 5-day move and the move it sits in. Code only, from stored data.",
   sources: [marketReactionSource],
   subjects: analysedSymbols,
   promote: async (db, fetches): Promise<PromoteResult> => ({ silverRowsBySource: { rules: await promoteMarketReactions(db, fetches) } }),
@@ -155,26 +126,15 @@ export async function promoteMarketReactions(db: Db, fetches: BronzeFetch[]): Pr
   const symbols = [...latest.keys()];
   if (symbols.length === 0) return 0;
   const history = [...latest.values()].flatMap((p) => p.history);
-  // Bronze holds JSON: the minute view's times come back as strings.
-  const when = (v: Date | string | null) => (v === null ? null : new Date(v));
   const moves = [...latest.values()].flatMap((p) => p.moves ?? []);
   const events = [...latest.values()].flatMap((p) => p.events ?? []);
-  const reactions = [...latest.values()].flatMap((p) => p.reactions).map((r) => ({ ...r, eventAt: when(r.eventAt), priceAtEventAt: when(r.priceAtEventAt), priceNowAt: when(r.priceNowAt) }));
   await db.transaction(async (tx) => {
     await tx.delete(fairValueHistory).where(inArray(fairValueHistory.symbol, symbols));
-    await tx.delete(marketReactions).where(inArray(marketReactions.symbol, symbols));
     if (history.length) await tx.insert(fairValueHistory).values(history);
-    for (let i = 0; i < reactions.length; i += 500) await tx.insert(marketReactions).values(reactions.slice(i, i + 500));
     await tx.delete(priceMoves).where(inArray(priceMoves.symbol, symbols));
     for (let i = 0; i < moves.length; i += 500) await tx.insert(priceMoves).values(moves.slice(i, i + 500));
     await tx.delete(driverEvents).where(inArray(driverEvents.symbol, symbols));
     for (let i = 0; i < events.length; i += 500) await tx.insert(driverEvents).values(events.slice(i, i + 500));
   });
-  return history.length + reactions.length + moves.length + events.length;
-}
-
-/** The stored reactions of a ticker by Evidence id (what the judges read). */
-export async function reactionsOf(db: Db, symbol: string): Promise<Map<string, GoldMarketReaction>> {
-  const rows = await db.select().from(marketReactions).where(eq(marketReactions.symbol, symbol));
-  return new Map(rows.map((r) => [r.id, r]));
+  return history.length + moves.length + events.length;
 }

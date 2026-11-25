@@ -330,10 +330,12 @@ export const contentReplies = silver.table("content_replies", {
 
 /**
  * Ideas (Kevin 2026-11-06): what Dualis could publish next, proposed once a day by Claude from the analysis objects
- * (Signal Changes, Evidence, Narrative Drivers, Fair Values, Research Reports) and the publication history, then scored
- * per channel x format. A draft is made from an Idea on request (the daily picks, content-picks).
+ * (the signal, Signal Changes, each trusted Price Driver `driver:<kpi driver id>`, the events its reversal reads
+ * `event:<driver event id>`) and the publication history, then scored per channel x format. A draft is made from an Idea
+ * on request (the daily picks, content-picks). `evidence`, `fair-value` and `report` are kinds of Ideas written before
+ * 2026-11-24 (history, never offered again).
  */
-export const IDEA_SOURCE_KINDS = ["signal", "change", "evidence", "driver", "fair-value", "report"] as const;
+export const IDEA_SOURCE_KINDS = ["signal", "change", "driver", "event", "evidence", "fair-value", "report"] as const;
 export type IdeaSourceKind = (typeof IDEA_SOURCE_KINDS)[number];
 /** What an Idea rests on: `ref` = `<kind>:<id>` as offered to the model, `label` = what it says in words. */
 export type IdeaSourceRef = { kind: IdeaSourceKind; ref: string; symbol: string | null; label: string };
