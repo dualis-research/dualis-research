@@ -1,17 +1,17 @@
-import type { DocCitation, DriverTests, GoldDriverEvent, GoldPriceMove, KpiEventRow, KpiMeasure, KpiPeriod, KpiResult, WeekVerdict } from "@/db/schema/analysis";
+import type { DocCitation, DriverTests, GoldDriverEvent, GoldPriceMove, KpiEventRow, KpiMeasure, KpiPeriod, KpiResult } from "@/db/schema/analysis";
 import type { StoredSeries } from "../analysis/series";
 
 /**
- * Steps 4 and 5 of the KPI drivers (DRIVERS-SIX-STEPS-1123): pure code over stored rows, the console may import it.
- * 4) When the KPI moved: its value per period at the finest period it is reported (half years for a Hong Kong company),
- *    each period's change on the same period a year earlier (whether it matters is the AI's assessment, index.ts).
- * 5) Event by event: each step-1 event crossed with the KPI's moves and the step-2 price moves; confirms / invalidates /
- *    other cause / nothing by rule, no judgment. The price counts as moved only in a week step 4 judged fundamental
- *    (one verdict per week, PROOF-STRUCTURE-1123): a week the market moved, or nobody explained, is not the candidate's.
+ * Step B of the architecture (docs/architecture.md), the code half: pure code over stored rows, the console may import it.
+ * When a candidate changed: a KPI's value per period at the finest period it is reported (half years for a Hong Kong
+ * company), each period's change on the same period a year earlier (whether it matters is the AI's assessment, index.ts).
+ * Event by event: each event crossed with the candidate's changes and the significant unbiased 1-week moves; confirms /
+ * invalidates / other cause / nothing, counted, no judgment. A significant unbiased move IS the price moving: no
+ * « fundamental or market? » verdict filters it (rejected, Kevin 2026-11-25).
  */
 
-/** A step-2 move with step 4's verdict on it (absent = not judged = unknown). */
-export type JudgedMove = Pick<GoldPriceMove, "id" | "direction"> & { week?: WeekVerdict };
+/** A significant unbiased 1-week move, as the tests read it. */
+export type JudgedMove = Pick<GoldPriceMove, "id" | "direction">;
 
 /** A release reports the latest period that ended at most this long before it (an annual report ~100 days after the year end). */
 export const REPORTED_WITHIN_DAYS = 140;
@@ -49,7 +49,7 @@ const apply = (a: number, op: string, b: number) => (op === "/" ? (b === 0 ? NaN
 
 /**
  * The KPI's values at the finest period type every key it reads holds at least 2 periods of since `since`: a stored
- * series as is, a formula evaluated period by period. Null when nothing stored measures it (step 4 then reads reports).
+ * series as is, a formula evaluated period by period. Null when nothing stored measures it (it is then read in the reports).
  */
 export function measureKpi(catalog: Map<string, StoredSeries>, k: { series: string | null; approximation: string | null }, since: string): { measure: KpiMeasure; points: Map<string, number> } | null {
   const recent = (s: StoredSeries) => [...s.points.keys()].filter((p) => p >= since).length >= 2;
@@ -88,7 +88,7 @@ const yearBefore = (p: string) => `${Number(p.slice(0, 4)) - 1}${p.slice(4, 7)}`
 const endOf = (p: string) => Date.parse(`${ym(p)}-28T00:00:00Z`);
 
 /**
- * Step 4, the code half: every period's change on the same period a year earlier and the release that first reported
+ * The code half of « when a KPI changed »: every period's change on the same period a year earlier and the release that first reported
  * it (the first one within 140 days of the period end). Whether the change matters is the AI's call (`judgeKpiMoves`).
  */
 export function kpiPeriods(points: Map<string, number>, measure: KpiMeasure, releases: { id: string; day: string }[], since: string, cites: Map<string, DocCitation> = new Map()): KpiPeriod[] {
@@ -111,18 +111,16 @@ export function kpiPeriods(points: Map<string, number>, measure: KpiMeasure, rel
 export const periodEnd = endOf;
 
 /**
- * Step 5: one row per event. The KPI is measured at the event that first disclosed a period (its report, or an
- * announcement before it, as step 4 says; null elsewhere); the price at the event's own 5 trading days (step 1) and the move it sits in (step 2).
+ * One row per event. The KPI is measured at the event that first disclosed a period (its report, or an
+ * announcement before it, as the AI says; null elsewhere); the price at the event's own 5 trading days and the significant move it sits in.
  */
 export function eventRows(events: GoldDriverEvent[], periods: KpiPeriod[], expected: "up" | "down", moves: JudgedMove[]): KpiEventRow[] {
   const byRelease = new Map(periods.filter((p) => p.releaseId).map((p) => [p.releaseId!, p]));
   const direction = new Map(moves.map((m) => [m.id, m.direction]));
-  const week = weekOf(moves);
   return events.map((e) => {
     const p = byRelease.get(e.id);
     const kpiMoved = p ? (p.change === null ? null : p.significant) : null;
-    const w = week(e.moveId);
-    const priceMoved = w === "fundamental";
+    const priceMoved = e.moveId !== null;
     let result: KpiResult = priceMoved ? "other-cause" : "nothing";
     if (kpiMoved && p?.change != null) {
       const kpiUp = p.change > 0;
@@ -149,61 +147,47 @@ export function eventRows(events: GoldDriverEvent[], periods: KpiPeriod[], expec
       priceMoved,
       result,
       cite: p?.cite ?? null,
-      week: w,
     };
   });
 }
 
-/** Step 4's verdict on the move an event sits in; null when it sits in none. */
-function weekOf(moves: JudgedMove[]): (moveId: string | null) => WeekVerdict | null {
-  const by = new Map(moves.map((m) => [m.id, m.week ?? ("unknown" as const)]));
-  return (id) => (id === null ? null : (by.get(id) ?? "unknown"));
-}
-
-/** A candidate change at one event: up = the candidate stronger / more favourable, and why (step 4 of a policy or industry fact). */
+/** A candidate change at one event: up = the candidate stronger / more favourable, and why. */
 export type CandidateChange = { up: boolean; why: string | null };
 
 /**
- * Step 5 for a candidate with no figure (a policy, a qualitative industry fact): the events step 4 says carry a change
+ * The same for a candidate with no figure (a policy, a qualitative industry fact): the events the AI says carry a change
  * of it, crossed with the price exactly like a KPI (confirms / invalidates / other cause / nothing).
  */
 export function changeRows(events: GoldDriverEvent[], changes: Map<string, CandidateChange>, expected: "up" | "down", moves: JudgedMove[]): KpiEventRow[] {
   const direction = new Map(moves.map((m) => [m.id, m.direction]));
-  const week = weekOf(moves);
   return events.map((e) => {
     const c = changes.get(e.id);
-    const w = week(e.moveId);
-    const priceMoved = w === "fundamental";
+    const priceMoved = e.moveId !== null;
     let result: KpiResult = priceMoved ? "other-cause" : "nothing";
     if (c) {
       const priceUp = direction.get(e.moveId ?? "") === "up";
       result = priceMoved && c.up === (expected === "up" ? priceUp : !priceUp) ? "confirms" : "invalidates";
     }
-    return { eventId: e.id, day: e.day, kind: e.kind, title: e.title, sourceId: e.sourceId, url: e.url, period: null, from: null, to: null, change: null, kpiWhy: c?.why ?? null, kpiMoved: c ? true : null, stock: e.stock, reaction: e.reaction, z: e.z, moveId: e.moveId, priceMoved, result, cite: null, changeUp: c ? c.up : null, week: w };
+    return { eventId: e.id, day: e.day, kind: e.kind, title: e.title, sourceId: e.sourceId, url: e.url, period: null, from: null, to: null, change: null, kpiWhy: c?.why ?? null, kpiMoved: c ? true : null, stock: e.stock, reaction: e.reaction, z: e.z, moveId: e.moveId, priceMoved, result, cite: null, changeUp: c ? c.up : null };
   });
 }
 
 /**
- * Tests A, B and C (meeting 2026-11-23, whiteboard), counted by code from the rows; the confidence is the AI's.
- * A = each big change of the candidate: did the price move the expected way in a fundamental week?
- * B = each unusual week of the window: was it fundamental, and did the candidate change in it?
- * C = the events where the candidate changed AND the price moved in a fundamental week: which way?
+ * Step B's two tests, counted by code from the rows; the confidence is the AI's.
+ * A = each significant change of the candidate: was the 1 week after it a significant unbiased move, the expected way?
+ * B = each significant unbiased 1-week move: did the candidate change on the first day of that 1-week bar?
  */
 export function driverTests(rows: KpiEventRow[], moves: JudgedMove[]): DriverTests {
   const changed = rows.filter((r) => r.kpiMoved === true);
-  const fundamental = moves.filter((m) => m.week === "fundamental");
-  const explained = [...new Set(changed.filter((r) => r.priceMoved && r.moveId !== null).map((r) => r.moveId!))].filter((id) => fundamental.some((m) => m.id === id)).sort();
-  const both = changed.filter((r) => r.priceMoved);
+  const ids = new Set(moves.map((m) => m.id));
+  const explained = [...new Set(changed.filter((r) => r.moveId !== null && ids.has(r.moveId)).map((r) => r.moveId!))].sort();
   return {
     changes: changed.length,
     followed: changed.filter((r) => r.result === "confirms").length,
     against: changed.filter((r) => r.result === "invalidates").length,
     moves: moves.length,
-    fundamentalMoves: fundamental.length,
     explained: explained.length,
     explainedMoveIds: explained,
-    both: both.length,
-    bothAgree: both.filter((r) => r.result === "confirms").length,
   };
 }
 

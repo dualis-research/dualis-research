@@ -8,7 +8,7 @@ import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } fr
 import { fnv } from "../analysis/facts";
 import { YAHOO_HEADERS, yahooSession } from "../consensus/sources";
 import { firstJsonObject } from "@/llm/judge";
-import { stripDashes } from "../thesis/structure";
+import { stripDashes } from "@/llm/dashes";
 import { analysedSymbols } from "../watchlist";
 
 /**

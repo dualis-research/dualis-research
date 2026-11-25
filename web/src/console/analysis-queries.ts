@@ -2,31 +2,17 @@ import { cache } from "react";
 import { and, asc, desc, eq } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
-  evidence,
-  exhibits,
   fairValues,
-  narrativeDrivers,
-  narrativeRationales,
   narratives,
-  kpiDrivers,
-  researchReports,
   signalChanges,
   signals,
-  type GoldKpiDriver,
-  type GoldEvidence,
-  type GoldExhibit,
   type GoldFairValue,
-  type GoldNarrativeDriver,
-  type GoldNarrativeRationale,
-  type GoldResearchReport,
+  type GoldNarrative,
   type GoldSignal,
   type GoldSignalChange,
-  type GoldMarketReaction,
   type ThesisSide,
-  marketReactions,
-  priceMoveCauses,
+  driverEvents,
   priceMoves,
-  type MoveCauseKind,
 } from "@/db/schema/analysis";
 import { goldMethodValuations, valuationMethods, valuationReports } from "@/db/schema/valuation";
 import { financialMetrics, goldFinancialLines, valuations, type GoldFinancialLine, type GoldFinancialMetric, type GoldValuation } from "@/db/schema/financials";
@@ -34,9 +20,9 @@ import { companyProfiles, tickers } from "@/db/schema/gold";
 import { withBold } from "./emphasis";
 
 /**
- * The analysis read contract (gold only), for the console UI. Names = Kevin's business objects:
- * Signal, Signal Change, Fair Value, Quote, Narrative, Narrative Driver, Driver Category, Exhibit, Evidence,
- * Research Report, Update Note.
+ * The analysis read contract (gold only), for the console UI. Names = Kevin's business objects: Signal, Signal Change,
+ * Fair Value, Quote, Narrative, Update Note; steps A to E of the analysis (docs/architecture.md) are read by
+ * `kpi-queries.ts`.
  */
 
 /** Signals list: one row per active ticker with its signal, strength, fair value + method, quote and gap. */
@@ -72,76 +58,35 @@ export async function listSignalChanges(limit = 100): Promise<GoldSignalChange[]
   return getDb().select().from(signalChanges).orderBy(desc(signalChanges.at)).limit(limit);
 }
 
-/** A Narrative Driver with its Exhibits, the news that bear on it (non-noise verdict for THIS driver, newest first) and the Price Driver it is about (its confidence and its reversal). */
-export type DriverWithExhibits = GoldNarrativeDriver & { exhibits: GoldExhibit[]; evidence: GoldEvidence[]; priceDriver: GoldKpiDriver | null };
-
-/** The news that bear on one driver: its own verdict is not noise. */
-export const bearsOn = (e: GoldEvidence, driverId: string) => e.verdicts.some((v) => v.driverId === driverId && v.effect !== "noise");
-
 export type TickerAnalysis = {
   symbol: string;
   /** The side of the ticker's one narrative (long = pessimistic, short = optimistic), decided by the analysis. */
   side: ThesisSide | null;
   signal: GoldSignal | null;
   fairValue: GoldFairValue | null;
-  /** text = ONE sentence; detail = the longer why (item panel); sideWhy = why the story reads pessimistic or optimistic. */
-  narrative: { text: string; detail: string | null; sideWhy: string | null; asOf: Date } | null;
-  /** Narrative Rationale: why the market holds the story, claims with drivers and sources, its own exhibits. */
-  rationale: (GoldNarrativeRationale & { exhibits: GoldExhibit[] }) | null;
-  /** Rank order, one per trusted Price Driver; each with its Exhibits (chart data inside) and the Evidence judged against it, newest first. */
-  drivers: DriverWithExhibits[];
-  /** Every judged news item and filing of the year, newest first, each with one verdict per driver. */
-  evidence: GoldEvidence[];
-  report: GoldResearchReport | null;
+  /** text = ONE sentence; detail = the longer why; sideWhy = why the story reads pessimistic or optimistic; confidence = step C's (null = not read yet). */
+  narrative: { text: string; detail: string | null; sideWhy: string | null; confidence: GoldNarrative["confidence"]; asOf: Date } | null;
   signalChanges: GoldSignalChange[];
-  /** What the price did around each news item (by Evidence id). */
-  reactions: Map<string, GoldMarketReaction>;
 };
 
-/** Everything the panel / Analysis page shows for one ticker: reads in parallel, once per request. */
+/** The ticker's signal, fair value, narrative and Signal Changes: reads in parallel, once per request. */
 export const getTickerAnalysis = cache(async (symbol: string): Promise<TickerAnalysis> => {
   const db = getDb();
-  const [[signal], [fairValue], nars, allDrivers, ex, ev, reports, changes, rationales, pds, reactions] = await Promise.all([
+  const [[signal], [fairValue], [narrative], changes] = await Promise.all([
     db.select().from(signals).where(eq(signals.symbol, symbol)),
     db.select().from(fairValues).where(eq(fairValues.symbol, symbol)),
     db.select().from(narratives).where(eq(narratives.symbol, symbol)),
-    db.select().from(narrativeDrivers).where(eq(narrativeDrivers.symbol, symbol)).orderBy(asc(narrativeDrivers.rank)),
-    db.select().from(exhibits).where(eq(exhibits.symbol, symbol)).orderBy(asc(exhibits.number)),
-    db.select().from(evidence).where(eq(evidence.symbol, symbol)).orderBy(desc(evidence.eventAt)),
-    db.select().from(researchReports).where(eq(researchReports.symbol, symbol)),
     db.select().from(signalChanges).where(eq(signalChanges.symbol, symbol)).orderBy(desc(signalChanges.at)),
-    db.select().from(narrativeRationales).where(eq(narrativeRationales.symbol, symbol)),
-    db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)),
-    db.select().from(marketReactions).where(eq(marketReactions.symbol, symbol)),
   ]);
-  const narrative = nars[0];
-  const side = narrative?.side ?? null;
-  const rationale = rationales.find((r) => r.side === side);
-  const drivers = allDrivers.filter((d) => d.side === side);
   return withBold({
     symbol,
-    side,
+    side: narrative?.side ?? null,
     signal: signal ?? null,
     fairValue: fairValue ?? null,
-    narrative: narrative ? { text: narrative.text, detail: narrative.detail, sideWhy: narrative.sideWhy, asOf: narrative.asOf } : null,
-    rationale: rationale ? { ...rationale, exhibits: ex.filter((e) => e.driverId === `${symbol}:${side}:rationale`) } : null,
-    drivers: drivers.map((d) => ({ ...d, exhibits: ex.filter((e) => e.driverId === d.id), evidence: ev.filter((e) => bearsOn(e, d.id)), priceDriver: pds.find((k) => k.id === d.kpiDriverId) ?? null })),
-    evidence: ev,
-    report: reports.find((r) => r.side === side) ?? null,
+    narrative: narrative ? { text: narrative.text, detail: narrative.detail, sideWhy: narrative.sideWhy, confidence: narrative.confidence, asOf: narrative.asOf } : null,
     signalChanges: changes,
-    reactions: new Map(reactions.map((r) => [r.id, r])),
   });
 });
-
-/** One Exhibit (level C panel): its chart data and sources. */
-export async function getExhibit(id: string): Promise<GoldExhibit | null> {
-  return (await getDb().select().from(exhibits).where(eq(exhibits.id, id)))[0] ?? null;
-}
-
-/** One Evidence item (level C panel): judgment, cited sentence, the driver and exhibit it points to. */
-export async function getEvidence(id: string): Promise<GoldEvidence | null> {
-  return (await getDb().select().from(evidence).where(eq(evidence.id, id)))[0] ?? null;
-}
 
 /** Financial statements of a ticker (level C figure panel): every line with sources, derived metrics, valuation. */
 export async function getFinancials(symbol: string): Promise<{ lines: GoldFinancialLine[]; metrics: GoldFinancialMetric[]; valuation: GoldValuation | null }> {
@@ -175,22 +120,21 @@ export const getValuation = cache(async (symbol: string) => {
 });
 export type Valuation = Awaited<ReturnType<typeof getValuation>>;
 
-/** A significant move as the price chart marks it (Analysis page): when, how much, and whether a business fact caused it. */
-export type MoveMarker = { id: string; startDay: string; endDay: string; returnPct: number; benchReturn: number | null; kind: MoveCauseKind | null };
+/** A significant unbiased 1-week move as the price chart marks it (Analysis page): when and how much. */
+export type MoveMarker = { id: string; startDay: string; endDay: string; returnPct: number; benchReturn: number | null };
 
-/** The significant price moves of a ticker for the chart markers: a few columns only (Workers CPU). */
+/** The significant price moves of a ticker for the chart markers: a few columns only. */
 export async function priceMoveMarkers(symbol: string): Promise<MoveMarker[]> {
-  const rows = await getDb()
-    .select({ id: priceMoves.id, startDay: priceMoves.startDay, endDay: priceMoves.endDay, returnPct: priceMoves.returnPct, benchReturn: priceMoves.benchReturn, kind: priceMoveCauses.kind })
+  return getDb()
+    .select({ id: priceMoves.id, startDay: priceMoves.startDay, endDay: priceMoves.endDay, returnPct: priceMoves.returnPct, benchReturn: priceMoves.benchReturn })
     .from(priceMoves)
-    .leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id))
     .where(eq(priceMoves.symbol, symbol))
     .orderBy(asc(priceMoves.startDay));
-  return rows;
 }
 
-/** One significant move and its cause (the `move:` item panel). */
+/** One significant move and the events whose week it was (the `move:` item panel). */
 export async function getPriceMove(id: string) {
-  const [r] = await getDb().select().from(priceMoves).leftJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id)).where(eq(priceMoves.id, id));
-  return r ? withBold({ move: r.price_moves, cause: r.price_move_causes }) : null;
+  const db = getDb();
+  const [[move], events] = await Promise.all([db.select().from(priceMoves).where(eq(priceMoves.id, id)), db.select().from(driverEvents).where(eq(driverEvents.moveId, id)).orderBy(asc(driverEvents.day), asc(driverEvents.id))]);
+  return move ? { move, events } : null;
 }

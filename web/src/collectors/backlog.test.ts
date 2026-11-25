@@ -6,7 +6,6 @@ import type { Db } from "@/db/types";
 import { testDb } from "@/test/db";
 import { figuresText, gatherFacts } from "./dimensions/analysis/facts";
 import { seriesCatalog } from "./dimensions/analysis/series";
-import { batchPrompt } from "./dimensions/evidence";
 import { promoteFinancials } from "./dimensions/financials";
 import { deriveMetrics } from "./dimensions/financials/derive";
 import { inlineXbrlFacts, operatingFromFilings, pdfExtract, PDF_EXTRACT_VERSION, pickPages, type SecFilingDoc } from "./dimensions/financials/sources";
@@ -86,7 +85,7 @@ describe("backlog and contracted revenue as financial lines", () => {
     expect(metric("MX", "book-to-bill", "2026-09")!.value).toBeCloseTo(1.3, 9);
   });
 
-  it("hands the order book to the analysis, the evidence judge and the state judges, and charts it", async () => {
+  it("hands the order book to the analysis and the judges, and charts it", async () => {
     await promote();
     const figures = await figuresText(db, "RCMT");
     expect(figures).toContain("Operating figures the company reports");
@@ -94,8 +93,6 @@ describe("backlog and contracted revenue as financial lines", () => {
     expect(figures).toMatch(/Backlog \/ last 12 months revenue \[metric:backlog-to-revenue\] \| 0\.7x \| 1\.1x/);
     expect((await figuresText(db, "MX"))).toContain("[qmetric:book-to-bill]");
     expect((await gatherFacts(db, "RCMT")).text).toContain("[line:backlog]");
-    const d = { side: "long" as const, version: "v", narrative: "The market sees a staffing firm in decline.", gapPct: null, market: null, drivers: [{ rank: 1, category: "Business economics", title: "Demand is shrinking", text: "Revenue fell." }] };
-    expect(batchPrompt("RCMT", d as never, [], new Map(), figures)).toContain("[line:backlog]");
     expect((await seriesCatalog(db, "RCMT")).get("metric:backlog-to-revenue")).toMatchObject({ label: "Backlog / last 12 months revenue", unit: "multiple" });
   });
 

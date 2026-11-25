@@ -292,7 +292,7 @@ export async function pickVisualSubjects(db: Db): Promise<string[]> {
     .where(inArray(content.contentIdeas.id, ideaIds));
   const out: string[] = [];
   for (const i of ideas) {
-    const kinds: VisualKind[] = ["montage", "video", "chart", "x-chart", ...(i.refs.some((r) => r.kind === "evidence") ? (["capture"] as const) : [])];
+    const kinds: VisualKind[] = ["montage", "video", "chart", "x-chart", ...(i.refs.some((r) => r.kind === "event") ? (["capture"] as const) : [])];
     for (const k of kinds) if (!done.has(subjectOf(i.id, k))) out.push(subjectOf(i.id, k));
   }
   return out;

@@ -1,14 +1,20 @@
 import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
 import type { BronzeFetch } from "@/db/schema/bronze";
-import { evidence, fairValues, liveBenchmark, livePositions, narrativeDrivers, signalChanges, signalEvents, signalStates, signals, type GoldEvidence, type GoldKpiDriver, type SignalKind, type Strength, type ThesisReading, type ThesisSide } from "@/db/schema/analysis";
+import { driverEvents, fairValues, liveBenchmark, livePositions, signalChanges, signalEvents, signalStates, signals, type GoldKpiDriver, type GoldNarrative, type SignalKind, type Strength, type ThesisReading, type ThesisSide } from "@/db/schema/analysis";
+import * as silver from "@/db/schema/silver";
+import { firstJsonObject } from "@/llm/judge";
+import { notesText } from "@/inputs/notes";
 import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
 import { majorUnit } from "../financials/derive";
-import { stripDashes } from "../thesis/structure";
+import { stripDashes } from "@/llm/dashes";
 import { analysedSymbols } from "../watchlist";
+import { fnv } from "../analysis/facts";
 import { trustedDrivers } from "../analysis/price-drivers";
+import { holdsNarrative } from "../analysis/prompt";
+import { withNotes } from "../kpi-drivers";
 import { narrativeOf, SIDE } from "../analysis/thesis";
 import { latestPrice, positionsFromReadings, priceKnownAt } from "@/console/live-test";
 import { BENCHMARK } from "../../benchmark";
@@ -16,7 +22,7 @@ import { latestTicks, mergeTicks, ticksKnownAt } from "../intraday-price/read";
 import type { Bar } from "@/console/portfolio-series";
 
 export const SIGNALS_DIMENSION = "signals";
-/** Evidence ids kept on a signal (its strongest reversals). */
+/** Event ids kept on a signal (what the leading Price Driver's reversal reads). */
 const MAX_EVIDENCE = 10;
 
 export type SignalReading = {
@@ -26,7 +32,7 @@ export type SignalReading = {
   why: string | null;
   theses: ThesisReading[];
   evidenceIds: string[];
-  /** The Price Driver whose reversal against the narrative gives the signal (`gold.kpi_drivers.id`), null when none. */
+  /** The Price Driver whose reversal carries the turn, as step E named it (`gold.kpi_drivers.id`), null when none. */
   kpiDriverId?: string | null;
   fairValue: number | null;
   fairValueMethod: string | null;
@@ -37,11 +43,11 @@ export type SignalReading = {
   gapPct: number | null;
 };
 
-/** What the signal reads of a trusted Price Driver: its reversal against the narrative (kpi-reversal). */
-export type ReversingDriver = Pick<GoldKpiDriver, "id" | "name" | "rank" | "reversal">;
+/** What step E reads of a Price Driver: step B's confidence, step C's belief, step D's reading. */
+export type ReversingDriver = Pick<GoldKpiDriver, "id" | "name" | "rank" | "reversal"> & Partial<Pick<GoldKpiDriver, "level" | "kind" | "marketBelief">>;
 
 const STRENGTH_RANK = { strong: 0, weak: 1, none: 2 } as const;
-/** The trusted Price Drivers whose reversal the judge read as going AGAINST the narrative of this side, strongest first. */
+/** The Price Drivers step D read in reversal against the narrative of this side, strongest first (what the outputs draw). */
 export function driversAgainst<T extends ReversingDriver>(side: ThesisSide, drivers: T[]): (T & { reversal: NonNullable<T["reversal"]> })[] {
   return drivers
     .filter((k): k is T & { reversal: NonNullable<T["reversal"]> } => !!k.reversal && k.reversal.stance === "against" && k.reversal.side === side && (k.reversal.strength === "strong" || k.reversal.strength === "weak"))
@@ -49,76 +55,157 @@ export function driversAgainst<T extends ReversingDriver>(side: ThesisSide, driv
 }
 
 /**
- * The signal (Kevin 2026-11-24), from the narrative's side (the analysis decided it) and each trusted Price Driver's
- * reversal (kpi-reversal decided whether it goes against the narrative, and how strongly): the strongest one against it
- * IS the signal, a pessimistic story giving a BUY and an optimistic one a SELL, at that reversal's strength. None
- * against it = no signal. No rule on the price or the fair value: both judges read them.
+ * Step E of the architecture (docs/architecture.md), the Narrative Reversal: ONE stored LLM judgment per ticker and
+ * input. Given step C (the narrative, its side, its confidence, what the market believes about each Price Driver) and
+ * step D (each Price Driver's continuation, reversal or noise), is the narrative turning? strong | weak | noise.
+ * The Signal is its output: a pessimistic narrative turning = BUY, an optimistic one = SELL, at that confidence.
  */
-export function signalFrom(side: ThesisSide | null, drivers: ReversingDriver[]): { signal: SignalKind; strength: Strength; side: ThesisSide | null; why: string | null; kpiDriverId: string | null; effect: ThesisReading["effect"] } {
-  if (!side) return { signal: "none", strength: "noise", side: null, why: null, kpiDriverId: null, effect: "noise" };
-  const [top] = driversAgainst(side, drivers);
-  if (top) return { signal: SIDE[side].signal, strength: top.reversal.strength as Strength, side, why: `${top.name}: ${top.reversal.why}`, kpiDriverId: top.id, effect: "reversal" };
-  const withIt = drivers.find((k) => k.reversal?.stance === "with" && k.reversal.side === side);
-  return { signal: "none", strength: "noise", side: null, why: drivers.length ? "No price driver is turning against the narrative." : null, kpiDriverId: null, effect: withIt ? "continuation" : "noise" };
+export const SIGNAL_QUESTION = "signal@v1";
+export const SIGNAL_SUBJECT_KIND = "signal";
+export type Turning = { strength: Strength; why: string | null; kpiDriverId: string | null };
+
+export const SIGNAL_SYSTEM = [
+  "You are the equity research associate of a small-cap long/short analyst. The market tells ONE story about a stock, the narrative, with its side: long = a PESSIMISTIC story (the stock sits below its fair value), short = an OPTIMISTIC story (above it). His edge: catch the moment that narrative TURNS, before the price does.",
+  "You are given the narrative, how confidently the market is thought to hold it, and each Price Driver of the stock: how confident we are that the price trades on it, what the market believes about it, and its latest reading against the narrative: in reversal against it (weak or strong), in continuation of it (weak or strong), or noise, with whether the change lasts, how big it is and how much the price already moved.",
+  "Question: is the narrative turning? Weigh it as the analyst would: a reversal on the Price Driver the story rests on most says more than one on a side driver; Price Drivers in continuation pull the other way; a reversal the price has fully moved on is no longer ahead of the market; a narrative held with weak confidence turns less surely than one held with strong confidence. Decide yourself, never by counting.",
+  "turning = strong (the narrative is clearly turning: act), weak (it may be turning: watch), noise (it is not, or nothing says so). lead = the label of the Price Driver whose reversal carries the turn, copied exactly, null when turning is noise. why = ONE plain sentence of at most 20 words a reader understands at once, naming that Price Driver and its figure. No fair value, no rating, no horizon.",
+  "No em dash. JSON only, no prose, no code fence:",
+  '{"turning": "strong" | "weak" | "noise", "lead": "P1" | null, "why": string}',
+].join("\n");
+
+const TURNINGS: readonly Strength[] = ["strong", "weak", "noise"];
+
+/** Step E's answer, typed; an unknown lead label is dropped, never guessed. Shape errors fail loud. */
+export function parseTurning(text: string, labels: Map<string, string>): Turning {
+  const o = JSON.parse(firstJsonObject(text)) as Record<string, unknown>;
+  if (!TURNINGS.includes(o.turning as Strength)) throw new Error(`signals: turning "${String(o.turning)}" is not strong, weak or noise`);
+  if (typeof o.why !== "string" || !o.why.trim()) throw new Error("signals: no why");
+  const strength = o.turning as Strength;
+  return { strength, why: stripDashes(o.why.trim()), kpiDriverId: strength === "noise" ? null : (labels.get(String(o.lead ?? "").trim()) ?? null) };
+}
+
+const STATE_WORDS: Record<string, string> = { "continuing-to-rise": "continuing to rise", "continuing-to-fall": "continuing to fall", "reversing-up": "reversing up", "reversing-down": "reversing down", flat: "flat" };
+const READING = { against: "in REVERSAL against the narrative", with: "in CONTINUATION of the narrative", none: "noise" } as const;
+
+/** One Price Driver as step E reads it: steps B, C and D on it. */
+function driverLine(label: string, k: ReversingDriver): string {
+  const r = k.reversal!;
+  const stance = r.stance ?? "none";
+  const m = r.magnitude;
+  return [
+    `${label} ${k.name} (${k.level ?? "unread"} confidence that the price trades on it).`,
+    `  The market believes: ${k.marketBelief ?? "the narrative does not rest on it."}`,
+    `  Reading: ${READING[stance]}${stance === "none" ? "" : `, ${r.strength}`}. ${r.why}`,
+    `  Its own value: ${STATE_WORDS[r.intrinsic.state] ?? r.intrinsic.state}. ${r.intrinsic.why}`,
+    `  Leading indicator: ${r.leading.probability}. ${r.leading.why}`,
+    `  ${[r.durability && r.durability !== "n-a" ? r.durability : null, m ? `${m.figure}${m.from && m.to ? ` ${m.from} to ${m.to}` : ""}${m.change ? ` (${m.change})` : ""}, ${m.size}` : null, r.pricedIn ? `priced in: ${r.pricedIn}` : null].filter((x) => x !== null).join("; ") || "No size read."}`,
+  ].join("\n");
+}
+
+export type TurningInput = { symbol: string; company: string; narrative: Pick<GoldNarrative, "side" | "text" | "detail" | "confidence" | "version">; drivers: ReversingDriver[]; notes?: string | null; now?: Date };
+
+/**
+ * Step E for one ticker: null (no call) when step C holds no narrative with weak or strong confidence, or step D read
+ * no Price Driver against it; else the stored judgment for these exact C and D readings, asked once. Thierry's inputs
+ * are in the prompt, outside the key.
+ */
+export async function turningOf(db: Db, complete: Complete | undefined, x: TurningInput): Promise<Turning | null> {
+  if (!holdsNarrative(x.narrative)) return null;
+  const read = x.drivers.filter((k) => !!k.reversal && k.reversal.side === x.narrative.side && k.reversal.stance !== undefined);
+  if (read.length === 0) return null;
+  const labels = new Map(read.map((k, i) => [`P${i + 1}`, k.id]));
+  const w = SIDE[x.narrative.side];
+  const facts = [
+    `Company: ${x.company}`,
+    `Step C, the narrative (side ${x.narrative.side}: ${w.story}; held with ${x.narrative.confidence} confidence): ${x.narrative.text}${x.narrative.detail ? ` ${x.narrative.detail}` : ""}`,
+    `A reversal against it: ${w.reversal}. A continuation of it: ${w.continuation}.`,
+    "",
+    "Step D, each Price Driver read against the narrative:",
+    ...read.map((k, i) => driverLine(`P${i + 1}`, k)),
+  ].join("\n");
+  const key = `${SIGNAL_QUESTION}:${fnv(`${x.narrative.version}|${facts}`)}`;
+  const j = silver.judgments;
+  const [hit] = await db.select().from(j).where(and(eq(j.subjectKind, SIGNAL_SUBJECT_KIND), eq(j.subjectId, x.symbol), eq(j.questionKey, key)));
+  if (hit) return parseTurning((hit.raw as { text: string }).text, labels);
+  if (!complete) throw new Error("signals: step E needs the LLM (cli.ts sets ctx.complete)");
+  const prompt = [facts, ...withNotes(x.notes ?? null), "", "Is the narrative turning?"].join("\n");
+  let r = await complete({ system: SIGNAL_SYSTEM, prompt });
+  let parsed: Turning;
+  try {
+    parsed = parseTurning(r.text, labels);
+  } catch (err) {
+    // One repair ask on an unreadable answer; a second failure is loud.
+    r = await complete({ system: SIGNAL_SYSTEM, prompt: `${prompt}\n\nYour previous answer could not be read (${(err as Error).message.slice(0, 200)}). Answer again with valid JSON only, every field of the format.` });
+    parsed = parseTurning(r.text, labels);
+  }
+  await db.insert(j).values({ subjectKind: SIGNAL_SUBJECT_KIND, subjectId: x.symbol, questionKey: key, question: `${SIGNAL_QUESTION}: is the narrative of ${x.symbol} turning?`, verdict: parsed.strength, probability: 1, citedSentence: null, reason: parsed.why, model: r.model, raw: { text: r.text }, createdAt: x.now ?? new Date() }).onConflictDoNothing();
+  return parsed;
+}
+
+/**
+ * The Signal = step E's output: a pessimistic narrative turning gives a BUY, an optimistic one a SELL, at E's confidence;
+ * noise, or no step E reading, = no signal. No rule on the price, the fair value or the Price Drivers here.
+ */
+export function signalFrom(side: ThesisSide | null, turning: Turning | null): { signal: SignalKind; strength: Strength; side: ThesisSide | null; why: string | null; kpiDriverId: string | null; effect: ThesisReading["effect"] } {
+  if (!side || !turning || turning.strength === "noise") return { signal: "none", strength: "noise", side: null, why: turning?.why ?? null, kpiDriverId: null, effect: "noise" };
+  return { signal: SIDE[side].signal, strength: turning.strength, side, why: turning.why, kpiDriverId: turning.kpiDriverId, effect: "reversal" };
 }
 
 export function readingOf(
   fv: { value: number; currency: string | null; method: string | null; label?: string | null } | null,
   quote: { close: number; currency: string | null; date: string } | null,
   side: ThesisSide | null,
-  drivers: ReversingDriver[],
+  turning: Turning | null,
   evidenceIds: string[] = [],
 ): SignalReading {
   const q = quote ? majorUnit(quote.close, quote.currency) : null;
   const comparable = !!fv && !!q && (!fv.currency || !q.currency || fv.currency === q.currency);
   const gapPct = comparable && fv!.value > 0 ? q!.price / fv!.value - 1 : null;
-  const { effect, ...s } = signalFrom(side, drivers);
+  const { effect, ...s } = signalFrom(side, turning);
   const theses: ThesisReading[] = side ? [{ side, signal: s.strength, effect, strength: s.strength, why: s.why, since: null }] : [];
   return { ...s, evidenceIds: s.signal === "none" ? [] : evidenceIds.slice(0, MAX_EVIDENCE), theses, fairValue: fv?.value ?? null, fairValueMethod: fv?.method ?? null, fairValueLabel: fv?.label ?? null, currency: fv?.currency ?? null, quote: q?.price ?? null, quoteDate: quote?.date ?? null, gapPct };
 }
 
-/** A tag's rank: strong before weak (the news behind a signal, strongest first). */
-const tagRank = (s: string) => (s === "strong" ? 0 : s === "weak" ? 1 : 2);
-/** The news and filings judged as a reversal of the Narrative Driver that speaks of this Price Driver, strongest then newest first. */
-export function evidenceBehind(rows: GoldEvidence[], narrativeDriverId: string | null): string[] {
-  if (!narrativeDriverId) return [];
-  return rows
-    .flatMap((e) => e.verdicts.filter((v) => v.driverId === narrativeDriverId && v.effect === "reversal").map((v) => ({ e, v })))
-    .sort((a, b) => tagRank(a.v.strength) - tagRank(b.v.strength) || b.e.eventAt.getTime() - a.e.eventAt.getTime())
-    .map((x) => x.e.id);
+/** The events behind a signal: those the leading Price Driver's reversal (step D) cites as its leading indicator (`gold.driver_events` ids), newest first. */
+export function eventsBehind(k: Pick<GoldKpiDriver, "reversal"> | undefined): string[] {
+  return [...(k?.reversal?.leading.events ?? [])].sort((a, b) => b.day.localeCompare(a.day)).map((e) => e.id);
 }
 
-export const rulesSource: Source = {
-  name: "rules",
-  requiredEnv: [],
+export const SIGNAL_SOURCE = "claude";
+export const signalSource: Source = {
+  name: SIGNAL_SOURCE,
+  requiredEnv: ["CLAUDE_OAUTH_TOKEN"],
   covers: () => true,
   async fetch(symbol: string, ctx: SourceContext): Promise<FetchOutcome> {
     if (!ctx.db) throw new Error("signals: needs the database");
-    const [[fv], [quote], narrative, drivers] = await Promise.all([
+    const [[fv], [quote], narrative, drivers, [profile], notes] = await Promise.all([
       ctx.db.select().from(fairValues).where(eq(fairValues.symbol, symbol)),
       ctx.db.select().from(gold.quotes).where(eq(gold.quotes.symbol, symbol)),
       narrativeOf(ctx.db, symbol),
       trustedDrivers(ctx.db, symbol),
+      ctx.db.select().from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol)),
+      notesText(ctx.db, symbol),
     ]);
-    const side = narrative?.side ?? null;
-    const top = signalFrom(side, drivers);
-    let evidenceIds: string[] = [];
-    if (top.kpiDriverId) {
-      const [[nd], rows] = await Promise.all([
-        ctx.db.select({ id: narrativeDrivers.id }).from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.kpiDriverId, top.kpiDriverId))),
-        ctx.db.select().from(evidence).where(eq(evidence.symbol, symbol)),
-      ]);
-      evidenceIds = evidenceBehind(rows, nd?.id ?? null);
-    }
-    const reading = readingOf(fv ?? null, quote ? { close: quote.close, currency: quote.currency, date: quote.date } : null, side, drivers, evidenceIds);
-    return { request: { symbol, rule: "the strongest trusted Price Driver whose reversal goes against the narrative is the signal; none = no signal", side, drivers: drivers.map((k) => `${k.name}: ${k.reversal ? `${k.reversal.stance ?? "not read against the narrative"} ${k.reversal.strength}` : "no reversal read"}`) }, httpStatus: null, payload: reading };
+    const company = `${symbol}${profile?.name ? ` (${profile.name})` : ""}${profile?.industry ? `, ${profile.industry}` : ""}. ${profile?.description ?? ""}`.trim();
+    // A narrative written before step C gave a confidence: the signal waits for it (a failed fetch, the stored signal stays).
+    if (narrative && !narrative.confidence) return { request: { symbol }, httpStatus: null, error: "the narrative has no confidence yet (written before step C read it): the signal waits for the next analysis run" };
+    const turning = narrative ? await turningOf(ctx.db, ctx.complete, { symbol, company, narrative, drivers, notes }) : null;
+    // The signal's side is the narrative's only when step E read it turning.
+    const side = narrative && turning ? narrative.side : null;
+    const evidenceIds = eventsBehind(drivers.find((k) => k.id === turning?.kpiDriverId));
+    const reading = readingOf(fv ?? null, quote ? { close: quote.close, currency: quote.currency, date: quote.date } : null, side, turning, evidenceIds);
+    return {
+      request: { symbol, step: "E: given the narrative (C) and each Price Driver's reading (D), is the narrative turning?", side: narrative?.side ?? null, confidence: narrative?.confidence ?? null, turning: turning?.strength ?? "not asked", drivers: drivers.map((k) => `${k.name}: ${k.reversal ? `${k.reversal.stance ?? "not read against the narrative"} ${k.reversal.strength}` : "no reading"}`) },
+      httpStatus: null,
+      payload: reading,
+    };
   },
 };
 
 export const signalsDim: Dimension = {
   name: SIGNALS_DIMENSION,
-  description: "Signal per ticker from its narrative's side and its trusted Price Drivers' reversals: the strongest one going against the narrative is the signal (a pessimistic story gives a BUY, an optimistic one a SELL), at its strength; none = no signal. Each change after the first reading = a Signal Change with an Update Note.",
-  sources: [rulesSource],
+  description: "Step E (docs/architecture.md). Per ticker, ONE stored judgment: given the narrative (C) and each Price Driver's continuation, reversal or noise (D), is the narrative turning? strong, weak or noise. The Signal is its output: a pessimistic narrative turning gives a BUY, an optimistic one a SELL; noise = no signal. Each change after the first reading = a Signal Change with an Update Note.",
+  sources: [signalSource],
   subjects: analysedSymbols,
   promote: (db, fetches, ctx) => promoteSignals(db, fetches, ctx.complete),
 };
@@ -134,14 +221,14 @@ import { signalWords } from "@/content/signal-words";
 export const NOTE_SYSTEM = "You write one-line signal notes for a small-cap long/short analyst. Plain English, subject verb complement, one sentence, at most 20 words. No em dash.";
 
 async function updateNote(db: Db, complete: Complete, symbol: string, from: { signal: string; strength: string }, to: { signal: string; strength: string; evidenceIds: string[]; why?: string | null }): Promise<{ text: string; model: string }> {
-  const items = to.evidenceIds.length ? (await db.select().from(evidence).where(eq(evidence.symbol, symbol))).filter((e) => to.evidenceIds.includes(e.id)) : [];
+  const items = to.evidenceIds.length ? await db.select({ day: driverEvents.day, title: driverEvents.title }).from(driverEvents).where(inArray(driverEvents.id, to.evidenceIds)) : [];
   const [profile] = await db.select({ name: gold.companyProfiles.name }).from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol));
   const prompt = [
     `${profile?.name ?? symbol} (${symbol}): the signal moved from ${signalWords(from.signal, from.strength)} to ${signalWords(to.signal, to.strength)}.`,
-    // The reading's own why: the Price Driver turning against the narrative (absent when an old note is written again).
-    to.why ? `The price driver behind it: ${to.why}` : null,
-    "The news behind it:",
-    ...(items.length ? items.slice(0, 5).map((e) => `- ${e.eventDay}: ${e.headline}`) : ["- none"]),
+    // Step E's own why (absent when an old note is written again).
+    to.why ? `Why: ${to.why}` : null,
+    "The events behind it:",
+    ...(items.length ? items.sort((a, b) => b.day.localeCompare(a.day)).slice(0, 5).map((e) => `- ${e.day}: ${e.title.replace(/\s+/g, " ")}`) : ["- none"]),
     "",
     "Write the note: ONE short sentence saying what moved the signal, e.g. \"Q3 beat eases the doubt on the 2026 guide.\" No figures from the fair value, no calculation, no rating, no horizon.",
   ]
@@ -181,7 +268,7 @@ export async function promoteSignals(db: Db, fetches: BronzeFetch[], complete: C
     await db.update(signalStates).set({ updateNote: note.text, model: note.model, noteVersion: NOTE_VERSION }).where(eq(signalStates.id, b.id));
   }
   await rebuildSignalsGold(db, latest);
-  return { silverRowsBySource: { rules: changes } };
+  return { silverRowsBySource: { [SIGNAL_SOURCE]: changes } };
 }
 
 async function rebuildSignalsGold(db: Db, latest: Map<string, BronzeFetch>): Promise<void> {

@@ -4,16 +4,18 @@ import { fetches } from "@/db/schema/bronze";
 import * as content from "@/db/schema/content";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
-import { seedAnalysedTicker } from "@/test/content-seed";
+import { SEED_NEWS_ID, seedAnalysedTicker } from "@/test/content-seed";
 import { testDb } from "@/test/db";
 import { runDimension } from "../../runner";
 import { PROPOSED_FORMATS } from "../content-drafts/format";
 import { contentIdeas } from ".";
 import { ideasSystem, parseIdeas, parseScores, scoresSystem } from "./prompt";
 
+const EVENT = `event:CCLD|news:${SEED_NEWS_ID}`;
+const PD = "driver:CCLD:kpi:client-revenue";
 const IDEAS = JSON.stringify({
   ideas: [
-    { symbol: "CCLD", title: "CareCloud replaced the client the market thinks it lost.", angle: "Reuters reports a new hospital client.", sources: ["evidence:CCLD|news:n1", "driver:CCLD:long:1"] },
+    { symbol: "CCLD", title: "CareCloud replaced the client the market thinks it lost.", angle: "Reuters reports a new hospital client.", sources: [EVENT, PD] },
     { symbol: "CCLD", title: "CareCloud revenue grew while the market priced a loss.", angle: "Q3 revenue up.", sources: ["signal:CCLD"] },
     { symbol: null, title: "Small caps with a new client beat the story.", angle: "One example this week.", sources: ["signal:CCLD", "not-offered:1"] },
     { symbol: "NOPE", title: "Unknown ticker.", angle: "Dropped.", sources: ["signal:CCLD"] },
@@ -56,18 +58,25 @@ describe("content-ideas dimension", () => {
     // 5 proposed: an unknown ticker and one with no offered source are dropped; an unknown source id is dropped, its idea kept.
     expect(ideas.map((i) => i.title)).toHaveLength(3);
     const first = ideas.find((i) => i.rank === 1)!;
-    expect(first.sourceRefs.map((s) => s.ref)).toEqual(["evidence:CCLD|news:n1", "driver:CCLD:long:1"]);
-    expect(first.sourceRefs[0]).toMatchObject({ kind: "evidence", symbol: "CCLD", label: "CCLD signs a new hospital client" });
+    expect(first.sourceRefs.map((s) => s.ref)).toEqual([EVENT, PD]);
+    expect(first.sourceRefs[0]).toMatchObject({ kind: "event", symbol: "CCLD", label: "CCLD signs a new hospital client" });
+    expect(first.sourceRefs[1]).toMatchObject({ kind: "driver", symbol: "CCLD", label: "Client revenue" });
     expect(await db.select().from(content.contentIdeaScores)).toHaveLength(3 * PROPOSED_FORMATS.length);
 
     const [g] = await db.select().from(content.goldContentIdeas).where(eq(content.goldContentIdeas.id, first.id));
     expect(g).toMatchObject({ companyName: "CareCloud", bestFormat: "x-post", bestScore: 89, draftCount: 0, requests: [] });
     expect(g.scores.map((s) => s.score)).toEqual([...g.scores.map((s) => s.score)].sort((a, b) => b - a));
 
-    // The prompt carried the analysis objects with their ids.
+    // The prompt carried the analysis objects with their ids (one chain: no Evidence, no Narrative Driver, no report):
+    // each trusted Price Driver with its belief, its reported figures and its reversal; the events its reversal read.
     const prompt = complete.mock.calls[0][0].prompt;
-    expect(prompt).toContain("[evidence:CCLD|news:n1]");
+    expect(prompt).toContain(`[${EVENT}]`);
+    expect(prompt).toContain(`[${PD}] Price Driver: Client revenue (strong confidence). What the market believes: The market thinks the lost client is gone for good.`);
+    expect(prompt).toContain("Reported: 3 months to Sep-25 40.0M USD");
+    expect(prompt).toContain("Now: Strong inflection, Q2 client revenue $46.0M, up 15%.");
     expect(prompt).toContain("[change:");
+    expect(prompt).not.toContain("evidence:");
+    expect(prompt).not.toContain("report:");
     // No fair value is offered: an Idea is published, so it rests on reported figures (Thierry 2026-11-16).
     expect(prompt).not.toMatch(/fair.value/i);
 

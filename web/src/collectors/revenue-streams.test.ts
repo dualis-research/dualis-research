@@ -7,7 +7,6 @@ import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import { testDb } from "@/test/db";
 import { figuresText, streamsText } from "./dimensions/analysis/facts";
-import { batchPrompt } from "./dimensions/evidence";
 import { revenueStreams } from "@/db/schema/financials";
 import { seriesCatalog } from "./dimensions/analysis/series";
 import { goldFinancialLines } from "@/db/schema/financials";
@@ -178,10 +177,6 @@ describe("Hong Kong reports", () => {
     const figures = await figuresText(db, "1161.HK");
     expect(figures).toContain("Revenue (half-yearly) [hline:revenue] | 492.2M | 515.8M");
     expect(figures).toContain("6 months to 2026-03 473.6M (+9.6%, 92% of total)");
-    const d = { side: "long" as const, version: "v", narrative: "The market sees a flat chain.", gapPct: null, market: null, drivers: [{ rank: 1, category: "Business economics", title: "Revenue has stopped growing", text: "Flat for two years." }] };
-    const prompt = batchPrompt("1161.HK", d as never, [{ kind: "filing", id: "f", title: "Interim Results Announcement", publisher: null, summary: null, url: null, at: new Date("2026-05-26"), sources: ["hkex"] }], new Map(), figures);
-    expect(prompt.indexOf("6 months to 2026-03 473.6M")).toBeGreaterThan(prompt.indexOf("Revenue has stopped growing"));
-    expect(prompt.indexOf("6 months to 2026-03 473.6M")).toBeLessThan(prompt.indexOf("Interim Results Announcement"));
   });
 
   it("charts half years apart from quarters", async () => {

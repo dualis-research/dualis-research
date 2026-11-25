@@ -18,7 +18,7 @@ export const ARTICLE_DISCLAIMER =
 
 export const X_LIMIT = 280;
 
-export const PROMPT_VERSION = "drafts-v10";
+export const PROMPT_VERSION = "drafts-v11";
 
 /**
  * Every post on a live signal (BUY or SELL) is 3 lines, X and Substack alike (Thierry 2026-11-16: not confident in our
@@ -80,18 +80,19 @@ export function draftSystem(format: DraftFormat, voiceGuide: string | null, acco
 }
 
 /**
- * What the writer gets beside the Idea: the ticker's story, the evidence the Idea rests on and the reported figures of its
- * drivers, in words. Never the fair value or a gap to it (Thierry 2026-11-16): the writer cannot print what it is not given.
+ * What the writer gets beside the Idea: the ticker's story, the events the Idea rests on, its Price Drivers (what the
+ * market believes about each, where each stands now) and their reported figures, in words. Never the fair value or a gap to it (Thierry 2026-11-16): the writer cannot print what it is not given.
  */
 export type IdeaContext = {
   narrative: string | null;
   signal: string | null;
-  /** Reported figures of the drivers' Exhibits, each value with its period (lead series, newest last). */
+  /** Reported figures of the Price Drivers' own series, each value with its period (newest last). */
   figures: { title: string; values: string }[];
-  evidence: { headline: string; publisher: string | null; day: string; why: string | null; url: string | null }[];
+  /** The events the Idea cites or its Price Drivers' reversals read (news, filings, results), newest first. */
+  events: { title: string; kind: string; day: string; url: string | null }[];
   /** The day the current signal started (its trigger), when there is one. */
   signalSince: string | null;
-  /** Each driver with where it stands now: its tag word, the day the turn started, its headline with the number. */
+  /** Each Price Driver under its own name, what the market believes about it, and where it stands now (its reversal). */
   drivers: { title: string; summary: string | null; state: { word: string; since: string | null; headline: string | null; pricedIn: string | null } | null }[];
   signalChanges: { label: string; note: string | null }[];
 };
@@ -107,11 +108,9 @@ export function draftPrompt(inputs: DraftInputs, ctx: IdeaContext, exhibits: { i
     `What the market believes: ${ctx.narrative ?? "not written yet"}`,
     ctx.signal ? `Signal: ${ctx.signal}${ctx.signalSince ? `, since ${ctx.signalSince}` : ""}` : "",
     ...(ctx.signalChanges.length ? ["", "Signal changes:", ...ctx.signalChanges.map((c) => `- ${c.label}${c.note ? `: ${c.note}` : ""}`)] : []),
-    ...(ctx.evidence.length
-      ? ["", "Evidence:", ...ctx.evidence.map((e) => `- ${e.day} ${e.publisher ?? ""}: ${e.headline}${e.why ? `. ${e.why}` : ""}${e.url ? ` (${e.url})` : ""}`)]
-      : []),
+    ...(ctx.events.length ? ["", "Events:", ...ctx.events.map((e) => `- ${e.day} ${e.kind}: ${e.title}${e.url ? ` (${e.url})` : ""}`)] : []),
     ...(ctx.figures.length ? ["", "Reported figures (the only numbers a post may compare):", ...ctx.figures.map((f) => `- ${f.title}: ${f.values}`)] : []),
-    ...(ctx.drivers.length ? ["", "Narrative drivers (why the market holds its story):", ...ctx.drivers.map((d) => `- ${d.title}${d.summary ? `: ${d.summary}` : ""}${d.state ? `. Now: ${d.state.word}${d.state.since ? ` since ${d.state.since}` : ""}${d.state.headline ? `, ${d.state.headline}` : ""}${d.state.pricedIn ? ` (${d.state.pricedIn})` : ""}` : ""}`)] : []),
+    ...(ctx.drivers.length ? ["", "Price drivers (what the market believes about each, and where it stands now):", ...ctx.drivers.map((d) => `- ${d.title}${d.summary ? `: ${d.summary.replace(/\.$/, "")}` : ""}${d.state ? `. Now: ${d.state.word}${d.state.since ? ` since ${d.state.since}` : ""}${d.state.headline ? `, ${d.state.headline}` : ""}${d.state.pricedIn ? ` (${d.state.pricedIn})` : ""}` : ""}`)] : []),
     exhibits.length ? ["", "Exhibits you may use:", ...exhibits.map((x) => `- ${x.id}: ${x.label}`)].join("\n") : "",
   ];
   return lines.filter((l, i) => l !== "" || lines[i - 1] !== "").join("\n").trim();

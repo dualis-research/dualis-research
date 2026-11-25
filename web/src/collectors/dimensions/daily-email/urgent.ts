@@ -50,7 +50,7 @@ export async function sendUrgentAlerts(db: Db, ctx: SourceContext, now = new Dat
     importance: v.importance,
     keyPoints: v.keyPoints ?? null,
   });
-  // Key points come with the verdict; the Price Drivers it bears on are read from the evidence judge's verdicts.
+  // Key points come with the verdict; the Price Drivers it bears on are read from step D's readings.
   const full = async (v: VerdictRow) => (await withDriverImpacts(db, [item(v)]))[0];
   const day = astanaDay(now);
 

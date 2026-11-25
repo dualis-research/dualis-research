@@ -133,18 +133,18 @@ export type DigestItem = {
   importance?: number | null;
   /** 3 bullets on what the item says, written from its text; absent when no text could be read. */
   keyPoints?: string[] | null;
-  /** The ticker's trusted Price Drivers the item bears on (evidence verdicts), strongest first; absent = no drivers or noise. */
+  /** The ticker's Price Drivers whose step D reading read this item (a change of the driver, or its leading indicator), reversals first; absent = none. */
   drivers?: DriverImpact[] | null;
 };
 
-/** One Price Driver an item bears on: its name and confidence, and the evidence judge's tag against the narrative. */
+/** One Price Driver an item bears on: its name and confidence, and step D's reading of it against the narrative. */
 export type DriverImpact = {
   name: string;
   /** The Price Driver's confidence (gold.kpi_drivers.level). */
   confidence: "strong" | "weak";
   effect: "reversal" | "continuation";
   strength: "strong" | "weak";
-  /** In the console's words: « strong inflection », « weak crack », « continuation ». */
+  /** In the console's words: « strong inflection », « weak crack », « strong continuation ». */
   words: string;
 };
 

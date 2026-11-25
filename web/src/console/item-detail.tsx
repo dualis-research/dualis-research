@@ -1,24 +1,20 @@
-import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, ChartLineIcon, ChatTextIcon, CrosshairIcon, DatabaseIcon, FileTextIcon, FilesIcon, GaugeIcon, LightbulbIcon, MathOperationsIcon, NewspaperIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon } from "@phosphor-icons/react/ssr";
+import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, DatabaseIcon, FileTextIcon, FilesIcon, MathOperationsIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon } from "@phosphor-icons/react/ssr";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
-import { Badge } from "@cloudflare/kumo";
 import Link from "@/console/link";
-import { getPriceMove, getTickerAnalysis, getValuation } from "./analysis-queries";
+import { getPriceMove, getValuation } from "./analysis-queries";
 import { ArticleBody } from "./article";
 import { MethodsTable, RangeCards, ValuationField } from "./valuation-ui";
-import { driverDetail, evidenceDetail, exhibitDetail, fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
+import { fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
 import { kpiDriver } from "./kpi-queries";
-import { DriverProof } from "./proof";
-import { StrengthBadge } from "./board";
-import { TagBadge } from "./tag-badge";
-import { EvidenceRows, Exhibit, itemHref, metricLabel, PRICED_WORD } from "./analysis";
-import { reactionLine } from "@/collectors/dimensions/market-reaction/compute";
+import { DriverProof, EventTitle } from "./proof";
+import { itemHref, metricLabel } from "./analysis";
 import { DriverExhibit, ExhibitChart } from "./driver-chart";
 import { formatUnit } from "./exhibit-format";
-import { day, numberFormat, price, utc } from "./format";
+import { day, numberFormat, price } from "./format";
 import { Drawer, Drawers } from "./drawer";
 import { Fact, FactList } from "./ui";
 import { OWN_WORK, sourceLabel } from "./source-labels";
-import { parseSourceItem, Sourced, SourcedFigure, type SourcePayload } from "./sourced";
+import { parseSourceItem, SourcedFigure, type SourcePayload } from "./sourced";
 import { documentPageDetail } from "./document-queries";
 import { DocumentPageText, docItemId, openAt, parseDocItem } from "./document-page";
 import type { PeerRow } from "@/db/schema/valuation";
@@ -27,132 +23,15 @@ import { Rich } from "./rich";
 /**
  * Level C: the detail of one item of the analysis (`?item=` on the Analysis page): what it says and its chart. Where a
  * figure or quote comes from is one click on it (SOURCES-ONE-CLICK-1123, `sourced.tsx`), never a « Source: » line.
- * Items: `fair-value`, `narrative` (its detail + Rationale), `news:<catalyst id>` (= its Evidence id), `driver:<id>`, `exhibit:<id>`, `kpi:<metric>`, `price`, `move:<move id>` (a significant price move and its cause),
+ * Items: `fair-value`, `kdriver:<id>` (a Price Driver Candidate: step B then step D), `kpi:<metric>`, `price`,
+ * `valuation:<method>`, `move:<move id>` (a significant unbiased 1-week move and its events),
  * `doc:<document id>:<page>[:<quote>]` (one page of a company document, the quote highlighted), `src:<payload>` (a data
  * figure's source: series, providers by name, date).
  */
 
 export type ItemView = { title: string; subtitle?: React.ReactNode; body: React.ReactNode };
 
-/** A news verdict's weight: a turn before a continuation before noise, strong before weak. */
-const verdictWeight = (v: { effect: string; strength: string } | undefined) => (!v ? -1 : (v.effect === "reversal" ? 10 : v.effect === "continuation" ? 5 : 0) + (v.strength === "strong" ? 2 : v.strength === "weak" ? 1 : 0));
-
 const external = "inline-flex items-start gap-1.5 text-base font-medium text-kumo-strong hover:text-kumo-link";
-
-async function newsItem(symbol: string, id: string): Promise<ItemView | null> {
-  const d = await evidenceDetail(symbol, id);
-  if (!d) return null;
-  const { catalyst: c } = d;
-  return {
-    title: c.headline,
-    subtitle: `${day(c.eventDay)}${c.publisher ? ` · ${c.publisher}` : ""}`,
-    body: (
-      <>
-        {d.evidence?.effect === "too-old" ? (
-          // Too old (Kevin 2026-11-06): from before the current story, judged against no driver.
-          <div className="flex flex-col gap-2">
-            <TagBadge effect="too-old" strength="noise" side={null} />
-            {d.evidence.why && <p className="text-base leading-relaxed text-kumo-strong"><Rich text={d.evidence.why} /></p>}
-          </div>
-        ) : d.evidence ? (
-          // Judged against EACH driver (Kevin 2026-11-06): one tag per driver, why, and the sentence it rests on.
-          // The verdict that counts most on top, in one sentence; every driver's own verdict in its drawer.
-          (() => {
-            const judged = d.drivers
-              .map((drv) => ({ drv, v: d.evidence!.verdicts.find((x) => x.driverId === drv.id) }))
-              .sort((a, b) => verdictWeight(b.v) - verdictWeight(a.v));
-            const top = judged[0];
-            return (
-              <>
-                {top?.v && (
-                  <div className="flex flex-col gap-3">
-                    <span><TagBadge effect={top.v.effect} strength={top.v.strength} side={top.drv.side} /></span>
-                    {top.v.why && <p className="text-xl leading-snug text-kumo-strong"><Rich text={top.v.why} /></p>}
-                  </div>
-                )}
-                <Drawers>
-                  {judged.map(({ drv, v }) => (
-                    <Drawer
-                      icon={<CrosshairIcon size={16} aria-hidden />}
-                      key={drv.id}
-                      title={
-                        <span className="flex flex-wrap items-center gap-2">
-                          {v ? <TagBadge effect={v.effect} strength={v.strength} side={drv.side} /> : <span className="text-sm text-kumo-subtle">Not judged yet</span>}
-                          <span>{drv.title}</span>
-                        </span>
-                      }
-                    >
-                      {v?.why && <p className="text-base leading-relaxed text-kumo-default"><Rich text={v.why} /></p>}
-                      {v?.citedSentence && v.effect !== "noise" && <blockquote className="rounded-lg bg-kumo-tint px-4 py-3 text-sm leading-relaxed text-kumo-default italic">“{v.citedSentence}”</blockquote>}
-                      <span className="flex flex-wrap items-center gap-3 text-sm text-kumo-subtle">
-                        {v?.pricedIn && v.effect !== "noise" && <span>{PRICED_WORD[v.pricedIn]}</span>}
-                        <Link href={itemHref(symbol, `driver:${drv.id}`)} scroll={false} className="font-medium text-kumo-link hover:underline">
-                          Open the driver ›
-                        </Link>
-                      </span>
-                    </Drawer>
-                  ))}
-                  {d.reaction && d.reaction.closeBefore !== null && (
-                    <Drawer icon={<ChartLineIcon size={16} aria-hidden />} title="Price reaction">
-                      <p className="text-base leading-relaxed text-kumo-default">{reactionLine(d.reaction)}</p>
-                    </Drawer>
-                  )}
-                </Drawers>
-              </>
-            );
-          })()
-        ) : (
-          <>
-            <div className="flex flex-wrap items-center gap-3">
-              <StrengthBadge strength={d.strength} />
-              <span className="text-base text-kumo-default">{c.direction === "contradicts" ? "Cracks the narrative" : "Continues the narrative"}</span>
-              <span className="text-sm text-kumo-subtle tabular">judge {Math.round(c.probability * 100)}% sure</span>
-            </div>
-            {c.reason && <p className="text-lg leading-relaxed text-kumo-strong"><Rich text={c.reason} /></p>}
-            {c.evidence && <blockquote className="border-l border-kumo-line pl-4 text-base leading-relaxed text-kumo-default italic">“{c.evidence}”</blockquote>}
-          </>
-        )}
-        <Drawers>
-        {d.exhibit && (
-          <Drawer icon={<ChartBarIcon size={16} aria-hidden />} title={`Exhibit ${d.exhibit.number}: ${d.exhibit.title}`}>
-            <Exhibit symbol={symbol} exhibit={d.exhibit} />
-          </Drawer>
-        )}
-        <Drawer icon={<FileTextIcon size={16} aria-hidden />} title={`Original documents · ${d.articles.length + d.filings.length}`}>
-          <ul className="flex flex-col gap-4">
-            {d.articles.map((a) => (
-              <li key={a.id} className="flex flex-col gap-1">
-                <a href={a.url} target="_blank" rel="noreferrer" className={external}>
-                  {a.title} <ArrowSquareOutIcon size={14} className="mt-1 shrink-0" aria-label="opens the article" />
-                </a>
-                <span className="flex flex-wrap items-center gap-2 text-sm text-kumo-subtle">
-                  {a.publisher && <span>{a.publisher}</span>}
-                  {a.publishedAt && <time title={utc(a.publishedAt)}>{day(a.publishedAt)}</time>}
-                </span>
-              </li>
-            ))}
-            {d.filings.map((f) => (
-              <li key={f.id} className="flex flex-col gap-1">
-                {f.url ? (
-                  <a href={f.url} target="_blank" rel="noreferrer" className={external}>
-                    {f.title} <ArrowSquareOutIcon size={14} className="mt-1 shrink-0" aria-label="opens the filing" />
-                  </a>
-                ) : (
-                  <span className="text-base font-medium text-kumo-strong">{f.title}</span>
-                )}
-                <span className="flex flex-wrap items-center gap-2 text-sm text-kumo-subtle">
-                  <span>{[f.registry, f.form].filter(Boolean).join(" ")}</span>
-                  <time title={utc(f.filedAt)}>{day(f.filedAt)}</time>
-                </span>
-              </li>
-            ))}
-          </ul>
-        </Drawer>
-        </Drawers>
-      </>
-    ),
-  };
-}
 
 async function kpiItem(symbol: string, metric: string): Promise<ItemView | null> {
   const rows = await kpiDetail(symbol, metric);
@@ -243,70 +122,43 @@ async function priceItem(symbol: string): Promise<ItemView | null> {
   };
 }
 
-const MOVE_KIND: Record<string, string> = { fundamental: "Business fact", macro: "Market-wide", technical: "Trading", unknown: "Cause not found" };
 const signed = (x: number | null) => (x === null ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
 
-/** A significant price move (Thierry 2026-11-17): what caused it, in one sentence first, then the move and its sources. */
+/** A significant unbiased 1-week move: the move, then the events whose week it was (what step A reads), each opening its source. */
 async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
   const r = await getPriceMove(id);
   if (!r || r.move.symbol !== symbol) return null;
-  const { move: m, cause: c } = r;
+  const { move: m, events } = r;
   const span = m.startDay === m.endDay ? day(m.startDay) : `${day(m.startDay)} to ${day(m.endDay)}`;
-  const conclusion = c?.fact
-    ? c.fact
-    : !c
-      ? "Not judged yet: the cause is read at the next analysis run."
-      : c.candidates === 0
-        ? "No news or filing found around this move."
-        : `None of the ${c.candidates} news items and filings around this move explains it.`;
   return {
     title: `${m.direction === "up" ? "Rise" : "Fall"} of ${signed(m.returnPct)}`,
     subtitle: span,
     body: (
       <>
-        <span className="flex flex-wrap items-center gap-2">
-          <Badge variant={c?.kind === "fundamental" ? "primary" : "outline"}>{MOVE_KIND[c?.kind ?? "unknown"]}</Badge>
-          {c?.category && <Badge variant="outline">{c.category}</Badge>}
-        </span>
-        <p className="text-xl leading-snug text-kumo-strong"><Rich text={conclusion} /></p>
-        {c?.metric && (
-          <p className="text-base text-kumo-default">
-            {c.metric.label}: {c.metric.from ? `${c.metric.from} → ` : ""}
-            {c.metric.to}
-            {c.metric.change ? ` (${c.metric.change})` : ""}, period ended {c.metric.period}
-            {c.lasting && c.lasting !== "n-a" ? ` · ${c.lasting === "structural" ? "Structural" : "Temporary"}` : ""}
-          </p>
-        )}
+        <p className="text-xl leading-snug text-kumo-strong">{`${signed(m.abnormal)} beyond the ${m.bench}, ${Math.abs(m.z).toFixed(1)}x its usual 1-week move.`}</p>
         <Drawers>
-        <Drawer icon={<ArrowsDownUpIcon size={16} aria-hidden />} title="The move">
-        <FactList>
-          <Fact label="Stock">{signed(m.returnPct)}</Fact>
-          <Fact label={m.bench}>{signed(m.benchReturn)}</Fact>
-          <Fact label="Beyond the market">{`${signed(m.abnormal)}, ${Math.abs(m.z).toFixed(1)}x its usual 5-day move`}</Fact>
-          <Fact label="Closes">{`${price(m.closeBefore)} to ${price(m.closeEnd)}${m.currency ? ` ${m.currency}` : ""}`}</Fact>
-        </FactList>
-                </Drawer>
-        {c && c.cites.length > 0 && (
-          <Drawer icon={<FilesIcon size={16} aria-hidden />} title={`What it rests on · ${c.cites.length}`}>
-            <ul className="flex flex-col gap-4">
-              {c.cites.map((x) => (
-                <li key={`${x.kind}:${x.id}`} className="flex flex-col gap-1">
-                  {x.url ? (
-                    <a href={x.url} target="_blank" rel="noreferrer" className={external}>
-                      {x.title} <ArrowSquareOutIcon size={14} className="mt-1 shrink-0" aria-label={x.kind === "filing" ? "opens the filing" : "opens the article"} />
-                    </a>
-                  ) : (
-                    <span className="text-base font-medium text-kumo-strong">{x.title}</span>
-                  )}
-                  <span className="flex flex-wrap items-center gap-2 text-sm text-kumo-subtle">
-                    <span>{x.kind === "filing" ? "Filing" : (x.publisher ?? "News")}</span>
-                    <time title={utc(new Date(x.at))}>{day(x.at)}</time>
-                  </span>
-                </li>
-              ))}
-            </ul>
+          <Drawer icon={<ArrowsDownUpIcon size={16} aria-hidden />} title="The move">
+            <FactList>
+              <Fact label="Stock">{signed(m.returnPct)}</Fact>
+              <Fact label={m.bench}>{signed(m.benchReturn)}</Fact>
+              <Fact label="Beyond the market">{`${signed(m.abnormal)}, ${Math.abs(m.z).toFixed(1)}x its usual 1-week move`}</Fact>
+              <Fact label="Closes">{`${price(m.closeBefore)} to ${price(m.closeEnd)}${m.currency ? ` ${m.currency}` : ""}`}</Fact>
+            </FactList>
           </Drawer>
-        )}
+          <Drawer icon={<FilesIcon size={16} aria-hidden />} title={`Events that week · ${events.length}`}>
+            {events.length ? (
+              <ul className="flex flex-col">
+                {events.map((e) => (
+                  <li key={e.id} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
+                    {`${day(e.day)} · `}
+                    <EventTitle symbol={symbol} e={e} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-base text-kumo-subtle">No event stored that week.</p>
+            )}
+          </Drawer>
         </Drawers>
       </>
     ),
@@ -314,44 +166,8 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
 }
 
 /**
- * A Narrative Driver's panel: what the market believes about ONE Price Driver (its sentence on top), then that Price
- * Driver's confidence and its reversal against the narrative (the same blocks as the Analysis page), its charts, its news.
- */
-async function driverItem(symbol: string, id: string): Promise<ItemView | null> {
-  const d = await driverDetail(symbol, id);
-  if (!d) return null;
-  return {
-    title: d.driver.title,
-    subtitle: d.priceDriver ? `${d.driver.category} · ${d.priceDriver.name}` : d.driver.category,
-    body: (
-      <>
-        {d.driver.summary && <p className="text-xl leading-snug text-kumo-strong"><Rich text={d.driver.summary} /></p>}
-        {d.priceDriver && <DriverProof symbol={symbol} k={d.priceDriver} />}
-        <Drawers>
-          <Drawer icon={<LightbulbIcon size={16} aria-hidden />} title="Why the market holds it">
-            <p className="text-base leading-relaxed text-kumo-default"><Rich text={d.driver.text} /></p>
-          </Drawer>
-          {d.exhibits.length > 0 && (
-            <Drawer icon={<ChartBarIcon size={16} aria-hidden />} title={`Exhibits · ${d.exhibits.length}`}>
-              {d.exhibits.map((x) => (
-                <Exhibit key={x.id} symbol={symbol} exhibit={x} />
-              ))}
-            </Drawer>
-          )}
-          {d.evidence.length > 0 && (
-            <Drawer icon={<NewspaperIcon size={16} aria-hidden />} title={`News · ${d.evidence.length}`}>
-              <EvidenceRows symbol={symbol} rows={d.evidence} driverId={d.driver.id} side={d.side} />
-            </Drawer>
-          )}
-        </Drawers>
-      </>
-    ),
-  };
-}
-
-/**
- * A Price Driver Candidate's panel (PROOF-STRUCTURE-1123): its confidence (section 2: tests A, B, C and the AI's level)
- * then its reversal (section 3), the same blocks as the Analysis page, closed, each title carrying its conclusion.
+ * A Price Driver Candidate's panel: step B (its two tests and the AI's confidence), then step D (its reading against
+ * the narrative), the same blocks as the Analysis page, closed, each title carrying its conclusion.
  */
 async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | null> {
   const k = await kpiDriver(id);
@@ -361,57 +177,6 @@ async function kpiDriverItem(symbol: string, id: string): Promise<ItemView | nul
     // A trusted one is a Price Driver, the rest stay candidates (Kevin 2026-11-23).
     subtitle: k.level === "strong" || k.level === "weak" ? "Price driver" : "Price driver candidate",
     body: <DriverProof symbol={symbol} k={k} />,
-  };
-}
-
-async function exhibitItem(symbol: string, id: string): Promise<ItemView | null> {
-  const d = await exhibitDetail(symbol, id);
-  if (!d) return null;
-  const x = d.exhibit;
-  return {
-    title: `Exhibit ${x.number}: ${x.title}`,
-    subtitle: d.driver ? `${d.driver.category}: ${d.driver.title}` : undefined,
-    body: (
-      <>
-        <ExhibitChart number={x.number} title={x.title} chart={x.chart} series={x.series} points={x.points} sources={x.sources} height={280} symbol={symbol} />
-        <p className="text-lg leading-relaxed text-kumo-strong"><Rich text={x.takeaway} /></p>
-        <Drawers>
-        <Drawer icon={<TableIcon size={16} aria-hidden />} title={`Data · ${x.points.length} periods`}>
-        <div className="overflow-x-auto rounded-lg ring-1 ring-kumo-hairline">
-          <KTable>
-            <KTableHeader>
-              <KTableRow>
-                <KTableHead className="pl-4">Period</KTableHead>
-                {x.series.map((s) => (
-                  <KTableHead key={s.key} className="pr-4 text-right">
-                    {s.label}
-                  </KTableHead>
-                ))}
-              </KTableRow>
-            </KTableHeader>
-            <KTableBody>
-              {[...x.points].reverse().map((p) => (
-                <KTableRow key={p.period}>
-                  <KTableCell className="pl-4 whitespace-nowrap">{p.period}</KTableCell>
-                  {x.series.map((s) => {
-                    const v = p.values[s.key];
-                    const shown = v === null || v === undefined ? null : formatUnit(v, s.unit, s.currency);
-                    const tags = s.sources.length ? s.sources : x.sources;
-                    return (
-                      <KTableCell key={s.key} className="pr-4 text-right font-mono tabular">
-                        {shown === null ? "–" : tags.length ? <SourcedFigure symbol={symbol} source={{ l: s.label, v: shown, d: p.period, s: tags }}>{shown}</SourcedFigure> : shown}
-                      </KTableCell>
-                    );
-                  })}
-                </KTableRow>
-              ))}
-            </KTableBody>
-          </KTable>
-        </div>
-        </Drawer>
-        </Drawers>
-      </>
-    ),
   };
 }
 
@@ -638,87 +403,6 @@ async function methodItem(symbol: string, method: string): Promise<ItemView | nu
   };
 }
 
-/**
- * A claim's first sentence, whole, as its drawer title; the rest of the claim opens under it. No split when the text
- * is one sentence, or when the first stop is an abbreviation (« U.S. »).
- */
-export function leadSentence(text: string): { lead: string; rest: string } {
-  const m = /^(.{25,}?[.!?])\s+(?=[A-Z0-9])/.exec(text);
-  if (!m || /\b[A-Z]\.$/.test(m[1])) return { lead: text, rest: "" };
-  return { lead: m[1], rest: text.slice(m[0].length) };
-}
-
-/**
- * Why the market tells this story (Kevin 2026-11-18: the intro and the Rationale told the same thing twice, everything
- * was open at once): the narrative is the panel's subtitle; under it only drawers: why the story reads pessimistic or
- * optimistic (the analysis' call), the rationale in short, then one drawer per claim (its first sentence as the title, its drivers and sources inside).
- */
-async function narrativeItem(symbol: string): Promise<ItemView | null> {
-  const a = await getTickerAnalysis(symbol);
-  if (!a.narrative) return null;
-  const r = a.rationale;
-  const driverByRank = new Map(a.drivers.map((d) => [d.rank, d]));
-  const exhibitByNumber = new Map([...a.drivers.flatMap((d) => d.exhibits), ...(r?.exhibits ?? [])].map((x) => [String(x.number), x]));
-  const short = r?.summary ?? a.narrative.detail;
-  return {
-    title: "Why the market tells this story",
-    subtitle: <Rich text={a.narrative.text} />,
-    body: (
-      <>
-        <Drawers>
-          {a.side && a.narrative.sideWhy && (
-            <Drawer icon={<GaugeIcon size={16} aria-hidden />} title={a.side === "long" ? "A pessimistic story" : "An optimistic story"}>
-              <p className="text-base leading-relaxed text-kumo-default"><Rich text={a.narrative.sideWhy} /></p>
-            </Drawer>
-          )}
-          {short && (
-            <Drawer icon={<TextAlignLeftIcon size={16} aria-hidden />} title="In short">
-              <p className="text-base leading-relaxed text-kumo-default"><Rich text={short} /></p>
-            </Drawer>
-          )}
-          {(r?.claims ?? []).map((c, i) => {
-            const { lead, rest } = leadSentence(c.text);
-            return (
-              <Drawer icon={<ChatTextIcon size={16} aria-hidden />} key={i} title={<Rich text={lead} />}>
-                {rest && <p className="text-base leading-relaxed text-kumo-default"><Rich text={rest} /></p>}
-                <span className="flex flex-wrap items-center gap-2 text-sm">
-                  {c.drivers.map((rank) => {
-                    const d = driverByRank.get(rank);
-                    return d ? (
-                      <Link key={rank} href={itemHref(symbol, `driver:${d.id}`)} scroll={false} className="text-kumo-link hover:underline">
-                        {d.title} ›
-                      </Link>
-                    ) : null;
-                  })}
-                  {c.sources.map((src, j) => {
-                    const x = src.type === "exhibit" ? exhibitByNumber.get(src.ref) : undefined;
-                    return x ? (
-                      <Link key={j} href={itemHref(symbol, `exhibit:${x.id}`)} scroll={false} className="text-kumo-link hover:underline">
-                        Exhibit {x.number}
-                      </Link>
-                    ) : (
-                      <span key={j} className="text-kumo-subtle">
-                        {src.label}
-                      </span>
-                    );
-                  })}
-                </span>
-              </Drawer>
-            );
-          })}
-          {(r?.exhibits ?? []).length > 0 && (
-            <Drawer icon={<ChartBarIcon size={16} aria-hidden />} title={`Exhibits · ${r!.exhibits.length}`}>
-              {r!.exhibits.map((x) => (
-                <Exhibit key={x.id} symbol={symbol} exhibit={x} />
-              ))}
-            </Drawer>
-          )}
-        </Drawers>
-      </>
-    ),
-  };
-}
-
 /** One page of a company document as printed: the quoted passage highlighted, the pages around it, and the document itself. */
 async function docItem(symbol: string, key: string): Promise<ItemView | null> {
   const ref = parseDocItem(key);
@@ -785,14 +469,10 @@ function sourceItem(payload: SourcePayload): ItemView {
 export async function itemView(symbol: string, item: string): Promise<ItemView | null> {
   if (item === "price") return priceItem(symbol);
   if (item === "fair-value") return fairValueItem(symbol);
-  if (item === "narrative") return narrativeItem(symbol);
   const [kind, ...rest] = item.split(":");
   const key = rest.join(":");
-  if (kind === "news") return newsItem(symbol, key);
   if (kind === "kpi") return kpiItem(symbol, key);
-  if (kind === "driver") return driverItem(symbol, key);
   if (kind === "kdriver") return kpiDriverItem(symbol, key);
-  if (kind === "exhibit") return exhibitItem(symbol, key);
   if (kind === "valuation") return methodItem(symbol, key);
   if (kind === "move") return moveItem(symbol, key);
   if (kind === "doc") return docItem(symbol, key);

@@ -14,8 +14,7 @@ import { day } from "./format";
 import { openPanel } from "./item-nav";
 import { itemHref } from "./item-href";
 import Link from "./link";
-import { Badge } from "@cloudflare/kumo";
-import { arrowGroups, arrowWords, WEEK_BADGE, WEEK_WORD, type MoveArrow } from "./move-arrows";
+import { arrowGroups, type MoveArrow } from "./move-arrows";
 import { usePageDark } from "./use-page-dark";
 import { COLOR } from "@/design/tokens";
 
@@ -29,13 +28,13 @@ const DOWN = "path://M3.5,0 L6.5,0 L6.5,7 L10,7 L5,16 L0,7 L3.5,7 Z";
 const pct = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 
 /**
- * Steps 1 and 4 of the proof: when the stock moved, and (`verdicts`) step 4's one verdict on each week (MOVE-ARROWS-1123, Thierry 2026-11-23: « a chart
- * with arrows pointing at each thing, telling me: this is what happened here »). The share price with its market taken
- * out; each unusual move shaded over its days and marked by a numbered arrow, up ones in a band above the line, down
- * ones in a band below it, so neither the numbers nor the arrows ever cover the line; the words sit in the numbered
- * list under the chart. A click on an arrow or a row opens the move's panel.
+ * When the stock moved (MOVE-ARROWS-1123, Thierry 2026-11-23: « a chart with arrows pointing at each thing, telling me:
+ * this is what happened here »). The share price with its market taken out; each significant unbiased 1-week move
+ * shaded over its days and marked by a numbered arrow, up ones in a band above the line, down ones in a band below it,
+ * so neither the numbers nor the arrows ever cover the line; the numbered list sits under the chart. A click on an
+ * arrow or a row opens the move's panel (its events).
  */
-export function MovesChart({ symbol, price, indexName, arrows, verdicts = false, height = 280 }: { symbol: string; price: PricePoint[]; indexName: string; arrows: MoveArrow[]; /** Step 4: each week's verdict and fact in the list; step 1 lists the moves only. */ verdicts?: boolean; height?: number }) {
+export function MovesChart({ symbol, price, indexName, arrows, height = 280 }: { symbol: string; price: PricePoint[]; indexName: string; arrows: MoveArrow[]; height?: number }) {
   const dark = usePageDark();
   const router = useRouter();
   const ink = dark ? INK.dark : INK.light;
@@ -90,7 +89,7 @@ export function MovesChart({ symbol, price, indexName, arrows, verdicts = false,
         lineStyle: { color: ink.navy, width: 1.75 },
         markArea: { silent: true, data: arrows.map((a) => [{ xAxis: a.startDay, itemStyle: { color: tone[a.direction], opacity: 0.16 } }, { xAxis: a.endDay }]) },
       },
-      { type: "scatter", name: "Unusual move", data: marks, symbolSize: [10, 16], z: 4, cursor: "pointer" },
+      { type: "scatter", name: "Significant move", data: marks, symbolSize: [10, 16], z: 4, cursor: "pointer" },
     ],
   };
   const swatch = (color: string, w: number, h: number, opacity = 1) => <span aria-hidden className="inline-block" style={{ background: color, width: w, height: h, opacity }} />;
@@ -107,7 +106,7 @@ export function MovesChart({ symbol, price, indexName, arrows, verdicts = false,
           onEvents={{
             click: (p: { seriesName?: string; data?: unknown }) => {
               const id = (p.data as { id?: string } | undefined)?.id;
-              if (p.seriesName === "Unusual move" && id) open(id);
+              if (p.seriesName === "Significant move" && id) open(id);
             },
           }}
         />
@@ -116,11 +115,11 @@ export function MovesChart({ symbol, price, indexName, arrows, verdicts = false,
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-kumo-default">
         <li className="inline-flex items-center gap-1.5">
           <ArrowUpIcon size={12} weight="bold" aria-hidden style={{ color: tone.up }} />
-          {`Up at least 2x its usual 5-day move, ${indexName} taken out`}
+          {`Up at least 2x its usual 1-week move, ${indexName} taken out`}
         </li>
         <li className="inline-flex items-center gap-1.5">
           <ArrowDownIcon size={12} weight="bold" aria-hidden style={{ color: tone.down }} />
-          {`Down at least 2x its usual 5-day move, ${indexName} taken out`}
+          {`Down at least 2x its usual 1-week move, ${indexName} taken out`}
         </li>
         <li className="inline-flex items-center gap-1.5">
           <span aria-hidden className="inline-flex">
@@ -142,7 +141,7 @@ export function MovesChart({ symbol, price, indexName, arrows, verdicts = false,
       <ol className="flex flex-col">
         {arrows.map((a) => (
           <li key={a.id}>
-            <Link href={moveHref(a.id)} scroll={false} className={`-mx-2 grid ${verdicts ? "grid-cols-[2rem_11.5rem_4rem_6.5rem_1fr]" : "grid-cols-[2rem_11.5rem_4rem]"} items-baseline gap-x-3 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-kumo-tint`}>
+            <Link href={moveHref(a.id)} scroll={false} className="-mx-2 grid grid-cols-[2rem_11.5rem_4rem_1fr] items-baseline gap-x-3 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-kumo-tint">
               <span className="inline-flex items-center gap-0.5 font-semibold tabular" style={{ color: tone[a.direction] }}>
                 {a.direction === "up" ? <ArrowUpIcon size={12} weight="bold" aria-hidden /> : <ArrowDownIcon size={12} weight="bold" aria-hidden />}
                 {a.n}
@@ -151,12 +150,7 @@ export function MovesChart({ symbol, price, indexName, arrows, verdicts = false,
               <span className="tabular font-semibold" style={{ color: tone[a.direction] }}>
                 {pct(a.abnormal)}
               </span>
-              {verdicts && (
-                <span>
-                  <Badge variant={WEEK_BADGE[a.week]}>{WEEK_WORD[a.week]}</Badge>
-                </span>
-              )}
-              {verdicts && <span className={a.fact ? "text-kumo-default" : "text-kumo-subtle"}>{arrowWords(a)}</span>}
+              <span className="text-kumo-subtle">{a.events.length === 1 ? "1 event that week" : `${a.events.length} events that week`}</span>
             </Link>
           </li>
         ))}

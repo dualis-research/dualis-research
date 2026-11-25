@@ -17,8 +17,9 @@ export const metadata = { title: "Content" };
 const KIND_WORD: Record<IdeaSourceRef["kind"], string> = {
   signal: "Signal",
   change: "Signal change",
-  evidence: "Evidence",
   driver: "Price driver",
+  event: "Event",
+  evidence: "Evidence",
   "fair-value": "Fair value",
   report: "Research report",
 };
@@ -27,8 +28,8 @@ const KIND_WORD: Record<IdeaSourceRef["kind"], string> = {
 function sourceHref(s: IdeaSourceRef): string | null {
   if (!s.symbol) return null;
   const id = s.ref.slice(s.ref.indexOf(":") + 1);
-  if (s.kind === "evidence") return itemHref(s.symbol, `news:${id}`);
-  if (s.kind === "driver") return itemHref(s.symbol, `driver:${id}`);
+  // A Price Driver opens its own panel; an Idea written before 2026-11-24 cited a Narrative Driver id: its ticker's page.
+  if (s.kind === "driver" && id.includes(":kpi:")) return itemHref(s.symbol, `kdriver:${id}`);
   if (s.kind === "fair-value") return itemHref(s.symbol, "fair-value");
   return `/tickers/${encodeURIComponent(s.symbol)}`;
 }

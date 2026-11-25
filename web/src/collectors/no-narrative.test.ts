@@ -36,15 +36,14 @@ const yahooFx = (url: string) => {
 const ANSWER = {
   side: "long",
   sideWhy: "The price sits inside the range but the market prices the debt, not the output.",
+  confidence: "weak",
   narrative: "The market prices Obsidian as a small oil producer with too much debt.",
   narrativeDetail: "Its output grew while prices fell.",
-  drivers: [{ priceDriver: "P1", category: "Industry & cycle", title: "Oil prices set the cash flow", summary: "Cheaper oil means less cash.", text: "Revenue fell.", exhibits: [{ title: "Revenue", chart: "bar", series: ["line:revenue"], takeaway: "Down." }] }],
+  beliefs: [{ priceDriver: "P1", belief: "The market believes cheaper oil means less cash." }],
 };
 let asked: string[] = [];
 const fake: Complete = async ({ prompt, system }) => {
-  if (system.includes("equity research reports")) return { text: "## Summary\n[EXHIBIT 1]", model: "fake" };
-  if (system.includes("WHY the market holds")) return { text: JSON.stringify({ summary: "Debt worries.", claims: [{ text: "Revenue fell in 2025.", drivers: [1], sources: [{ type: "exhibit", ref: "1", label: "Revenue" }] }], exhibits: [] }), model: "fake" };
-  asked.push(prompt.includes("Write the narrative of this ticker") ? "narrative" : "other");
+  asked.push(prompt.includes("one per Price Driver that EXPLAINS the narrative") ? "narrative" : "other");
   return { text: JSON.stringify(ANSWER), model: "fake" };
 };
 const ctx = (): SourceContext => ({ env: { REPO_ROOT, CLAUDE_OAUTH_TOKEN: "t" }, fetch: (async (u: string | URL) => yahooFx(String(u))) as typeof fetch, complete: fake });

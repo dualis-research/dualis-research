@@ -2,7 +2,6 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { BronzeFetch } from "@/db/schema/bronze";
 import * as gold from "@/db/schema/gold";
 import { fxRates as silverFx } from "@/db/schema/silver";
-import { theses } from "@/db/schema/thesis";
 import { valuations } from "@/db/schema/financials";
 import type { Db } from "@/db/types";
 import { getJson } from "../../http";
@@ -54,17 +53,11 @@ export const yahooFx: Source & { extract: (payload: unknown) => { date: string; 
   },
 };
 
-/** The currency a ticker's fair value is computed in: Thierry's own number's, else the reporting currency. */
+/** The currency a ticker's fair value is computed in: the reporting currency of its valuation (no human override since 2026-11-19). */
 export async function fairValueCurrencies(db: Db, symbols: string[]): Promise<Map<string, string>> {
   if (symbols.length === 0) return new Map();
-  const [vs, ts] = await Promise.all([
-    db.select({ symbol: valuations.symbol, currency: valuations.currency }).from(valuations).where(inArray(valuations.symbol, symbols)),
-    db.select({ symbol: theses.symbol, currency: theses.currency, fairValue: theses.fairValue }).from(theses).where(inArray(theses.symbol, symbols)),
-  ]);
-  const out = new Map<string, string>();
-  for (const v of vs) if (v.currency) out.set(v.symbol, v.currency);
-  for (const t of ts) if (t.fairValue !== null && t.currency) out.set(t.symbol, t.currency);
-  return out;
+  const vs = await db.select({ symbol: valuations.symbol, currency: valuations.currency }).from(valuations).where(inArray(valuations.symbol, symbols));
+  return new Map(vs.flatMap((v) => (v.currency ? [[v.symbol, v.currency] as const] : [])));
 }
 
 /** The quote currency in major units (GBp -> GBP), per ticker. */

@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { driverEvents, kpiDrivers, narrativeDrivers, narratives, priceMoveCauses, priceMoves } from "@/db/schema/analysis";
+import { driverEvents, kpiDrivers, narratives, priceMoves, signals } from "@/db/schema/analysis";
 import { goldNewsLinks } from "@/db/schema/news";
 import { priceBars } from "@/db/schema/gold";
 import { localIndex } from "@/collectors/benchmark";
@@ -10,7 +10,7 @@ import { moveWindows } from "@/collectors/dimensions/market-reaction/moves";
 import { withBold } from "./emphasis";
 import { moveArrows } from "./move-arrows";
 
-/** A ticker's KPI drivers (Kevin + Thierry 2026-11-19), rank order. */
+/** A ticker's Price Driver Candidates and Price Drivers, rank order. */
 export const kpiDriversOf = cache(async (symbol: string) => withBold(await getDb().select().from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)).orderBy(asc(kpiDrivers.rank))));
 
 /** One KPI driver (its item panel). */
@@ -22,7 +22,7 @@ const sinceDay = () => new Date(Date.now() - KPI_YEARS * 365.25 * 86_400_000).to
 
 /**
  * The share price of 3 years as traded and with its local market's move taken out (price x (index then / index now)
- * ^ beta, beta = the latest 5-day window's, as step 2 measures it), and the 5th trading day after any day.
+ * ^ beta, beta = the latest 5-day window's, as market-reaction measures it), and the 5th trading day after any day.
  */
 export const cleanPrice = cache(async (symbol: string) => {
   const db = getDb();
@@ -46,26 +46,30 @@ export const cleanPrice = cache(async (symbol: string) => {
 });
 
 /**
- * The proof structure of a ticker (PROOF-STRUCTURE-1123): every event of 3 years (industry news marked), every unusual
- * week with its ONE verdict and the items it rests on, the candidates with their tests, the narrative written on the
- * trusted ones (its side, and what the market believes about each), their reversals against it, the price chart.
+ * Steps A to E of a ticker as stored (docs/architecture.md): the events of 3 years (industry news marked) and the
+ * significant unbiased moves each with its events (A), the candidates with their tests and confidence (B), the
+ * narrative with its side, confidence and one belief per Price Driver that explains it (C), each Price Driver's reading
+ * against it (D, on the rows), and the signal (E); plus the price chart.
  */
 export const proofData = cache(async (symbol: string) => {
   const db = getDb();
   const since = sinceDay();
-  const [events, moves, causes, kpis, chart, industry, [story], beliefs] = await Promise.all([
+  const [events, moves, kpis, chart, industry, [story], [signal]] = await Promise.all([
     db.select().from(driverEvents).where(eq(driverEvents.symbol, symbol)).orderBy(asc(driverEvents.day), asc(driverEvents.id)),
     db.select().from(priceMoves).where(and(eq(priceMoves.symbol, symbol), gte(priceMoves.endDay, since))).orderBy(asc(priceMoves.startDay)),
-    db.select().from(priceMoveCauses).where(eq(priceMoveCauses.symbol, symbol)),
     kpiDriversOf(symbol),
     cleanPrice(symbol),
     db.select({ id: goldNewsLinks.newsItemId }).from(goldNewsLinks).where(and(eq(goldNewsLinks.symbol, symbol), sql`'industry' = any(${goldNewsLinks.matchKinds})`, sql`not ('name' = any(${goldNewsLinks.matchKinds}))`, sql`not ('alias' = any(${goldNewsLinks.matchKinds}))`, sql`not ('symbol' = any(${goldNewsLinks.matchKinds}))`)),
     db.select().from(narratives).where(eq(narratives.symbol, symbol)),
-    db.select().from(narrativeDrivers).where(eq(narrativeDrivers.symbol, symbol)).orderBy(asc(narrativeDrivers.rank)),
+    db.select({ signal: signals.signal, strength: signals.strength, why: signals.why, evidenceIds: signals.evidenceIds }).from(signals).where(eq(signals.symbol, symbol)),
   ]);
-  const narrative = story ? await withBold({ side: story.side, text: story.text, sideWhy: story.sideWhy, drivers: beliefs.filter((d) => d.side === story.side).map((d) => ({ id: d.id, kpiDriverId: d.kpiDriverId, category: d.category, title: d.title, summary: d.summary })) }) : null;
+  // Each Price Driver the narrative rests on, under its own name, with the narrative's one belief about it.
+  const pds = kpis.filter((k) => k.level === "strong" || k.level === "weak").sort((a, b) => (a.level === b.level ? a.rank - b.rank : a.level === "strong" ? -1 : 1));
+  const narrative = story
+    ? await withBold({ side: story.side, confidence: story.confidence, text: story.text, detail: story.detail, sideWhy: story.sideWhy, beliefs: pds.filter((k) => k.marketBelief).map((k) => ({ id: k.id, name: k.name, belief: k.marketBelief })) })
+    : null;
   const from = chart.price[0]?.date ?? events[0]?.day ?? since;
   const weeks = moves.filter((m) => m.startDay >= from);
-  return { events, arrows: moveArrows(weeks, causes), kpis, narrative, chart, industryNews: new Set(industry.map((x) => String(x.id))) };
+  return { events, arrows: moveArrows(weeks, events), kpis, narrative, signal: signal ? await withBold(signal) : null, chart, industryNews: new Set(industry.map((x) => String(x.id))) };
 });
 export type ProofData = Awaited<ReturnType<typeof proofData>>;

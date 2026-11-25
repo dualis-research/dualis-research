@@ -20,12 +20,9 @@ import { analysis } from "./dimensions/analysis";
 import { peersDim } from "./dimensions/peers";
 import { valuationDim } from "./dimensions/valuation";
 import { fxDim } from "./dimensions/fx";
-import { evidenceDim } from "./dimensions/evidence";
 import { marketReactionDim } from "./dimensions/market-reaction";
-import { moveCausesDim } from "./dimensions/move-causes";
 import { kpiDriversDim } from "./dimensions/kpi-drivers";
 import { kpiReversalDim } from "./dimensions/kpi-reversal";
-import { narrativeSinceDim } from "./dimensions/narrative-since";
 import { signalsDim } from "./dimensions/signals";
 import { signalAlertsDim } from "./dimensions/signal-alerts";
 import { growthBriefDim } from "./dimensions/growth-brief";
@@ -41,7 +38,6 @@ import { filingDocumentsDim } from "./dimensions/filing-documents";
 import { portfolio } from "./dimensions/portfolio";
 import { price } from "./dimensions/price";
 import { intradayPrice } from "./dimensions/intraday-price";
-import { thesis } from "./dimensions/thesis";
 import { watchlist } from "./dimensions/watchlist";
 import { xPublish } from "./dimensions/x-publish";
 import { emphasisDim } from "./dimensions/emphasis";
@@ -53,15 +49,19 @@ import type { Dimension } from "./types";
  * Every dimension, in run order (`collect all` runs them top to bottom).
  * A new dimension = a folder under dimensions/ + one line here. Watchlist first: it defines the subjects. News after company-profile: it queries the resolved names.
  * Outreach before substack-network: the drafted authors join the crawl's candidates.
- * OneDrive (Thierry's research folder) before thesis: the research reads it. Its write-back right after filings.
+ * OneDrive (Thierry's research folder) read early; its write-back right after filings.
  * Filing documents (the text of the core reports, results releases and presentations, page by page) right after filings: every claim cites its page.
  * Consensus after earnings: analyst expectations vs actuals, read by the signal that says "above / below what the market expects".
  * Financials after price and filings: EV reads the quote, EDINET the fiscal year end, the PDF extraction the annual report link.
  * Portfolio right after watchlist: Thierry's positions (his posts + console edits); price also fetches the S&P 500 (`^GSPC`) the Portfolio page compares against.
  * FX (daily exchange rates, Yahoo) after peers, before valuation: a fair value computed in the reporting currency is shown in the quote currency.
- * Move causes after market-reaction (beside narrative-since): what caused each significant price move it found (business fact, macro, technical), from the news and filings around it.
- * Peers (comparables + analyst targets) after consensus; Valuation (the fair value pyramid) after peers; Market Reaction after it (the fair value history, the unusual weeks and the events, code only), then Move causes.
- * One chain of reasoning since 2026-11-24 (Kevin): KPI drivers (Price Driver Candidates and their confidence) BEFORE the analysis; Analysis writes ONE narrative on the trusted Price Drivers and decides its side (it reads the price, the Fair Value and its history); KPI reversal after it (each trusted Price Driver read against the narrative); Narrative Since beside it (the month the story took hold); Evidence after (every item since that month against each driver, older ones Too old); Signals last (the narrative's side x the strongest reversal against it).
+ * Peers (comparables + analyst targets) after consensus; Valuation (the fair value pyramid) after peers.
+ * The analysis is ONE chain, steps A to E of docs/architecture.md (Kevin 2026-11-25), each stored once per input:
+ * market-reaction (the common objects: events, significant unbiased 1-week moves, fair value history; code only) ->
+ * kpi-drivers (A: Price Driver Candidates read in the events of the significant moves; B: the confidence that each is a
+ * Price Driver) -> analysis (C: the narrative, its side and confidence, the Price Drivers that explain it) ->
+ * kpi-reversal (D: each Price Driver in continuation, reversal or noise, only on a weak or strong narrative) ->
+ * signals (E: is the narrative turning? the Signal is its output) -> signal-alerts -> emphasis.
  * Cover photos right after content-posts: one photo per own article for the website covers.
  * Content ideas after content-voices (the day's Ideas, scored per channel x format); content-picks after it files the day's 2 posts (best X post, best Substack Note); content-drafts after it writes the drafts Thierry asked for and the picks; content-visuals after it draws each drafted Idea's chart, card, video and news capture.
  * Intraday price (5-minute bars, Yahoo) alone in its stage right after price (Yahoo rate limit): it moves gold.quotes to the latest 5-minute price, so EV, valuation, every judge and the live test read the real price, and market reaction the price at the minute a news item lands.
@@ -69,8 +69,7 @@ import type { Dimension } from "./types";
  * Growth brief last: it reads the subscriber count and outreach the two before it just rebuilt.
  * X publish (Kevin 2026-11-13) runs ONLY when named (x-publish.yml, every hour): it posts for real on X, and two runs at
  * once would race the account's rotating token, so `all`, `core` and `growth` never include it.
- * One signal engine since 2026-11-09: the legacy catalysts / thesis-confidence chain is gone; the WhatsApp alert is the Signal Change.
- * Signal alerts right after signals: a Signal Change that makes the signal better goes to Kevin and Thierry with its picture.
+ * Signal alerts right after signals: a Signal Change landing on a strong signal goes to Kevin and Thierry with its picture (a reader of steps C to E, no judgment of its own).
  * News history (NEWS-HISTORY-1123) after news, in its own stage: 3 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
  * Daily email (DAILY-EMAIL-1123) runs only when named, last: the one daily run (02:00 UTC, `all,daily-email`) names it
  * (every watchlist ticker); it judges each new item once and sends the morning email.
@@ -78,7 +77,7 @@ import type { Dimension } from "./types";
  * judge and verdicts, an urgent email per critical item, never the morning digest.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, thesis, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, moveCausesDim, kpiDriversDim, analysis, kpiReversalDim, narrativeSinceDim, evidenceDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, kpiDriversDim, analysis, kpiReversalDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts); `core` = everything else, the analysis chain.
@@ -103,21 +102,20 @@ export const STAGES: readonly (readonly string[])[] = [
   ["intraday-price"],
   // Three years of Google News, one month x one term at a time, read once (NEWS-HISTORY-1123): alone, never beside the daily news (one Google rate limit).
   ["news-history"],
-  ["thesis", "onedrive-filings", "filing-documents", "consensus"],
+  ["onedrive-filings", "filing-documents", "consensus"],
   ["financials"],
   ["peers"],
   ["fx"],
   ["valuation"],
-  // The unusual weeks and the events, then ONE verdict per week: what the Price Drivers are read in.
+  // The common objects: events, significant unbiased 1-week moves, fair value history (code only).
   ["market-reaction"],
-  ["move-causes"],
-  // Price Driver Candidates and their confidence (its judgments are stored once per input: an unchanged run asks nothing).
+  // A (Price Driver Candidates) and B (Price Drivers: strong | weak | noise).
   ["kpi-drivers"],
-  // ONE narrative per ticker, written on the trusted Price Drivers; the model decides its side (Kevin 2026-11-24).
+  // C: the narrative, its side and confidence, the Price Drivers that explain it.
   ["analysis"],
-  // Each trusted Price Driver read against the narrative; the month the story took hold beside it.
-  ["kpi-reversal", "narrative-since"],
-  ["evidence"],
+  // D: each Price Driver in continuation, reversal or noise (only on a weak or strong narrative).
+  ["kpi-reversal"],
+  // E: is the narrative turning? The Signal.
   ["signals"],
   ["signal-alerts"],
   // Bold on the texts the analysis chain just wrote (Kevin 2026-11-23); the Ideas get theirs on the next run.

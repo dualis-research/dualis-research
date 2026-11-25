@@ -1,13 +1,15 @@
+import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as content from "@/db/schema/content";
-import { exhibits, fairValues } from "@/db/schema/analysis";
+import { fairValues, kpiDrivers } from "@/db/schema/analysis";
+import { priceDriver, seedPriceDrivers } from "@/test/price-drivers";
 import { reversal, setReversal } from "@/test/price-drivers";
 import { judgments } from "@/db/schema/silver";
 import type { Complete } from "@/llm/complete";
 import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
-import { seedAnalysedTicker } from "@/test/content-seed";
+import { SEED_NEWS_ID, seedAnalysedTicker } from "@/test/content-seed";
 import { testDb } from "@/test/db";
 import { runDimension } from "../../runner";
 import { contentVisuals, pickVisualSubjects, renderSource, VISUALS_VERSION } from ".";
@@ -23,7 +25,6 @@ let db: Db;
 let close: () => Promise<void>;
 let ideaId: string;
 
-const DRIVER_IDEA_TITLE = "CareCloud replaced the client the market thinks it lost.";
 async function addIdea(refs: content.IdeaSourceRef[], withDraft = true) {
   const [idea] = await db
     .insert(content.contentIdeas)
@@ -38,7 +39,7 @@ async function addIdea(refs: content.IdeaSourceRef[], withDraft = true) {
   return idea.id;
 }
 
-const EVIDENCE = { kind: "evidence" as const, ref: "evidence:CCLD|news:n1", symbol: "CCLD", label: "CCLD signs a new hospital client" };
+const EVIDENCE = { kind: "event" as const, ref: `event:CCLD|news:${SEED_NEWS_ID}`, symbol: "CCLD", label: "CCLD signs a new hospital client" };
 
 beforeEach(async () => {
   ({ db, close } = await testDb());
@@ -66,6 +67,8 @@ function fakeJudge(verdict: string) {
       const ids = point.filter((id) => /^\d{4}-\d{2}-\d{2}$/.test(id));
       return { text: JSON.stringify({ point: ids.at(-1), note: "Clients back to 45", priceSays: "The biggest client is gone", newsLine: news ? "CareCloud wins a big hospital back" : null, title: "Clients just hit a record", chartLabel: "Hospitals that pay us", news }), model: "fake" };
     }
+    // The story-break frame's compared period (the reversing Price Driver's own series): compared to nothing here.
+    if (`${system}${prompt}`.includes("Which EARLIER period")) return { text: JSON.stringify({ verdict: "none", probability: 0.8, cited_sentence: null, reason: "no comparison" }), model: "fake" };
     prompts.push(prompt);
     return { text: JSON.stringify({ verdict, probability: 0.8, cited_sentence: null, reason: "The client count is the striking turn." }), model: "fake" };
   };
@@ -115,52 +118,58 @@ describe("content-visuals dimension", () => {
 
   it("a ticker with too few closes gets no chart, and says so", async () => {
     await db.delete(gold.priceBars);
+    await calmReversals();
     await runDimension(db, renderOnly, { trigger: "test", ctx });
     const [chart] = await db.select().from(content.contentVisuals).where(eq(content.contentVisuals.kind, "chart"));
     expect(chart).toMatchObject({ status: "failed", error: expect.stringMatching(/only 0 closes/) });
   });
 });
 
-const DRIVER = { kind: "driver" as const, ref: "driver:CCLD:long:1", symbol: "CCLD", label: "Client loss" };
+const PD_ID = "CCLD:kpi:client-revenue";
+const DRIVER = { kind: "driver" as const, ref: `driver:${PD_ID}`, symbol: "CCLD", label: "Client revenue" };
+const REVENUE = { kind: "driver" as const, ref: "driver:CCLD:kpi:revenue", symbol: "CCLD", label: "Revenue" };
+/** The seeded Price Driver measured as yearly hospital clients (its own series: the chart), and a second one with one period only (no chart). */
+/** Keep each reversal (its leading events still tie an Idea to its driver) but read none of them against the story. */
+async function calmReversals() {
+  await db.execute(sql`update gold.kpi_drivers set reversal = reversal || '{"stance":"none","strength":"none"}'::jsonb where symbol = 'CCLD' and reversal is not null`);
+}
 async function addExhibits() {
-  const series = (key: string, label: string) => ({ key, label, unit: "count" as const, currency: null, sources: ["sec"] });
-  await db.insert(exhibits).values([
-    { id: "CCLD:long:1:1", symbol: "CCLD", driverId: "CCLD:long:1", rank: 1, number: 1, title: "Hospital clients", chart: "bar", series: [series("line:clients", "Hospital clients")],
-      points: [2022, 2023, 2024, 2025].map((y, i) => ({ period: `${y}-12-31`, values: { "line:clients": [40, 31, 33, 45][i] } })), takeaway: "Clients are back above the 2022 level.", sources: ["sec"] },
-    { id: "CCLD:long:1:2", symbol: "CCLD", driverId: "CCLD:long:1", rank: 2, number: 2, title: "Revenue", chart: "bar", series: [series("line:revenue", "Revenue")],
-      points: [{ period: "2025-12-31", values: { "line:revenue": null } }], takeaway: "No data yet.", sources: ["sec"] },
-    { id: "OTHER:1:1", symbol: "CCLD", driverId: "CCLD:9", rank: 1, number: 3, title: "Not cited", chart: "line", series: [series("line:x", "X")],
-      points: [{ period: "2025-12-31", values: { "line:x": 1 } }], takeaway: "t", sources: [] },
-  ]);
+  // No Price Driver turning against the story: the story-break frame stays out, the chart path is what these tests read.
+  await calmReversals();
+  const year = (y: number, value: number) => ({ period: `${y}-12-31`, periodType: "year" as const, value, prior: null, change: null, changeKind: "relative" as const, significant: false, why: null, releaseId: null, releaseDay: null, cite: null });
+  await db
+    .update(kpiDrivers)
+    .set({ measure: { source: "series", label: "Hospital clients", periodType: "year", unit: "count", currency: null, providers: ["sec"] }, periods: [2022, 2023, 2024, 2025].map((y, i) => year(y, [40, 31, 33, 45][i])) })
+    .where(eq(kpiDrivers.id, PD_ID));
+  await seedPriceDrivers(db, [priceDriver("CCLD", 2, "Revenue", { measure: { source: "series", label: "Revenue", periodType: "year", unit: "currency", currency: "USD", providers: ["sec"] }, periods: [year(2025, 1e6)] })]);
 }
 
 describe("the chart of an Idea", () => {
-  it("draws the most striking Exhibit of the driver the Idea cites, judged once", async () => {
+  it("draws the most striking own series of the Price Drivers the Idea cites, judged once", async () => {
     await addExhibits();
-    const cited = await addIdea([DRIVER]);
-    const judge = fakeJudge("CCLD:long:1:1");
+    const cited = await addIdea([DRIVER, REVENUE]);
+    const judge = fakeJudge(PD_ID);
     await runDimension(db, renderOnly, { trigger: "test", ctx: { ...ctx, complete: judge.complete } });
     const rows = await db.select().from(content.contentVisuals).where(eq(content.contentVisuals.ideaId, cited));
     const byKind = Object.fromEntries(rows.map((r) => [r.kind, r]));
     expect(byKind.chart).toMatchObject({ status: "ok", mime: "image/png", caption: "Exhibit: Hospital clients" });
-    // The judge saw the cited driver's Exhibit with data, never an empty one or another driver's.
-    const prompt = judge.prompts.find((p) => p.includes(DRIVER_IDEA_TITLE))!;
-    expect(prompt).toContain("Exhibit id CCLD:long:1:1");
-    expect(prompt).not.toContain("CCLD:long:1:2");
-    expect(prompt).not.toContain("OTHER:1:1");
+    // The judge saw the cited Price Driver's own series, never one with too few periods to draw.
+    const prompt = judge.prompts.find((p) => p.includes("Exhibit id CCLD:kpi:client-revenue, driver \"Client revenue\""))!;
+    expect(prompt).toBeTruthy();
+    expect(prompt).not.toContain("CCLD:kpi:revenue");
     // Judged once: a second run asks nothing more.
     const asked = judge.prompts.length;
     await runDimension(db, renderOnly, { trigger: "test", ctx: { ...ctx, complete: judge.complete } });
     expect(judge.prompts).toHaveLength(asked);
     const [j] = await db.select().from(judgments).where(eq(judgments.subjectId, cited));
-    expect(j).toMatchObject({ subjectKind: "content-idea", verdict: "CCLD:long:1:1" });
+    expect(j).toMatchObject({ subjectKind: "content-idea", verdict: PD_ID });
   });
 
-  it("an Idea citing Evidence reaches the driver that Evidence moves", async () => {
+  it("an Idea citing an event reaches the Price Driver whose reversal read it", async () => {
     await addExhibits();
     const [idea] = await db.select().from(content.contentIdeas).where(eq(content.contentIdeas.id, ideaId));
     const input = await visualInput(db, idea);
-    expect(input.exhibits.map((e) => e.id)).toEqual(["CCLD:long:1:1"]);
+    expect(input.exhibits.map((e) => e.id)).toEqual([PD_ID]);
     expect(chartJudgeInput(input)).toContain("Hospital clients (count): 2022-12 40, 2023-12 31, 2024-12 33, 2025-12 45 (first 40, last 45)");
   });
 
@@ -173,7 +182,7 @@ describe("the chart of an Idea", () => {
     const charts = await db.select().from(content.contentVisuals).where(eq(content.contentVisuals.kind, "chart"));
     expect(charts.find((c) => c.ideaId === cited)).toMatchObject({ status: "ok", caption: "Prices: Yahoo Finance" });
     expect(charts.find((c) => c.ideaId === onlySignal)).toMatchObject({ status: "ok", caption: "Prices: Yahoo Finance" });
-    // Two Ideas cite the driver (the seeded one through its Evidence): one question each, none for the signal-only Idea.
+    // Two Ideas rest on the driver (the seeded one through the event its reversal read): one question each, none for the signal-only Idea.
     expect(judge.prompts).toHaveLength(2);
   });
 });
@@ -190,7 +199,7 @@ describe("visual helpers", () => {
 describe("the chart shouts (Kevin 2026-11-09)", () => {
   it("writes the arrow, note, headline and news strip once, into the chart's bronze request", async () => {
     await addExhibits();
-    const judge = fakeJudge("CCLD:long:1:1");
+    const judge = fakeJudge(PD_ID);
     await runDimension(db, renderOnly, { trigger: "test", ctx: { ...ctx, complete: judge.complete } });
     const [chart] = await db.select().from(content.contentVisuals).where(eq(content.contentVisuals.ideaId, ideaId)).then((r) => r.filter((v) => v.kind === "chart"));
     expect(chart.status).toBe("ok");
@@ -204,7 +213,7 @@ describe("the chart shouts (Kevin 2026-11-09)", () => {
     expect(CALLOUT_SYSTEM).toContain("Never a fair value, a gap to it, an upside, a price target or the word opportunity.");
     // It knows what the price says and the drivers it could break.
     expect(judge.callouts[0]).toContain("What the price says (pessimistic narrative): The market thinks CCLD lost its biggest client.");
-    expect(judge.callouts[0]).toContain("- 0: Client loss: Revenue fell 20%.");
+    expect(judge.callouts[0]).toContain("- 0: Client revenue: The market thinks the lost client is gone for good.");
     // Told to write, never to copy.
     expect(judge.callouts[0]).not.toContain("copied exactly");
     // The headline is the claim alone (Kevin 2026-11-09: no « Look: »).
@@ -304,12 +313,12 @@ describe("the story-break frame (Thierry 2026-11-16: real figures, never our fai
     expect(storyHeadline({ ...story, signal: null }, "balanced")).toBe("Strong inflection · 1 reported figure against the story");
     for (const tone of ["urgent", "balanced", "neutral"] as const) {
       for (const channel of ["x", "substack"] as const) {
-        const { svg } = storyBreakSvg({ company: "CareCloud", headline: storyHeadline(story, tone), up: true, intro: "i", panels: [{ narrative: "Client loss", reality: "Hospital clients up to 45 from 31 in 2023", tag: "STRONG INFLECTION", png: PNG_1PX }], sources: "Source: SEC", look: { tone, channel } });
+        const { svg } = storyBreakSvg({ company: "CareCloud", headline: storyHeadline(story, tone), up: true, intro: "i", panels: [{ narrative: "Client revenue", reality: "Hospital clients up to 45 from 31 in 2023", tag: "STRONG INFLECTION", png: PNG_1PX }], sources: "Source: SEC", look: { tone, channel } });
         expect(svg).not.toMatch(/fair value|opportunity|upside|downside|3\.19/i);
       }
     }
     const pic = await drawStoryBreak({ ...story, drivers: story.drivers.map((d) => ({ ...d, base: "2023-12-31" })) }, { tone: "balanced", channel: "x" });
-    expect(pic.caption).toBe("Story break: Client loss");
+    expect(pic.caption).toBe("Story break: Client revenue");
     if (process.env.RENDER_DIR) {
       const { writeFileSync } = await import("node:fs");
       for (const tone of ["urgent", "balanced", "neutral"] as const) for (const channel of ["x", "substack"] as const) {

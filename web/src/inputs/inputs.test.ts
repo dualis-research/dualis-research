@@ -13,7 +13,7 @@ import { callConsoleTool } from "@/connector/console-tools";
 import { handleRpc, INSTRUCTIONS } from "@/connector/mcp";
 import { callResearchTool } from "@/connector/research-tools";
 import { getInput, inputCounts, listInputs } from "@/console/queries";
-import { evidence, fairValues, kpiDrivers, narratives, signals } from "@/db/schema/analysis";
+import { driverEvents, fairValues, kpiDrivers, narratives, signals } from "@/db/schema/analysis";
 import { fetches } from "@/db/schema/bronze";
 import { goldDailyDigests } from "@/db/schema/daily-email";
 import { companyProfiles, quotes } from "@/db/schema/gold";
@@ -136,15 +136,11 @@ describe("read tools", () => {
     await db.insert(narratives).values({ id: `${SYM}:long`, symbol: SYM, side: "long", sideWhy: "The price sits under every method.", text: "The market believes growth is over.", detail: "Revenue fell two years in a row.", version: "v", asOf: now });
     await db.insert(kpiDrivers).values([
       { id: `${SYM}:kpi:net-income`, symbol: SYM, rank: 1, name: "Net income", why: "It pays the debt.", expected: "up", level: "strong", reason: "The price followed 4 of 5 changes.", asOf: now,
-        reversal: { intrinsic: { state: "reversing-up", why: "H1 up 40%", period: "2026-06" }, leading: { probability: "none", why: "", events: [] }, strength: "weak", direction: "up", why: "Net income turned up for the first time in two years.", side: "long", stance: "against", turn: "inflection" } },
+        marketBelief: "The market thinks profit will keep falling.", reversal: { intrinsic: { state: "reversing-up", why: "H1 up 40%", period: "2026-06" }, leading: { probability: "medium", why: "A new contract.", events: [{ id: `${SYM}|news:e1`, day: "2026-11-20", kind: "news", title: "Fakeco wins a hospital contract", sourceId: "e1", url: "https://news.test/e1" }] }, strength: "weak", direction: "up", why: "Net income turned up for the first time in two years.", side: "long", stance: "against", turn: "inflection" } },
       { id: `${SYM}:kpi:noise`, symbol: SYM, rank: 2, name: "Headcount", why: "x", expected: "up", level: "none", asOf: now },
     ]);
     await db.insert(signals).values({ symbol: SYM, signal: "BUY", strength: "weak", side: "long", why: "Net income: turned up.", theses: [], fairValue: 4.5, currency: "USD", quote: 3.2, quoteDate: "2026-11-21", gapPct: -0.29, evidenceIds: [], since: new Date("2026-11-20T00:00:00Z") });
-    const ev = { symbol: SYM, probability: 0.8, kind: "news" as const, publisher: "Fake Wire", judgmentId: crypto.randomUUID(), verdicts: [] };
-    await db.insert(evidence).values([
-      { ...ev, id: "e1", effect: "reversal", strength: "weak", headline: "Fakeco wins a hospital contract", why: "New recurring revenue.", url: "https://news.test/e1", eventDay: "2026-11-20", eventAt: new Date("2026-11-20T00:00:00Z") },
-      { ...ev, id: "e2", effect: "noise", strength: "noise", headline: "Stocks rise on rate hopes", eventDay: "2026-11-21", eventAt: new Date("2026-11-21T00:00:00Z") },
-    ]);
+    await db.insert(driverEvents).values({ id: `${SYM}|news:e1`, symbol: SYM, kind: "news", sourceId: "e1", day: "2026-11-20", title: "Fakeco wins a hospital contract", url: "https://news.test/e1", bench: "S&P 500" });
     await db.insert(portfolioPositions).values({ symbol: "1161.HK", direction: "long", status: "open", reportedReturn: -0.05, reportedReturnAsOf: "2026-11-04", provenance: {} });
     await db.insert(goldDailyDigests).values([
       { day: "2026-11-21", items: [{ symbol: SYM, company: "Fakeco Health", kind: "filing", title: "8-K", url: "https://sec.test/8k", publisher: "sec", at: "2026-11-20T21:00:00.000Z", summary: "**Fakeco** raises **guidance**.", why: "Earnings move up.", importance: 8 }], sendStatus: "sent" },
@@ -152,7 +148,7 @@ describe("read tools", () => {
     ]);
   });
 
-  it("get_ticker gives the signal, narrative, fair value, quote, trusted Price Drivers and material news", async () => {
+  it("get_ticker gives the signal, narrative, fair value, quote, trusted Price Drivers with their belief, reversal and the events it read", async () => {
     const text = (await callResearchTool("get_ticker", { symbol: "ccld" }))!.text;
     expect(text).toContain("Fakeco Health (CCLD): on the watchlist.");
     expect(text).toContain("Signal: BUY, weak inflection, since 2026-11-20. Net income: turned up.");
@@ -160,10 +156,9 @@ describe("read tools", () => {
     expect(text).toContain("Fair value: 4.50 USD (low 3.80, high 5.40), weighted from 3 methods.");
     expect(text).toContain("a pessimistic story, an inflection would be a BUY): The market believes growth is over.");
     expect(text).toContain("Detail: Revenue fell two years in a row.");
-    expect(text).toContain("1. Net income: strong confidence, The price followed 4 of 5 changes. Reversal: Weak inflection (Reversing up). Net income turned up for the first time in two years.");
+    expect(text).toContain("1. Net income: strong confidence, The price followed 4 of 5 changes. What the market believes: The market thinks profit will keep falling. Reversal: Weak inflection (Reversing up). Net income turned up for the first time in two years.");
     expect(text).not.toContain("Headcount");
-    expect(text).toContain("- 2026-11-20 news, Fake Wire: Fakeco wins a hospital contract. Weak inflection: New recurring revenue. https://news.test/e1");
-    expect(text).not.toContain("Stocks rise");
+    expect(text).toContain("   - 2026-11-20 news: Fakeco wins a hospital contract https://news.test/e1");
   });
 
   it("get_ticker says so for a ticker off the watchlist or not analysed", async () => {

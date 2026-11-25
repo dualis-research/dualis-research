@@ -1,12 +1,10 @@
 import { cache } from "react";
-import { withBold } from "./emphasis";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import type { SignalCall, SignalStrength } from "@/content/signal-words";
 import { getDb } from "@/db/client";
-import { evidence as goldEvidence, exhibits, fairValues, kpiDrivers, marketReactions, narrativeDrivers, signals, type ThesisSide } from "@/db/schema/analysis";
+import { fairValues, signals, type ThesisSide } from "@/db/schema/analysis";
 import { consensus } from "@/db/schema/consensus";
-import { companyProfiles, filings, priceBars, quotes, tickers } from "@/db/schema/gold";
-import { goldNewsItems } from "@/db/schema/news";
+import { companyProfiles, priceBars, quotes, tickers } from "@/db/schema/gold";
 
 /**
  * The 3 console levels (Kevin 2026-11-05): A) the Signals board, B) one ticker's analysis (panel or page),
@@ -106,56 +104,6 @@ export async function inactiveBoard(): Promise<BoardRow[]> {
 /** Level A's row for one ticker (header of the panel and of the Analysis page). */
 export const boardRowOf = cache(async (symbol: string): Promise<BoardRow | null> => (await readBoard(symbol))[0] ?? null);
 
-/** Level C: one judged news / filing, every article and filing behind it, with their sources. */
-export async function evidenceDetail(symbol: string, id: string) {
-  const db = getDb();
-  const [own] = await db.select().from(goldEvidence).where(and(eq(goldEvidence.symbol, symbol), eq(goldEvidence.id, id)));
-  if (!own) return null;
-  const catalyst = {
-        id: own.id,
-        symbol: own.symbol,
-        kind: own.kind,
-        eventDay: own.eventDay,
-        eventAt: own.eventAt,
-        direction: (own.effect === "reversal" ? "contradicts" : "continues") as "contradicts" | "continues",
-        probability: own.probability,
-        reason: own.why,
-        evidence: own.citedSentence,
-        headline: own.headline,
-        url: own.url,
-        publisher: own.publisher,
-        newsItemIds: own.newsItemIds,
-        filingIds: own.filingIds,
-        sources: own.sources,
-        rebuiltAt: own.rebuiltAt,
-      };
-  const [articles, docs, [judged]] = await Promise.all([
-    catalyst.newsItemIds.length ? db.select().from(goldNewsItems).where(inArray(goldNewsItems.id, catalyst.newsItemIds)).orderBy(desc(goldNewsItems.publishedAt)) : [],
-    catalyst.filingIds.length ? db.select().from(filings).where(inArray(filings.id, catalyst.filingIds)).orderBy(desc(filings.filedAt)) : [],
-    db.select().from(goldEvidence).where(eq(goldEvidence.id, id)),
-  ]);
-  const [[driver], [exhibit], drivers, [reaction]] = await Promise.all([
-    judged?.driverId ? db.select().from(narrativeDrivers).where(eq(narrativeDrivers.id, judged.driverId)) : [],
-    judged?.exhibitId ? db.select().from(exhibits).where(eq(exhibits.id, judged.exhibitId)) : [],
-    judged ? db.select().from(narrativeDrivers).where(eq(narrativeDrivers.symbol, symbol)).orderBy(asc(narrativeDrivers.side), asc(narrativeDrivers.rank)) : [],
-    db.select().from(marketReactions).where(eq(marketReactions.id, id)),
-  ]);
-  return withBold({
-    catalyst,
-    // Judged against a Narrative Driver (gold.evidence) when the ticker has drivers; else the narrative-level judgment.
-    evidence: judged ?? null,
-    driver: driver ?? null,
-    /** Every driver of the ticker's theses, to show the item's verdict against each. */
-    drivers,
-    /** What the price did around the item, and the fair value then and now. */
-    reaction: reaction ?? null,
-    exhibit: exhibit ?? null,
-    strength: own.strength,
-    articles,
-    filings: docs,
-  });
-}
-
 /** Level C: one KPI vs consensus over every period. */
 export async function kpiDetail(symbol: string, metric: string) {
   return getDb()
@@ -168,28 +116,6 @@ export async function kpiDetail(symbol: string, metric: string) {
 /** Level C: the price history behind the quote (one year), oldest first. */
 export async function priceDetail(symbol: string) {
   return getDb().select().from(priceBars).where(eq(priceBars.symbol, symbol)).orderBy(asc(priceBars.date));
-}
-
-/** Level C: one Narrative Driver with the Price Driver it is about, its exhibits and every news whose verdict against IT is not noise. */
-export async function driverDetail(symbol: string, id: string) {
-  const db = getDb();
-  const [[driver], xs, ev] = await Promise.all([
-    db.select().from(narrativeDrivers).where(and(eq(narrativeDrivers.symbol, symbol), eq(narrativeDrivers.id, id))),
-    db.select().from(exhibits).where(eq(exhibits.driverId, id)).orderBy(asc(exhibits.rank)),
-    db.select().from(goldEvidence).where(eq(goldEvidence.symbol, symbol)).orderBy(desc(goldEvidence.eventAt)),
-  ]);
-  if (!driver) return null;
-  const [priceDriver] = driver.kpiDriverId ? await db.select().from(kpiDrivers).where(eq(kpiDrivers.id, driver.kpiDriverId)) : [];
-  return withBold({ driver, priceDriver: priceDriver ?? null, exhibits: xs, evidence: ev.filter((e) => e.verdicts.some((v) => v.driverId === id && v.effect !== "noise")), side: driver.side });
-}
-
-/** Level C: one Exhibit and the driver it supports. */
-export async function exhibitDetail(symbol: string, id: string) {
-  const db = getDb();
-  const [exhibit] = await db.select().from(exhibits).where(and(eq(exhibits.symbol, symbol), eq(exhibits.id, id)));
-  if (!exhibit) return null;
-  const [driver] = await db.select().from(narrativeDrivers).where(eq(narrativeDrivers.id, exhibit.driverId));
-  return withBold({ exhibit, driver: driver ?? null });
 }
 
 /**

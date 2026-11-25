@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
-import { evidence, type ExhibitPoint, type ExhibitSeries, exhibits, kpiDrivers, narrativeDrivers, narratives, signalChanges, signals } from "@/db/schema/analysis";
+import { driverEvents, type ExhibitPoint, type ExhibitSeries, kpiDrivers, narratives, signalChanges, signals } from "@/db/schema/analysis";
+import { driverExhibit } from "../content-visuals/data";
 import { formatUnit, periodLabel, seriesPeriod } from "../../../console/exhibit-format";
 import { PRICED_WORD, signalWords } from "@/content/signal-words";
 import { reversalHeadline, reversalWord } from "@/content/reversal-words";
@@ -16,7 +17,6 @@ import { voiceGuides } from "../content-voices";
 import { chartOptions, type ChartOption } from "./charts";
 import { DRAFT_FORMATS, type DraftFormat, draftPrompt, draftSystem, type IdeaContext, parseGeneration, PROMPT_VERSION, withDisclaimer } from "./format";
 
-import { publicSide } from "../analysis/thesis";
 export const DRAFTS_DIMENSION = "content-drafts";
 export const CLAUDE_SOURCE = "claude";
 
@@ -49,11 +49,12 @@ async function accountFor(db: Db, format: DraftFormat) {
   return { account, voiceGuide: account ? ((await voiceGuides(db)).get(account.id) ?? null) : null };
 }
 
-/** Exhibits read per Idea, values per Exhibit: enough for a before/after comparison, short enough for the prompt. */
+/** Series read per Idea, values per series: enough for a before/after comparison, short enough for the prompt. */
 const MAX_FIGURES = 6;
 const VALUES_PER_FIGURE = 8;
+const MAX_EVENTS = 8;
 
-/** The lead series of each Exhibit as « Q3-25 $6.2M, Q3-26 $7.5M »: reported values with their period, newest last. */
+/** The lead series of each chart as « Q3-25 $6.2M, Q3-26 $7.5M »: reported values with their period, newest last. */
 export function figureLines(rows: { title: string; series: ExhibitSeries[]; points: ExhibitPoint[] }[]): IdeaContext["figures"] {
   return rows.slice(0, MAX_FIGURES).flatMap((e) => {
     const lead = e.series[0];
@@ -65,36 +66,42 @@ export function figureLines(rows: { title: string; series: ExhibitSeries[]; poin
   });
 }
 
-/** The ticker's story and the evidence an Idea rests on, in words, read from gold at draft time. */
+/**
+ * The ticker's story and what an Idea rests on, in words, read from gold at draft time (Kevin 2026-11-24, one chain):
+ * the narrative, the Price Drivers it cites (else every trusted one), each with what the market believes about it, its
+ * reversal and its own reported series, and the events cited or read by those reversals.
+ */
 export async function ideaContext(db: Db, idea: content.SilverContentIdea, symbol: string): Promise<IdeaContext> {
   const refs = (kind: string) => idea.sourceRefs.filter((r) => r.kind === kind).map((r) => r.ref.slice(kind.length + 1));
-  const evidenceIds = refs("evidence");
   const driverIds = refs("driver");
+  const eventIds = refs("event");
   const changeIds = refs("change");
-  const [narrs, [s], ev, drv, ch, pds] = await Promise.all([
+  const [[n], [s], pds, ch] = await Promise.all([
     db.select().from(narratives).where(eq(narratives.symbol, symbol)),
     db.select().from(signals).where(eq(signals.symbol, symbol)),
-    evidenceIds.length ? db.select().from(evidence).where(inArray(evidence.id, evidenceIds)) : [],
-    db.select().from(narrativeDrivers).where(driverIds.length ? inArray(narrativeDrivers.id, driverIds) : eq(narrativeDrivers.symbol, symbol)),
+    db.select().from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)).orderBy(asc(kpiDrivers.rank)),
     changeIds.length ? db.select().from(signalChanges).where(inArray(signalChanges.id, changeIds)) : [],
-    // Where each driver stands = its Price Driver's reversal against the narrative (kpi-reversal).
-    db.select({ id: kpiDrivers.id, reversal: kpiDrivers.reversal }).from(kpiDrivers).where(eq(kpiDrivers.symbol, symbol)),
   ]);
-  const side = publicSide(s, narrs);
-  const n = narrs.find((x) => x.side === side);
-  const shown = drv.filter((d) => driverIds.length > 0 || d.side === side);
-  const charts = shown.length ? await db.select().from(exhibits).where(inArray(exhibits.driverId, shown.map((d) => d.id))).orderBy(asc(exhibits.number)) : [];
+  const trusted = pds.filter((k) => k.level === "strong" || k.level === "weak");
+  const cited = trusted.filter((k) => driverIds.includes(k.id));
+  const shown = cited.length ? cited : trusted;
+  const readIds = [...new Set([...eventIds, ...shown.flatMap((k) => (k.reversal?.leading.events ?? []).map((e) => e.id))])];
+  const events = readIds.length ? await db.select().from(driverEvents).where(inArray(driverEvents.id, readIds)) : [];
+  const side = n?.side ?? "long";
   return {
     narrative: n?.detail ? `${n.text} ${n.detail}` : (n?.text ?? null),
     signal: s ? signalWords(s.signal, s.strength) : null,
     signalSince: s && s.signal !== "none" ? utcDay(s.since) : null,
-    figures: figureLines(charts),
-    evidence: ev.map((e) => ({ headline: e.headline, publisher: e.publisher, day: e.eventDay, why: e.why, url: e.url })),
-    drivers: shown.map((d) => {
-      const st = pds.find((x) => x.id === d.kpiDriverId)?.reversal ?? null;
+    figures: figureLines(shown.map((k) => driverExhibit(k, side)).filter((e): e is NonNullable<typeof e> => !!e)),
+    events: events
+      .sort((a, b) => b.day.localeCompare(a.day))
+      .slice(0, MAX_EVENTS)
+      .map((e) => ({ title: e.title.replace(/\s+/g, " "), kind: e.kind, day: e.day, url: e.url })),
+    drivers: shown.map((k) => {
+      const st = k.reversal;
       return {
-        title: d.title,
-        summary: d.summary,
+        title: k.name,
+        summary: k.marketBelief,
         state: st ? { word: reversalWord(st).word, since: null, headline: reversalHeadline(st), pricedIn: st.pricedIn ? (PRICED_WORD[st.pricedIn] ?? null) : null } : null,
       };
     }),

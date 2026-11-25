@@ -1,63 +1,47 @@
-import { and, desc, eq, gte } from "drizzle-orm";
+import { and, desc, eq, gte, isNotNull } from "drizzle-orm";
 import { quoteStamp } from "../intraday-price";
 import { consensus } from "@/db/schema/consensus";
-import { fairValues, priceMoveCauses, priceMoves } from "@/db/schema/analysis";
+import { driverEvents, fairValues, priceMoves } from "@/db/schema/analysis";
 import { revenueStreams, valuations, type GoldRevenueStream } from "@/db/schema/financials";
 import { valuationReports } from "@/db/schema/valuation";
 import * as gold from "@/db/schema/gold";
 import type { Db } from "@/db/types";
 import { notesText } from "@/inputs/notes";
-import { itemsOf } from "../evidence/items";
-import { seriesCatalog, seriesMenu, type StoredSeries } from "./series";
+import { seriesCatalog, type StoredSeries } from "./series";
 import { fairValueHistoryLine } from "./thesis";
 
 /**
  * Everything one analysis reads about a ticker, as plain text for the model, all from gold.
  * The quote enters the hash only as a 15% bucket: a daily price tick never re-asks, a real move does.
  */
-export type AnalysisFacts = { symbol: string; text: string; hash: string; catalog: Map<string, StoredSeries>; quote: { close: number; date: string; currency: string | null } | null; currency: string | null; hasFinancials: boolean; moveIds: Set<string> };
+export type AnalysisFacts = { symbol: string; text: string; hash: string; catalog: Map<string, StoredSeries>; quote: { close: number; date: string; currency: string | null } | null; currency: string | null; hasFinancials: boolean };
 
-/** How far back the analysis reads the significant price moves, and how many business ones at most (the largest). */
-/** 5 years since the filings reach that far (Kevin 2026-11-19): a driver's origin can be an old move. */
-export const MOVE_YEARS = 5;
+/** How far back the narrative reads the significant unbiased moves, and how many at most (the largest). */
+export const MOVE_YEARS = 3;
 export const MOVES_SHOWN = 30;
+/** Events shown per move. */
+const EVENTS_PER_MOVE = 3;
 const signedPct = (x: number | null) => (x === null ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
 
 /**
- * What the market reacted to on this company (INFLECTION-1117, Thierry: « if the market cared at that moment, that's a
- * driver that matters »): the significant price moves of the last 3 years a business fact caused, each with its fact
- * and Driver Category, and how many others the market at large or trading caused. Each move carries the id a driver
- * cites (`[move YYYY-MM-DD]`). Null when no move was judged yet.
+ * The significant unbiased 1-week moves of the stock (`gold.price_moves`), each with the events whose week it was
+ * (`gold.driver_events`): what the market reacted to, as stored, no verdict on any of them (docs/architecture.md: a
+ * significant unbiased move is always valid). Null when no move is stored.
  */
-export async function movesText(db: Db, symbol: string, now = new Date()): Promise<{ text: string | null; ids: Set<string> }> {
+export async function movesText(db: Db, symbol: string, now = new Date()): Promise<{ text: string | null }> {
   const since = new Date(Date.UTC(now.getUTCFullYear() - MOVE_YEARS, now.getUTCMonth(), now.getUTCDate())).toISOString().slice(0, 10);
-  const rows = await db
-    .select()
-    .from(priceMoves)
-    .innerJoin(priceMoveCauses, eq(priceMoveCauses.id, priceMoves.id))
-    .where(and(eq(priceMoves.symbol, symbol), gte(priceMoves.startDay, since)))
-    .orderBy(desc(priceMoves.startDay));
-  if (rows.length === 0) return { text: null, ids: new Set() };
-  const business = rows
-    .filter((r) => r.price_move_causes.kind === "fundamental")
-    .sort((a, b) => Math.abs(b.price_moves.z) - Math.abs(a.price_moves.z))
-    .slice(0, MOVES_SHOWN)
-    .sort((a, b) => b.price_moves.startDay.localeCompare(a.price_moves.startDay));
-  const others = rows.filter((r) => r.price_move_causes.kind === "macro" || r.price_move_causes.kind === "technical").length;
-  const unknown = rows.filter((r) => r.price_move_causes.kind === "unknown").length;
-  const lines = business.map(({ price_moves: m, price_move_causes: c }) => {
+  const [moves, events] = await Promise.all([
+    db.select().from(priceMoves).where(and(eq(priceMoves.symbol, symbol), gte(priceMoves.startDay, since))).orderBy(desc(priceMoves.startDay)),
+    db.select({ moveId: driverEvents.moveId, day: driverEvents.day, title: driverEvents.title, z: driverEvents.z }).from(driverEvents).where(and(eq(driverEvents.symbol, symbol), isNotNull(driverEvents.moveId))),
+  ]);
+  if (moves.length === 0) return { text: null };
+  const shown = [...moves].sort((a, b) => Math.abs(b.z) - Math.abs(a.z)).slice(0, MOVES_SHOWN).sort((a, b) => b.startDay.localeCompare(a.startDay));
+  const lines = shown.map((m) => {
     const span = m.startDay === m.endDay ? m.startDay : `${m.startDay} to ${m.endDay}`;
-    const figure = c.metric ? ` Figure behind it: ${c.metric.label} ${c.metric.from ? `${c.metric.from} to ` : ""}${c.metric.to}${c.metric.change ? ` (${c.metric.change})` : ""}, period ended ${c.metric.period}${c.lasting && c.lasting !== "n-a" ? `, ${c.lasting}` : ""}.` : "";
-    return `- [move ${m.startDay}] ${span}: stock ${signedPct(m.returnPct)}, ${m.bench} ${signedPct(m.benchReturn)} (${Math.abs(m.z).toFixed(1)}x its usual 5-day move). ${c.category ?? "Uncategorised"}: ${c.fact ?? "no fact written"}${figure}`;
+    const mine = events.filter((e) => e.moveId === m.id).sort((a, b) => Math.abs(b.z ?? 0) - Math.abs(a.z ?? 0)).slice(0, EVENTS_PER_MOVE);
+    return `- ${span}: stock ${signedPct(m.returnPct)}, ${m.bench} ${signedPct(m.benchReturn)} (${Math.abs(m.z).toFixed(1)}x its usual 1-week move). Events that week: ${mine.length ? mine.map((e) => `${e.day} ${e.title.replace(/\s+/g, " ")}`).join("; ") : "none stored"}`;
   });
-  return {
-    text: [
-      `Significant price moves of the last ${MOVE_YEARS} years (at least twice the stock's usual 5-day move once its own market is taken out), the ones a fact about THIS business caused, newest first:`,
-      lines.length ? lines.join("\n") : "none: no significant move had a business cause.",
-      `Also ${others} significant move${others === 1 ? "" : "s"} caused by the market at large or by trading, and ${unknown} with no cause found: they say nothing about what the market watches on this company.`,
-    ].join("\n"),
-    ids: new Set(business.map((r) => r.price_moves.id)),
-  };
+  return { text: [`Significant unbiased 1-week price moves of the last ${MOVE_YEARS} years (at least twice the stock's usual 1-week move once its own market is taken out), newest first:`, lines.join("\n")].join("\n") };
 }
 
 /** 291764969976 -> "291.8B"; 0.234 -> "23.4%". */
@@ -139,7 +123,7 @@ export function streamsText(rows: GoldRevenueStream[]): string | null {
   return out.join("\n");
 }
 /**
- * The reported numbers every judge of the story reads (evidence, driver and thesis state): the last fiscal years,
+ * The reported numbers a judge of the story reads: the last fiscal years,
  * quarters and half years, and revenue by stream. A results filing arrives as a title; these are its figures.
  */
 export async function figuresText(db: Db, symbol: string): Promise<string> {
@@ -210,7 +194,6 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
   const halves = HALF_LINES.filter((k) => catalog.has(k));
   const price = catalog.get("price");
   const closes = price ? [...price.points].sort((a, b) => a[0].localeCompare(b[0])).slice(-24) : [];
-  const items = (await itemsOf(db, symbol)).slice(0, 40);
   const upcoming = cons.filter((c) => c.mean !== null && c.periodType === "year").sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
 
   const stable = [
@@ -235,25 +218,17 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
     "",
     closes.length ? `Price path, month-end closes (${price!.currency ?? ""}): ${closes.map(([m, v]) => `${m} ${fmt(v, "per-share")}`).join("; ")}` : "Price path: none collected.",
     "Analyst consensus history: only the current consensus is collected (no revisions).",
-    "",
-    "Stored chart series (key | label | span), the ONLY data an exhibit can show:",
-    seriesMenu(catalog) || "none",
   ]
     .filter((x) => x !== null)
     .join("\n");
-  // The news are context, never a reason to rewrite the story (Kevin 2026-11-09: 19 narratives in 3 days on NVRI, one
-  // per news): they stay out of the hash; each one is judged against the narrative by `evidence` instead.
-  const news = ["News and filings of the last 12 months (newest first):", items.length ? items.map((i) => `- ${i.at.toISOString().slice(0, 10)} ${i.kind}${i.publisher ? ` (${i.publisher})` : ""}: ${i.title}`).join("\n") : "none"].join("\n");
 
   // Leverage against earnings reaches the model now, outside the hash: the analysis rewrite that reads it is one
   // ANALYSIS_VERSION bump (INFLECTION-1117 PR-D), never a second wave of rewrites from this block alone.
   const leverage = balanceText(catalog);
-  // The moves the market made on this business: out of the hash like the news (a new move never rewrites the story by
-  // itself); the ANALYSIS_VERSION bump that brought them rewrites every thesis once.
+  // The significant unbiased moves and their events: out of the hash (a new move never rewrites the story by itself).
   const moves = await movesText(db, symbol);
 
-  // What Thierry himself asked, thinks and knows (pushed by his Claude, gold.thierry_inputs): out of the hash like the
-  // news, an input the model weighs at the next rewrite, never a reason to rewrite and never an override.
+  // What Thierry himself asked, thinks and knows (pushed by his Claude, gold.thierry_inputs): out of the hash, an input the model weighs at the next rewrite, never a reason to rewrite and never an override.
   const notes = await notesText(db, symbol);
 
   const q = quote ? { close: quote.close, date: quote.date, currency: quote.currency, stamp: quoteStamp(quote) } : null;
@@ -267,13 +242,12 @@ export async function gatherFacts(db: Db, symbol: string): Promise<AnalysisFacts
   const bucket = q && q.close > 0 ? Math.round(Math.log(q.close) / Math.log(1.15)) : "none";
   return {
     symbol,
-    text: `${priceLine}\n${fvLine}\n${fvHistory}\n${stable}${leverage ? `\n\n${leverage}` : ""}${moves.text ? `\n\n${moves.text}` : ""}\n\n${news}${notes ? `\n\n${notes}` : ""}`,
+    text: `${priceLine}\n${fvLine}\n${fvHistory}\n${stable}${leverage ? `\n\n${leverage}` : ""}${moves.text ? `\n\n${moves.text}` : ""}${notes ? `\n\n${notes}` : ""}`,
     hash: fnv(`${stable}\nprice-bucket:${bucket}\nfair-value-bucket:${fvBucket}`),
     catalog,
     quote: q,
     currency,
     // Annual revenue, reported or derived from what the company reported (gross profit + cost of revenue, 4 quarters).
     hasFinancials: catalog.has("line:revenue") || catalog.has("metric:revenue"),
-    moveIds: moves.ids,
   };
 }

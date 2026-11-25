@@ -484,6 +484,13 @@
       "when": 1795516790492,
       "tag": "0068_news-key-points",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1795593845527,
+      "tag": "0069_analysis-a-to-e",
+      "breakpoints": true
     }
   ]
 }

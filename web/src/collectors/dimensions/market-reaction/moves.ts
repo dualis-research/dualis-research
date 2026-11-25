@@ -1,9 +1,9 @@
 import type { Bar } from "./compute";
 
 /**
- * When the stock moved (DRIVERS-SIX-STEPS-1123, Kevin 2026-11-23): the ONE definition of a significant price move in
- * the repo, read by the KPI drivers, the move causes, the narrative drivers and the Analysis page alike. Pure code,
- * the console bundle may import it.
+ * When the stock moved: the ONE definition of a significant unbiased 1-week move in the repo (docs/architecture.md,
+ * common objects), read by steps A and B, the narrative and the Analysis page alike. Pure code, the console bundle may
+ * import it.
  *
  * Event-study convention (MacKinlay 1997, "Event Studies in Economics and Finance", Journal of Economic Literature
  * 35(1); Brown & Warner 1985), on 5 trading days: a window's move = the stock's return from the close before its first

@@ -3,10 +3,10 @@ import { gold } from "./gold";
 import { silver } from "./silver";
 
 /**
- * The analysis of a ticker in Thierry's method (docs/thierry-method.md), names fixed by Kevin 2026-11-05:
- * Fair Value, Quote, Narrative, Narrative Driver, Driver Category, Exhibit, Evidence, Signal, Signal Change,
- * Research Report, Update Note. Claude writes the text and picks the charts ONCE per input hash (dimension `analysis`);
- * every number on a chart is read from gold (financials, consensus, prices), never from the model.
+ * The analysis of a ticker: steps A to E of docs/architecture.md (Kevin 2026-11-25), nothing else. Common objects
+ * (`driver_events`, `price_moves`, `fair_values`) -> A Price Driver Candidates and B Price Drivers (`kpi_drivers`) ->
+ * C Narrative (`narratives`: side, confidence, one belief per Price Driver that explains it) -> D Reversal
+ * (`kpi_drivers.reversal`) -> E Signal (`signals`). Tables of older designs stay below as unread history.
  */
 
 /** Driver Category: Thierry's own Substack sections, a fixed catalogue. */
@@ -96,13 +96,17 @@ export type AnalysisAnswer = {
   /** analysis@v10+: the side of the story, decided by the model, and why in one sentence. Absent on older rows (never read). */
   side?: ThesisSide;
   sideWhy?: string | null;
+  /** analysis@v12+ (step C): how confident the model is that the market holds this narrative. Absent on older rows (not read yet). */
+  confidence?: Strength;
   narrative: string;
   narrativeDetail?: string | null;
   /**
-   * analysis@v10+: one Narrative Driver per trusted Price Driver (`kpiDriverId` = its `gold.kpi_drivers` id), never a
-   * reason the model invents: what the market believes about that driver, and why it holds the story on it.
+   * analysis@v11+ (Kevin 2026-11-24, one chain): for EACH trusted Price Driver (`kpiDriverId` = its `gold.kpi_drivers`
+   * id), ONE sentence of what the market believes about it; stored on the Price Driver (`market_belief`).
    */
-  drivers: { kpiDriverId?: string | null; category: DriverCategory; title: string; summary?: string | null; text: string; exhibits: ExhibitSpec[]; moveIds?: string[] }[];
+  beliefs?: { kpiDriverId: string; belief: string }[];
+  /** HISTORY (analysis@v10 and before): Narrative Drivers with invented titles, categories and exhibits. A v10 row reads as beliefs from its summary until rewritten. */
+  drivers?: { kpiDriverId?: string | null; category: DriverCategory; title: string; summary?: string | null; text: string; exhibits: ExhibitSpec[]; moveIds?: string[] }[];
 };
 
 const rebuiltAt = timestamp("rebuilt_at", { withTimezone: true }).notNull().defaultNow();
@@ -149,6 +153,8 @@ export const narratives = gold.table("narratives", {
   side: text("side").$type<ThesisSide>().notNull(),
   /** Why the model reads the story as pessimistic (long) or optimistic (short), in one sentence. */
   sideWhy: text("side_why"),
+  /** Step C's confidence that the market holds this narrative: strong | weak | noise (null = written before step C read it). Steps D and E run only on weak or strong. */
+  confidence: text("confidence").$type<Strength>(),
   /** ONE plain sentence (Kevin: « phrase simple: sujet verbe complément »). */
   text: text("text").notNull(),
   /** The longer why (3-5 sentences, figures), for the item panel. */
@@ -161,7 +167,7 @@ export const narratives = gold.table("narratives", {
 export type GoldNarrative = typeof narratives.$inferSelect;
 
 /**
- * Narrative Rationale (Kevin 2026-11-05: « une AI qui donne le rationnel derrière cette narrative »): why the market holds
+ * HISTORY, unread since 2026-11-24 (one chain: the narrative states one belief per Price Driver on `gold.kpi_drivers.market_belief`, each news item is read once by the Reversal); the table stays as written, nothing writes it. Was: Narrative Rationale (Kevin 2026-11-05: « une AI qui donne le rationnel derrière cette narrative »): why the market holds
  * the story, built on the evidence (price path, 5 years of reported numbers, consensus, the news that shaped it). Each
  * claim names the drivers it rests on and cites its sources; its own exhibits sit in gold.exhibits with driver id
  * `<symbol>:rationale`.
@@ -182,7 +188,7 @@ export const narrativeRationales = gold.table("narrative_rationales", {
 export type GoldNarrativeRationale = typeof narrativeRationales.$inferSelect;
 
 /**
- * Narrative Driver (Kevin 2026-11-24): what the market believes about ONE trusted Price Driver (`kpiDriverId`), i.e. why
+ * HISTORY, unread since 2026-11-24 (one chain: the narrative states one belief per Price Driver on `gold.kpi_drivers.market_belief`, each news item is read once by the Reversal); the table stays as written, nothing writes it. Was: Narrative Driver (Kevin 2026-11-24): what the market believes about ONE trusted Price Driver (`kpiDriverId`), i.e. why
  * it holds the narrative on it. One per trusted Price Driver, never a reason the analysis invents; each in ONE Driver
  * Category the analysis assigns. id = `<symbol>:<side>:<rank>`.
  */
@@ -209,7 +215,7 @@ export const narrativeDrivers = gold.table(
 );
 export type GoldNarrativeDriver = typeof narrativeDrivers.$inferSelect;
 
-/** Exhibit: a chart bound to stored series, its data read from gold at rebuild. id = `<driver id>:<rank>`. */
+/** HISTORY, unread since 2026-11-24 (one chain: the narrative states one belief per Price Driver on `gold.kpi_drivers.market_belief`, each news item is read once by the Reversal); the table stays as written, nothing writes it. Was: Exhibit, a chart bound to stored series, its data read from gold at rebuild. id = `<driver id>:<rank>`. */
 export const exhibits = gold.table(
   "exhibits",
   {
@@ -232,7 +238,7 @@ export const exhibits = gold.table(
 export type GoldExhibit = typeof exhibits.$inferSelect;
 
 /**
- * Evidence: every news item and filing of the last 12 months, judged against EACH Narrative Driver (`verdicts`).
+ * HISTORY, unread since 2026-11-24 (one chain: the narrative states one belief per Price Driver on `gold.kpi_drivers.market_belief`, each news item is read once by the Reversal); the table stays as written, nothing writes it. Was: Evidence, every news item and filing of the last 12 months, judged against EACH Narrative Driver (`verdicts`).
  * driver_id / effect / strength / why = its strongest verdict (what ranks the item). id = `<symbol>|<news|filing>:<item id>`.
  */
 export const evidence = gold.table(
@@ -331,9 +337,9 @@ export type DocCitation = { documentId: string; page: number; quote: string; tit
 export type ThesisReading = { side: ThesisSide; signal: Strength; effect: EvidenceEffect; strength: Strength; why: string | null; since: string | null };
 
 /**
- * Signal per ticker (Kevin 2026-11-24): the narrative's side (the analysis decides it) and the strongest trusted Price
- * Driver whose reversal goes AGAINST that narrative (`gold.kpi_drivers.reversal`): a pessimistic story gives a BUY, an
- * optimistic one a SELL, at that reversal's strength; none against it = no signal.
+ * Signal per ticker = step E's output (one stored LLM judgment, `silver.judgments` kind `signal`): given the narrative
+ * (C) and each Price Driver's reading (D), is the narrative turning? `strength` strong | weak | noise; a pessimistic
+ * narrative turning gives a BUY, an optimistic one a SELL; noise = no signal. `why` = E's sentence.
  */
 export const signals = gold.table("signals", {
   symbol: text("symbol").primaryKey(),
@@ -354,7 +360,7 @@ export const signals = gold.table("signals", {
   quoteDate: text("quote_date"),
   /** quote / fair value - 1 (negative = below fair value). */
   gapPct: doublePrecision("gap_pct"),
-  /** The Evidence behind the signal (its reversals), strongest first. */
+  /** The events behind the signal (`gold.driver_events` ids): those its reversal cites as a leading indicator, newest first (old rows: Evidence ids, same `<symbol>|<kind>:<id>` grammar). */
   evidenceIds: text("evidence_ids").array().notNull(),
   /** Since when the ticker has this signal and strength. */
   since: timestamp("since", { withTimezone: true }).notNull(),
@@ -490,7 +496,7 @@ export const liveBenchmark = gold.table("live_benchmark", {
 });
 export type GoldLiveBenchmark = typeof liveBenchmark.$inferSelect;
 
-/** Research Report: equity-research style, markdown, `[EXHIBIT n]` markers = gold.exhibits.number of the ticker. */
+/** HISTORY, unread since 2026-11-24 (one chain: the narrative states one belief per Price Driver on `gold.kpi_drivers.market_belief`, each news item is read once by the Reversal); the table stays as written, nothing writes it. Was: Research Report, equity-research style, markdown, `[EXHIBIT n]` markers = gold.exhibits.number of the ticker. */
 export const researchReports = gold.table("research_reports", {
   /** `<symbol>:<side>`: one report per thesis. */
   id: text("id").primaryKey(),
@@ -530,7 +536,7 @@ export const fairValueHistory = gold.table(
 export type GoldFairValueHistory = typeof fairValueHistory.$inferSelect;
 
 /**
- * Market Reaction (Kevin 2026-11-09): what the price did around one news item or filing, computed by code from the
+ * HISTORY, unread since 2026-11-24 (one chain: the narrative states one belief per Price Driver on `gold.kpi_drivers.market_belief`, each news item is read once by the Reversal); the table stays as written, nothing writes it. Was: Market Reaction (Kevin 2026-11-09): what the price did around one news item or filing, computed by code from the
  * stored closes: the close before, the next close, five closes later and today, each vs the S&P 500 over the same days,
  * and the fair value (base, low, high) at the news date and today. id = the Evidence id `<symbol>|<kind>:<item id>`.
  */
@@ -652,7 +658,7 @@ export const driverEvents = gold.table(
 );
 export type GoldDriverEvent = typeof driverEvents.$inferSelect;
 
-/** What caused a move: the business (fundamental), the market at large (macro), trading itself (technical), or not found. */
+/** HISTORY (the per-week fundamental / market / unknown verdict, rejected by Kevin 2026-11-25): `price_move_causes` is no longer written or read. */
 export const MOVE_CAUSE_KINDS = ["fundamental", "macro", "technical", "unknown"] as const;
 export type MoveCauseKind = (typeof MOVE_CAUSE_KINDS)[number];
 /** A news item or filing a cause rests on, as the panel links it. */
@@ -704,7 +710,7 @@ export type ConfidenceRow = { moveId: string; day: string; returnPct: number; fa
 
 /**
  * HISTORY, unread since 2026-11-24 (the `driver-confidence` dimension is deleted: a driver's confidence is its Price
- * Driver's level, tests A, B and C, in `gold.kpi_drivers`). The table stays as written; nothing reads or writes it.
+ * Driver's level, tests A and B, in `gold.kpi_drivers`). The table stays as written; nothing reads or writes it.
  */
 export const driverConfidence = gold.table(
   "driver_confidence",
@@ -789,47 +795,32 @@ export type KpiEventRow = {
   cite: DocCitation | null;
   /** A policy or industry candidate (no figure): did it turn up (stronger, more favourable) at this event? Absent on KPI rows. */
   changeUp?: boolean | null;
-  /**
-   * Step 4's ONE verdict on the week the event sits in (`gold.price_move_causes`): fundamental = a fact of the company or
-   * its industry moved it, market = the market at large or trading itself, unknown = no item explains it. Only a
-   * fundamental week counts as the price moving (`priceMoved`) for tests A, B and C (PROOF-STRUCTURE-1123). Null = no move.
-   */
-  week?: WeekVerdict | null;
 };
-
-/** The one verdict per unusual week (step 4, PROOF-STRUCTURE-1123): read from `price_move_causes.kind` (macro and technical = market). */
-export const WEEK_VERDICTS = ["fundamental", "market", "unknown"] as const;
-export type WeekVerdict = (typeof WEEK_VERDICTS)[number];
-export const weekVerdict = (kind: string | null | undefined): WeekVerdict => (kind === "fundamental" ? "fundamental" : kind === "macro" || kind === "technical" ? "market" : "unknown");
 
 /** What a Price Driver Candidate is (Kevin + Thierry 2026-11-23): a company KPI, a policy, or a qualitative industry fact. */
 export const CANDIDATE_KINDS = ["kpi", "policy", "industry"] as const;
 export type CandidateKind = (typeof CANDIDATE_KINDS)[number];
 
 /**
- * The two tests behind a candidate's confidence (meeting 2026-11-23, whiteboard): A) each big change of the candidate,
- * did the price move the expected way in its 5 trading days? B) each unbiased price move of 3 years, did the candidate
- * change in it? Counted by code from the rows and the step-2 moves; the verdict is the AI's.
+ * Step B's two tests behind a candidate's confidence, counted by code from the rows and the significant unbiased moves;
+ * the verdict is the AI's. A) each significant change of the candidate: was the 1 week after it a significant unbiased
+ * move, the expected way? B) each significant 1-week move: did the candidate change on the first day of that week?
  */
 export type DriverTests = {
-  /** A) big changes of the candidate; the price followed the expected way in a fundamental week / did not. */
+  /** A) significant changes of the candidate; a significant move followed the expected way / did not. */
   changes: number;
   followed: number;
   against: number;
-  /** B) unusual weeks of the window, the fundamental ones among them, and those in which the candidate changed. */
+  /** B) significant unbiased 1-week moves of the window, and those on whose first day the candidate changed. */
   moves: number;
-  fundamentalMoves: number;
   explained: number;
   explainedMoveIds: string[];
-  /** C) events where the candidate changed AND the price moved in a fundamental week; those the expected way. */
-  both: number;
-  bothAgree: number;
 };
 
 /** The Price Driver's OWN direction on its latest value (up = the KPI rises, or the policy / industry fact turns more favourable). v1 rows say `reversing` / `continuing`. */
 export const REVERSAL_STATES = ["continuing-to-rise", "continuing-to-fall", "reversing-up", "reversing-down", "flat"] as const;
 export type ReversalState = (typeof REVERSAL_STATES)[number];
-/** Does the Price Driver's turn go AGAINST the narrative (an inflection on a pessimistic story, a crack on an optimistic one), WITH it, or neither? The judge's word. */
+/** Step D: against = in reversal against the narrative (an inflection on a pessimistic story, a crack on an optimistic one), with = in continuation of it, none = noise. The judge's word. */
 export const REVERSAL_STANCES = ["against", "with", "none"] as const;
 export type ReversalStance = (typeof REVERSAL_STANCES)[number];
 
@@ -843,7 +834,7 @@ export type DriverReversal = {
   intrinsic: { state: ReversalState | "reversing" | "continuing"; why: string; period: string | null };
   /** Does a recent event announce that it will change soon (a leading indicator), and how likely? */
   leading: { probability: "high" | "medium" | "low" | "none"; why: string; events: { id: string; day: string; kind: DriverEventKind; title: string; sourceId: string; url: string | null }[] };
-  /** Bottom line: how strong the turn is (strong only for a strong-confidence driver), and which way the driver itself goes. */
+  /** Bottom line (step D): how strong the reversal (stance against) or the continuation (stance with) is, `none` = noise; and which way the driver itself goes. Readings before kpi-reversal@v4 gave a strength to a reversal only. */
   strength: KpiLevel;
   direction: "up" | "down" | null;
   why: string;
@@ -864,11 +855,11 @@ export type DriverReversal = {
 };
 
 /**
- * Price Driver Candidates and Price Drivers (PROOF-STRUCTURE-1123): one row per candidate (a KPI, a policy or an industry
- * fact), how it is measured (`measure`, `periods`), every event crossed with it and the week verdicts (`rows`), tests A,
- * B and C (`tests`), the AI's confidence (`level` + `reason`), written by `kpi-drivers`; and, for a trusted one, its
- * reversal read against the narrative (`reversal`; its bottom line also in `signal` / `signalWhy`), written by
- * `kpi-reversal`. id = `<symbol>:kpi:<slug of the name>`.
+ * Price Driver Candidates (step A) and Price Drivers (step B): one row per candidate (a KPI, a policy or an industry
+ * fact) and the events it was read in (`found_in`), how it is measured (`measure`, `periods`), every event crossed with
+ * it and the significant unbiased moves (`rows`), the two tests (`tests`), the AI's confidence (`level` + `reason`;
+ * `none` = noise), written by `kpi-drivers`; what the market believes about it (`market_belief`, step C); and its
+ * reading against the narrative (`reversal`, step D, `kpi-reversal`). id = `<symbol>:kpi:<slug of the name>`.
  */
 export const kpiDrivers = gold.table(
   "kpi_drivers",
@@ -881,7 +872,7 @@ export const kpiDrivers = gold.table(
     kind: text("kind").$type<CandidateKind>().notNull().default("kpi"),
     /** The step-1 events, with an unbiased move, where the AI read this candidate. */
     foundIn: jsonb("found_in").$type<string[]>().notNull().default([]),
-    /** Tests A, B and C, counted by code. */
+    /** Tests A and B, counted by code. */
     tests: jsonb("tests").$type<DriverTests | null>(),
     /** Why this KPI moves this business, in one sentence. */
     why: text("why").notNull(),
@@ -899,9 +890,11 @@ export const kpiDrivers = gold.table(
     rows: jsonb("rows").$type<KpiEventRow[]>().notNull().default([]),
     confirmed: integer("confirmed").notNull().default(0),
     invalidated: integer("invalidated").notNull().default(0),
-    /** The reversal's bottom line (= `reversal.strength` and `.why`): strong / weak / none. Null for a candidate not trusted, or not judged yet. */
+    /** The strength of its reversal AGAINST the narrative (`reversal.strength` when its stance is against, else none) and step D's sentence. Null for a candidate not trusted, or not read yet. */
     signal: text("signal").$type<KpiLevel>(),
     signalWhy: text("signal_why"),
+    /** What the market believes about it, ONE sentence written by the narrative (`analysis`); null for a candidate not trusted, or before the narrative read it. */
+    marketBelief: text("market_belief"),
     /** Its own direction on its latest value, a leading indicator, and the bottom line against the narrative (`kpi-reversal`). */
     reversal: jsonb("reversal").$type<DriverReversal | null>(),
     /** Which way it turns, read against the story (`up` / `down` in the KPI itself). */

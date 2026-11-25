@@ -1,13 +1,13 @@
 import { eq } from "drizzle-orm";
-import type { ExhibitPoint, ExhibitSeries } from "@/db/schema/analysis";
+import type { ExhibitSeries } from "@/db/schema/analysis";
 import { consensus } from "@/db/schema/consensus";
 import { financialMetrics, goldFinancialLines } from "@/db/schema/financials";
 import type { Db } from "@/db/types";
 import { LINES, type LineKey } from "../financials/lines";
 
 /**
- * The stored series a ticker's Exhibits can draw from: every number on a chart comes from here (gold), never from
- * the model. Keys:
+ * The stored series of a ticker (gold), what a Price Driver is measured on and the judges read: every number comes
+ * from here, never from the model. Keys:
  *   line:<line> / hline:<line> / qline:<line>   reported line, fiscal years / half years / quarters (gold.financial_lines)
  *   metric:<m> / hmetric:<m> / qmetric:<m>   derived metric, fiscal years / half years / quarters (gold.financial_metrics)
  *   consensus:<m> / actual:<m>        analyst mean vs reported actual per fiscal year (gold.consensus)
@@ -93,32 +93,4 @@ export function finestSeries(catalog: Map<string, StoredSeries>, key: string, si
     }
   }
   return catalog.get(key);
-}
-
-/** How many periods an exhibit shows per period type. */
-const WINDOW = { year: 6, half: 6, quarter: 8, month: 60 } as const;
-
-/** The data of one exhibit: the union of its series' periods (latest window), one value per series, null when unpublished. */
-export function exhibitData(catalog: Map<string, StoredSeries>, keys: string[]): { series: ExhibitSeries[]; points: ExhibitPoint[]; sources: string[] } | null {
-  const series = keys.map((k) => catalog.get(k)).filter((s): s is StoredSeries => !!s && s.points.size >= 2);
-  if (series.length === 0) return null;
-  const type = series[0].periodType;
-  const same = series.filter((s) => s.periodType === type);
-  const periods = [...new Set(same.flatMap((s) => [...s.points.keys()]))].sort().slice(-WINDOW[type]);
-  return {
-    series: same.map(({ key, label, unit, currency, sources }) => ({ key, label, unit, currency, sources })),
-    points: periods.map((period) => ({ period, values: Object.fromEntries(same.map((s) => [s.key, s.points.get(period) ?? null])) })),
-    sources: [...new Set(same.flatMap((s) => s.sources))].sort(),
-  };
-}
-
-/** The menu the model picks exhibits from: key, label, how many periods, the span. */
-export function seriesMenu(catalog: Map<string, StoredSeries>): string {
-  return [...catalog.values()]
-    .filter((s) => s.points.size >= 2)
-    .map((s) => {
-      const periods = [...s.points.keys()].sort();
-      return `${s.key} | ${s.label} | ${s.points.size} ${s.periodType}s ${periods[0]}..${periods.at(-1)}`;
-    })
-    .join("\n");
 }

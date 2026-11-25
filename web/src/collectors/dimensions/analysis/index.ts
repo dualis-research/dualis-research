@@ -1,16 +1,13 @@
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { fetches as bronze, type BronzeFetch } from "@/db/schema/bronze";
-import { analyses, exhibits, narrativeDrivers, narrativeRationales, narratives, researchReports, type AnalysisAnswer, type GoldKpiDriver, type RationaleAnswer, type ThesisSide } from "@/db/schema/analysis";
-import * as gold from "@/db/schema/gold";
+import { analyses, kpiDrivers, narratives, type AnalysisAnswer, type Strength, type ThesisSide } from "@/db/schema/analysis";
 import type { Db } from "@/db/types";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
 import { analysedSymbols } from "../watchlist";
-import { stripDashes } from "../thesis/structure";
 import { fnv, gatherFacts } from "./facts";
 import { priceDriversText, trustedDrivers } from "./price-drivers";
-import { ANALYSIS_SYSTEM, ANALYSIS_VERSION, RATIONALE_SYSTEM, REPORT_SYSTEM, analysisPrompt, missingDrivers, parseAnalysis, parseRationale, rationalePrompt, reportPrompt, type PreviousThesis } from "./prompt";
-import { exhibitData, seriesCatalog, type StoredSeries } from "./series";
-import { comparablePrice, driverIdOf, thesisId } from "./thesis";
+import { ANALYSIS_SYSTEM, ANALYSIS_VERSION, analysisPrompt, beliefsOf, parseAnalysis, type PreviousThesis } from "./prompt";
+import { comparablePrice, thesisId } from "./thesis";
 
 export * from "./thesis";
 export * from "./price-drivers";
@@ -18,34 +15,13 @@ export * from "./price-drivers";
 export const ANALYSIS_DIMENSION = "analysis";
 const SOURCE = "claude";
 const PARALLEL = 4;
-export const DISCLAIMER = "This report is for information only and is not investment advice. Figures come from company filings and data providers as collected; check the sources before acting.";
 
-export type AnalysisPayload = { version: string; side: ThesisSide; inputHash: string; analysis: AnalysisAnswer; rationale: RationaleAnswer | null; report: string; model: string; quote: { close: number; date: string; currency: string | null } | null };
-
-/**
- * Keeps only exhibit series that exist in the stored catalogue with 2+ points (an exhibit left with none is dropped).
- * A driver left with no chart whose Price Driver is a stored series gets that series as its chart: its own figure.
- */
-export function bindExhibits(a: AnalysisAnswer, catalog: Map<string, StoredSeries>, drivers: Map<string, Pick<GoldKpiDriver, "name" | "series">> = new Map()): AnalysisAnswer {
-  const has = (k: string) => (catalog.get(k)?.points.size ?? 0) >= 2;
-  return {
-    ...a,
-    drivers: a.drivers.map((d) => {
-      const bound = d.exhibits.map((e) => ({ ...e, series: e.series.filter(has) })).filter((e) => e.series.length > 0 && e.title);
-      const own = d.kpiDriverId ? drivers.get(d.kpiDriverId) : undefined;
-      if (bound.length === 0 && own?.series && has(own.series)) bound.push({ title: own.name, chart: "bar", series: [own.series], takeaway: d.summary ?? d.title });
-      return { ...d, exhibits: bound };
-    }),
-  };
-}
-
-/** Exhibit numbers across the ticker, in driver order: what `[EXHIBIT n]` in the report points to. */
-export const numberedExhibits = (a: AnalysisAnswer) => a.drivers.flatMap((d, di) => d.exhibits.map((e, ei) => ({ driver: di + 1, rank: ei + 1, ...e }))).map((e, i) => ({ ...e, number: i + 1 }));
+export type AnalysisPayload = { version: string; side: ThesisSide; confidence?: Strength; inputHash: string; analysis: AnalysisAnswer; model: string; quote: { close: number; date: string; currency: string | null } | null };
 
 /** Reason an analysed ticker gets no narrative call when no candidate earned a strong or weak confidence. */
 export const NO_TRUSTED_DRIVER = "no trusted price driver yet (kpi-drivers gave none a strong or weak confidence): no narrative is written";
 
-/** The latest narrative written under the one-narrative contract (analysis@v10+: its answer carries the side). */
+/** A narrative written under the one-narrative contract (its answer carries the side); one written before step C had a confidence shows it as not read yet. */
 const isCurrent = (a: Pick<typeof analyses.$inferSelect, "analysis" | "side">): a is typeof a & { side: ThesisSide } => !!a.side && a.analysis.side === a.side;
 
 export const analysisSource: Source = {
@@ -60,7 +36,7 @@ export const analysisSource: Source = {
     if ("reason" in market) return { request: { symbol }, httpStatus: null, error: `no narrative: ${market.reason}` };
     const facts = await gatherFacts(ctx.db, symbol);
     if (!facts.hasFinancials) return { request: { symbol }, httpStatus: null, error: "no financial statements collected for this ticker (no annual revenue, reported or derivable)" };
-    // The Narrative Drivers ARE the trusted Price Drivers: none trusted = nothing to write on, never an invented reason.
+    // The narrative rests on the Price Drivers only (step B): none = nothing to write on, never an invented reason.
     const trusted = await trustedDrivers(ctx.db, symbol);
     if (trusted.length === 0) return { request: { symbol }, httpStatus: null, error: NO_TRUSTED_DRIVER };
     const pds = priceDriversText(trusted);
@@ -79,45 +55,27 @@ export const analysisSource: Source = {
     const previous = (await ctx.db.select({ analysis: analyses.analysis, side: analyses.side }).from(analyses).where(eq(analyses.symbol, symbol)).orderBy(desc(analyses.createdAt)).limit(5)).find(isCurrent);
     const labelOf = new Map([...labels].map(([l, id]) => [id, l]));
     const prev: PreviousThesis | null = previous
-      ? {
-          side: previous.analysis.side,
-          sideWhy: previous.analysis.sideWhy ?? null,
-          narrative: previous.analysis.narrative,
-          narrativeDetail: previous.analysis.narrativeDetail ?? null,
-          drivers: previous.analysis.drivers.map((d) => ({ priceDriver: (d.kpiDriverId && labelOf.get(d.kpiDriverId)) || null, category: d.category, title: d.title, summary: d.summary ?? null, text: d.text })),
-        }
+      ? { side: previous.analysis.side, sideWhy: previous.analysis.sideWhy ?? null, confidence: previous.analysis.confidence ?? null, narrative: previous.analysis.narrative, narrativeDetail: previous.analysis.narrativeDetail ?? null, beliefs: beliefsOf(previous.analysis).map((b) => ({ priceDriver: labelOf.get(b.kpiDriverId) ?? null, belief: b.belief })) }
       : null;
     const prompt = analysisPrompt(facts.text, pds.text, [...labels.keys()], prev);
     const first = await ctx.complete({ system: ANALYSIS_SYSTEM, prompt });
-    let answer = parseAnalysis(first.text, labels);
-    let missing = missingDrivers(answer, labels);
-    if (missing.length) {
-      // The contract: one Narrative Driver per Price Driver. One more ask, quoting the miss; a second miss fails loud.
-      const again = await ctx.complete({ system: ANALYSIS_SYSTEM, prompt: `${prompt}\n\nYour previous answer:\n${first.text}\n\nPrice Drivers ${missing.join(", ")} had no narrative driver. Answer again, same JSON, exactly one driver per Price Driver, each naming its label in "priceDriver".` });
+    let answer: AnalysisAnswer;
+    try {
+      answer = parseAnalysis(first.text, labels);
+    } catch (err) {
+      // One repair ask on an unreadable answer; a second failure is loud (the fetch fails with the reason).
+      const again = await ctx.complete({ system: ANALYSIS_SYSTEM, prompt: `${prompt}\n\nYour previous answer:\n${first.text}\n\nIt could not be read (${(err as Error).message.slice(0, 200)}). Answer again, same JSON, every field of the format.` });
       answer = parseAnalysis(again.text, labels);
-      missing = missingDrivers(answer, labels);
-      if (missing.length) return { request: { inputHash }, httpStatus: null, payload: { answer: again.text }, error: `Price Drivers ${missing.join(", ")} have no narrative driver` };
     }
-    const byId = new Map(trusted.map((k) => [k.id, k]));
-    answer = bindExhibits(answer, facts.catalog, byId);
-    // The unusual weeks each Price Driver explains (test B, counted by code): what made it a driver.
-    answer = { ...answer, drivers: answer.drivers.map((d) => ({ ...d, moveIds: byId.get(d.kpiDriverId ?? "")?.tests?.explainedMoveIds ?? [] })) };
-    const numbered = numberedExhibits(answer);
-    // Narrative Rationale: why the market holds the story, every claim citing its sources; its charts bound like the drivers'.
-    const r = await ctx.complete({ system: RATIONALE_SYSTEM, prompt: rationalePrompt(`${facts.text}\n\n${pds.text}`, answer, numbered) });
-    const parsed = parseRationale(r.text, answer.drivers.length);
-    const rationale: RationaleAnswer = { ...parsed, exhibits: parsed.exhibits.map((e) => ({ ...e, series: e.series.filter((k) => (facts.catalog.get(k)?.points.size ?? 0) >= 2) })).filter((e) => e.series.length > 0 && e.title) };
-    const [profile] = await ctx.db.select({ name: gold.companyProfiles.name }).from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol));
-    const report = await ctx.complete({ system: REPORT_SYSTEM, prompt: reportPrompt(`${facts.text}\n\n${pds.text}`, answer, numbered, profile?.name ?? symbol) });
-    const payload: AnalysisPayload = { version: ANALYSIS_VERSION, side: answer.side!, inputHash, analysis: answer, rationale, report: stripDashes(report.text.trim()), model: first.model, quote: facts.quote };
-    return { request: { inputHash, version: ANALYSIS_VERSION, side: answer.side, priceDrivers: trusted.length }, httpStatus: null, payload };
+    const payload: AnalysisPayload = { version: ANALYSIS_VERSION, side: answer.side!, confidence: answer.confidence, inputHash, analysis: answer, model: first.model, quote: facts.quote };
+    return { request: { inputHash, version: ANALYSIS_VERSION, side: answer.side, confidence: answer.confidence, priceDrivers: trusted.length }, httpStatus: null, payload };
   },
 };
 
 export const analysis: Dimension = {
   name: ANALYSIS_DIMENSION,
   description:
-    "Per ticker, ONE narrative written on its trusted Price Drivers (kpi-drivers, strong or weak confidence), reading the reported numbers, the price, the Fair Value and its history: the model decides the side of the story (pessimistic or optimistic), writes one Narrative Driver per Price Driver (never one it invents), the Narrative Rationale and the Research Report. Kept word for word unless the facts change; once per input hash. No trusted Price Driver = no call, a failed fetch saying so.",
+    "Step C (docs/architecture.md). Per ticker, given the current price, the fair value and its range, Thierry's notes and the Price Drivers: does the market hold a narrative that explains why the stock sits below its fair value (pessimistic) or above it (optimistic), with what confidence (strong, weak, noise), and which Price Drivers explain it, one sentence each (stored on the Price Driver). The model decides side and confidence, no coded rule. Kept word for word unless the facts change; once per input hash. No Price Driver = no call, a failed fetch saying so.",
   sources: [analysisSource],
   subjects: analysedSymbols,
   promote: promoteAnalysis,
@@ -130,68 +88,41 @@ export async function promoteAnalysis(db: Db, fetches: BronzeFetch[]): Promise<P
     const symbol = f.subject;
     const [exists] = await db.select({ id: analyses.id }).from(analyses).where(and(eq(analyses.symbol, symbol), eq(analyses.side, p.side), eq(analyses.inputHash, p.inputHash)));
     if (exists) continue;
-    await db.insert(analyses).values({ symbol, side: p.side, inputHash: p.inputHash, analysis: p.analysis, rationale: p.rationale ?? null, report: p.report, model: p.model, bronzeId: f.id, quote: p.quote?.close ?? null, quoteDate: p.quote?.date ?? null, createdAt: f.fetchedAt });
+    // `report` stays a NOT NULL column of the history: written empty.
+    await db.insert(analyses).values({ symbol, side: p.side, inputHash: p.inputHash, analysis: p.analysis, rationale: null, report: "", model: p.model, bronzeId: f.id, quote: p.quote?.close ?? null, quoteDate: p.quote?.date ?? null, createdAt: f.fetchedAt });
     n++;
   }
   await rebuildAnalysisGold(db);
   return { silverRowsBySource: { [SOURCE]: n } };
 }
 
-/** Version of a thesis = hash of its words: a rewrite with the same words keeps every judgment built on it. */
-export const thesisVersion = (a: AnalysisAnswer) => fnv([a.narrative, ...a.drivers.map((d) => `${d.category}|${d.title}|${d.text}`)].join("\n"));
+/** Version of a narrative = hash of its words: a rewrite with the same words keeps every judgment built on it. */
+export const thesisVersion = (a: AnalysisAnswer) => fnv([a.narrative, a.confidence ?? "", ...beliefsOf(a).map((b) => `${b.kpiDriverId}|${b.belief}`)].join("\n"));
 
 /**
- * Gold from the latest narrative of each analysed ticker (the Fair Value is the `valuation` dimension's). Analyses
- * written before the one-narrative contract (two theses, a coded side, drivers of their own) are history: never shown.
+ * Gold from the latest narrative of each analysed ticker: `gold.narratives` (side, why, confidence, sentence, detail)
+ * and, for each Price Driver that explains it, its belief on `gold.kpi_drivers.market_belief`. A noise narrative has
+ * no step D: its Price Drivers lose the reversal read against an older story.
  */
 export async function rebuildAnalysisGold(db: Db): Promise<void> {
   const symbols = await analysedSymbols(db);
   const latest = new Map<string, typeof analyses.$inferSelect & { side: ThesisSide }>();
   for (const a of await db.select().from(analyses).orderBy(analyses.createdAt)) if (isCurrent(a)) latest.set(a.symbol, a);
   const nar: (typeof narratives.$inferInsert)[] = [];
-  const drv: (typeof narrativeDrivers.$inferInsert)[] = [];
-  const exh: (typeof exhibits.$inferInsert)[] = [];
-  const rep: (typeof researchReports.$inferInsert)[] = [];
-  const rat: (typeof narrativeRationales.$inferInsert)[] = [];
+  const beliefs: { symbol: string; id: string; belief: string }[] = [];
   for (const symbol of symbols) {
     const a = latest.get(symbol);
     if (!a) continue;
-    const side = a.side;
-    const catalog = await seriesCatalog(db, symbol);
-    const [profile] = await db.select({ name: gold.companyProfiles.name }).from(gold.companyProfiles).where(eq(gold.companyProfiles.symbol, symbol));
-    const id = thesisId(symbol, side);
-    const version = thesisVersion(a.analysis);
-    nar.push({ id, symbol, side, sideWhy: a.analysis.sideWhy ?? null, text: a.analysis.narrative, detail: a.analysis.narrativeDetail ?? null, version, asOf: a.createdAt });
-    const exhibitIds: string[] = [];
-    a.analysis.drivers.forEach((d, i) => drv.push({ id: driverIdOf(symbol, side, i + 1), symbol, side, rank: i + 1, category: d.category, title: d.title, summary: d.summary ?? null, text: d.text, kpiDriverId: d.kpiDriverId ?? null, moveIds: d.moveIds ?? [], version }));
-    for (const e of numberedExhibits(a.analysis)) {
-      const data = exhibitData(catalog, e.series);
-      if (!data) continue;
-      const driverId = driverIdOf(symbol, side, e.driver);
-      const exId = `${driverId}:${e.rank}`;
-      exhibitIds.push(exId);
-      exh.push({ id: exId, symbol, driverId, rank: e.rank, number: e.number, title: e.title, chart: e.chart, series: data.series, points: data.points, takeaway: e.takeaway, sources: data.sources });
-    }
-    if (a.rationale) {
-      const first = numberedExhibits(a.analysis).length;
-      const ids: string[] = [];
-      a.rationale.exhibits.forEach((e, i) => {
-        const data = exhibitData(catalog, e.series);
-        if (!data) return;
-        const exId = `${id}:rationale:${i + 1}`;
-        ids.push(exId);
-        exh.push({ id: exId, symbol, driverId: `${id}:rationale`, rank: i + 1, number: first + i + 1, title: e.title, chart: e.chart, series: data.series, points: data.points, takeaway: e.takeaway, sources: data.sources });
-      });
-      rat.push({ id, symbol, side, summary: a.rationale.summary, claims: a.rationale.claims, exhibitIds: ids, version, asOf: a.createdAt });
-    }
-    rep.push({ id, symbol, side, title: `${profile?.name ?? symbol} (${symbol}): Research Report`, markdown: `${a.report}\n\n_${DISCLAIMER}_`, exhibitIds, version, asOf: a.createdAt, model: a.model });
+    nar.push({ id: thesisId(symbol, a.side), symbol, side: a.side, sideWhy: a.analysis.sideWhy ?? null, confidence: a.analysis.confidence ?? null, text: a.analysis.narrative, detail: a.analysis.narrativeDetail ?? null, version: thesisVersion(a.analysis), asOf: a.createdAt });
+    for (const b of beliefsOf(a.analysis)) beliefs.push({ symbol, id: b.kpiDriverId, belief: b.belief });
   }
+  // Only a narrative step C read as noise: one written before step C had a confidence keeps its readings until it is read again.
+  const noStepD = nar.filter((n) => n.confidence === "noise").map((n) => n.symbol);
   await db.transaction(async (tx) => {
-    for (const table of [narratives, narrativeDrivers, exhibits, researchReports, narrativeRationales]) await tx.delete(table);
+    await tx.delete(narratives);
     if (nar.length) await tx.insert(narratives).values(nar);
-    if (drv.length) await tx.insert(narrativeDrivers).values(drv);
-    if (exh.length) await tx.insert(exhibits).values(exh);
-    if (rep.length) await tx.insert(researchReports).values(rep);
-    if (rat.length) await tx.insert(narrativeRationales).values(rat);
+    if (nar.length) await tx.update(kpiDrivers).set({ marketBelief: null }).where(inArray(kpiDrivers.symbol, nar.map((x) => x.symbol)));
+    for (const b of beliefs) await tx.update(kpiDrivers).set({ marketBelief: b.belief }).where(and(eq(kpiDrivers.id, b.id), eq(kpiDrivers.symbol, b.symbol)));
+    if (noStepD.length) await tx.update(kpiDrivers).set({ reversal: null, signal: null, signalWhy: null }).where(inArray(kpiDrivers.symbol, noStepD));
   });
 }

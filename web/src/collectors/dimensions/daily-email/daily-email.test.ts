@@ -1,7 +1,8 @@
 import { resolve } from "node:path";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { kpiDrivers, narrativeDrivers, narratives } from "@/db/schema/analysis";
+import { kpiDrivers, narratives } from "@/db/schema/analysis";
+import { reversal } from "@/test/price-drivers";
 import { fetches } from "@/db/schema/bronze";
 import { dailyEmailSends, dailyItemTexts, dailyItemVerdicts, goldDailyDigests, urgentAlertSends } from "@/db/schema/daily-email";
 import * as silver from "@/db/schema/silver";
@@ -15,7 +16,7 @@ import type { SourceContext } from "../../types";
 import { watchlist } from "../watchlist";
 import { newsAlertDim } from "../news-alert";
 import { capPerCompany, dailyEmailDim, MAILER_URL, orderDigest, parseVerdicts } from ".";
-import { driverKey, evidenceSubject } from "../evidence";
+import { impactsOf } from "./drivers";
 import { decodeRequestBody, extractArticle, googleArticleId, MAX_TEXT_TRIES, parseDecodedUrl, signatureOf } from "./article";
 import { parsePoints } from "./key-points";
 import { renderEmail, renderUrgent, SUBJECT_MAX } from "./render";
@@ -34,7 +35,6 @@ let claudeCalls: number;
 let prompts: string[];
 let pointCalls: string[];
 let pointsCount: number;
-let evidenceCalls: number;
 let pageFetches: string[];
 
 /** An article page the fake web serves: a nav, a short caption, and two real paragraphs. */
@@ -44,23 +44,11 @@ const articlePage = (title: string) => `<html><body><nav><p>Home Markets Compani
 <p>The company will pay a quarterly dividend of 28 cents a share on December 20 to holders of record on December 6, it said in a statement.</p></article>
 <footer><p>Copyright 2026 News Test. All rights reserved. Terms of use and privacy policy apply here.</p></footer></body></html>`;
 
-/** Fake evidence judge: every item tagged `reversal:strong` on driver 1, `continuation:weak` on driver 2, noise on any other. */
-const evidenceAnswer = (prompt: string) => {
-  const n = prompt.split("\n").filter((l) => /^\[\d+\] /.test(l)).length;
-  const ranks = [...prompt.matchAll(/^(\d+)\. \[/gm)].map((m) => m[1]);
-  const tag = (r: string) => (r === "1" ? "reversal:strong" : r === "2" ? "continuation:weak" : "noise");
-  return { items: Array.from({ length: n }, (_, i) => ({ n: i + 1, pricedIn: "none", drivers: Object.fromEntries(ranks.map((r) => [r, { tag: tag(r), p: 0.8, why: "x", cited: null }])) })) };
-};
-
 /** Fake Claude: an item is material when its title says « results », « price war » or « profit warning » (that one critical); everything else is noise. */
 const complete: Complete = async ({ system, prompt }) => {
   if (/key points/.test(system ?? "")) {
     pointCalls.push(prompt);
     return { text: JSON.stringify({ points: ["Sales rose **12%** to $340 million — on tire demand.", "Margins improved by 150 basis points.", "Quarterly dividend of 28 cents paid December 20."].slice(0, pointsCount) }), model: "fake" };
-  }
-  if (/You tag news items/.test(system ?? "")) {
-    evidenceCalls += 1;
-    return { text: JSON.stringify(evidenceAnswer(prompt)), model: "fake" };
   }
   claudeCalls += 1;
   prompts.push(prompt);
@@ -100,7 +88,6 @@ const web = (async (input: string | URL | Request, init?: RequestInit) => {
   return new Response(JSON.stringify({ results: body.to.map((to) => ({ to, status: "sent" })) }), { status: 200 });
 }) as typeof fetch;
 
-// A new fetch function per run: the evidence judge memoises its items per run on it.
 const ctx = (env: Record<string, string> = {}): SourceContext => ({
   env: { REPO_ROOT, MAIL_TOKEN: "mail-secret", MAIL_RECIPIENTS: RECIPIENTS, COLLECT_TRIGGER: "schedule", GOOGLE_PACE: "0", ...env },
   fetch: ((input: string | URL | Request, init?: RequestInit) => web(input, init)) as typeof fetch,
@@ -116,7 +103,6 @@ beforeEach(async () => {
   prompts = [];
   pointCalls = [];
   pointsCount = 3;
-  evidenceCalls = 0;
   pageFetches = [];
   await runDimension(db, watchlist, { trigger: "test", ctx: { env: { REPO_ROOT }, fetch: (() => { throw new Error("no network"); }) as unknown as typeof fetch } });
   for (const p of [
@@ -469,61 +455,56 @@ describe("key points (NEWS-KEY-POINTS-1124)", () => {
   });
 });
 
-describe("Price Driver impact (NEWS-KEY-POINTS-1124)", () => {
-  /** MNRO with a pessimistic narrative on two trusted Price Drivers (Net income strong, Store count weak) and a third untrusted one. */
-  async function withDrivers() {
+describe("Price Driver impact (NEWS-KEY-POINTS-1124): the emails read step D, they judge nothing", () => {
+  const ev = (id: string) => ({ id: `MNRO|news:${id}`, day: "2026-11-24", kind: "news" as const, title: "t", sourceId: id, url: null });
+  /**
+   * MNRO as the analysis left it: a pessimistic narrative; Net income (strong) read in strong reversal with the item as
+   * its leading indicator; Store count (weak) read in weak continuation, the item being one of its changes; Tire prices
+   * (strong) read in reversal on OTHER events; Rent (noise) not a Price Driver.
+   */
+  async function withDrivers(id: string, stance: "against" | "with" = "against") {
     const now = new Date();
-    await db.insert(narratives).values({ id: "MNRO:long", symbol: "MNRO", side: "long", text: "The market thinks Monro is shrinking.", version: "v1", asOf: now });
-    const kpis = [
-      { id: "MNRO:k1", name: "Net income", level: "strong" as const },
-      { id: "MNRO:k2", name: "Store count", level: "weak" as const },
-      { id: "MNRO:k3", name: "Tire prices", level: "none" as const },
-    ];
-    for (const [i, k] of kpis.entries()) {
-      await db.insert(kpiDrivers).values({ ...k, symbol: "MNRO", rank: i + 1, why: "w", expected: "up", asOf: now });
-      await db.insert(narrativeDrivers).values({ id: `MNRO:long:${i + 1}`, symbol: "MNRO", side: "long", rank: i + 1, category: "Business economics", title: k.name, text: `${k.name} text`, kpiDriverId: k.id, version: "v1" });
-    }
+    await db.insert(narratives).values({ id: "MNRO:long", symbol: "MNRO", side: "long", confidence: "strong", text: "The market thinks Monro is shrinking.", version: "v1", asOf: now });
+    const row = { kpiMoved: true, changeUp: true, kind: "news" as const, title: "t", sourceId: id, url: null, period: null, from: null, to: null, change: null, kpiWhy: null, stock: null, reaction: null, z: null, moveId: null, priceMoved: false, result: "invalidates" as const, cite: null, day: "2026-11-24" };
+    await db.insert(kpiDrivers).values([
+      { id: "MNRO:k1", symbol: "MNRO", rank: 1, name: "Net income", level: "strong", why: "w", expected: "up", asOf: now, reversal: reversal("long", { stance, turn: stance === "against" ? "inflection" : null, leading: { probability: "high", why: "w", events: [ev(id)] } }) },
+      { id: "MNRO:k2", symbol: "MNRO", rank: 2, name: "Store count", level: "weak", why: "w", expected: "up", asOf: now, rows: [{ ...row, eventId: `MNRO|news:${id}` }], reversal: reversal("long", { stance: "with", strength: "weak", turn: null }) },
+      { id: "MNRO:k3", symbol: "MNRO", rank: 3, name: "Tire prices", level: "strong", why: "w", expected: "up", asOf: now, reversal: reversal("long", { leading: { probability: "high", why: "w", events: [ev("another-item")] } }) },
+      { id: "MNRO:k4", symbol: "MNRO", rank: 4, name: "Rent", level: "none", why: "w", expected: "down", asOf: now, rows: [{ ...row, eventId: `MNRO|news:${id}` }] },
+    ]);
   }
 
-  it("asks the evidence judge once for a material item, then shows each trusted driver it bears on in the console's words", async () => {
-    await withDrivers();
+  it("shows each Price Driver whose step D reading read the item (a change of it, or its leading indicator), in the console's words, with no LLM call of its own", async () => {
     const id = await addNews("MNRO", "Monro third quarter results beat", ["name"], hoursAgo(5));
     await addNews("MNRO", "Fed holds rates", ["name"], hoursAgo(6));
+    await withDrivers(id);
+    const before = claudeCalls;
     await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
-    expect(evidenceCalls).toBe(1);
-    // Stored by the evidence judge itself, under its own subject and key.
-    const js = await db.select().from(silver.judgments);
-    expect(js.map((j) => j.subjectId).sort()).toEqual([1, 2, 3].map((r) => evidenceSubject("MNRO", "news", id, "long", r)));
-    expect(js.find((j) => j.subjectId.endsWith("#long:1"))!.questionKey).toBe(driverKey({ category: "Business economics", title: "Net income", text: "Net income text" }));
-    expect(sent[0].text).toContain("  Price Drivers: Net income (strong): strong inflection · Store count (weak): continuation");
+    // The judge of the items ran (one call), nothing else was asked about the Price Drivers; no judgment stored.
+    expect(claudeCalls).toBe(before + 1);
+    expect(await db.select().from(silver.judgments)).toEqual([]);
+    expect((await db.select().from(fetches)).map((f) => f.source).filter((x) => x === "evidence")).toEqual([]);
+    expect(sent[0].text).toContain("  Price Drivers: Net income (strong): strong inflection · Store count (weak): weak continuation");
     expect(sent[0].html).toContain("Price Drivers:");
     expect(sent[0].html).not.toContain("Tire prices");
+    expect(sent[0].html).not.toContain("Rent");
     const [digest] = await db.select().from(goldDailyDigests);
     expect(digest.items[0].drivers).toEqual([
       { name: "Net income", confidence: "strong", effect: "reversal", strength: "strong", words: "strong inflection" },
-      { name: "Store count", confidence: "weak", effect: "continuation", strength: "weak", words: "continuation" },
+      { name: "Store count", confidence: "weak", effect: "continuation", strength: "weak", words: "weak continuation" },
     ]);
-    // Judged once: the next runs read it.
-    await runDimension(db, newsAlertDim, { trigger: "test", ctx: ctx() });
-    expect(evidenceCalls).toBe(1);
   });
 
-  it("reuses a verdict the evidence dimension already stored, never asks again; noise shows no block", async () => {
-    await withDrivers();
-    const id = await addNews("MNRO", "Monro third quarter results beat", ["name"], hoursAgo(5));
-    for (const [rank, title] of [[1, "Net income"], [2, "Store count"], [3, "Tire prices"]] as const) {
-      await db.insert(silver.judgments).values({ subjectKind: "evidence", subjectId: evidenceSubject("MNRO", "news", id, "long", rank), questionKey: driverKey({ category: "Business economics", title, text: `${title} text` }), question: "q", verdict: "noise", probability: 0.9, model: "m", raw: {} });
-    }
-    await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
-    expect(evidenceCalls).toBe(0);
-    expect(sent[0].html).not.toContain("Price Drivers");
-  });
-
-  it("a crack on an optimistic narrative; no drivers = no evidence call and no block", async () => {
+  it("no step D reading read the item = no line; a filing matches its release; a crack on an optimistic narrative reads as one", async () => {
     await addNews("PAL", "Proficient results beat", ["name"], hoursAgo(5));
     await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
-    expect(evidenceCalls).toBe(0);
     expect(sent[0].html).not.toContain("Price Drivers");
+
+    const k = { name: "Backlog", level: "weak" as const, rank: 1, measure: null, periods: [], rows: [], reversal: reversal("short", { strength: "weak", leading: { probability: "medium", why: "w", events: [{ ...ev("x"), id: "X|release:doc-1" }] } }) };
+    expect(impactsOf(["X|filing:doc-1", "X|release:doc-1"], [k])).toEqual([{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "weak crack" }]);
+    expect(impactsOf(["X|news:other"], [k])).toEqual([]);
+    // Noise (stance none) shows nothing.
+    expect(impactsOf(["X|release:doc-1"], [{ ...k, reversal: { ...k.reversal, stance: "none" as const, strength: "none" as const } }])).toEqual([]);
 
     const { html, text } = renderUrgent("2026-11-24", { symbol: "X", company: "X Co", kind: "news", title: "t", url: null, publisher: null, at: null, summary: "s", why: "", keyPoints: ["a", "b", "c"], drivers: [{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "weak crack" }] }, MARK);
     expect(text).toContain("  Price Drivers: Backlog (weak): weak crack");
