@@ -67,6 +67,7 @@ export function DriverExhibit({
     textStyle: { fontFamily: FONT },
     grid: { left: 0, right: 16, top: 22, bottom: 4, containLabel: true },
     tooltip: {
+      confine: true,
       trigger: "axis",
       axisPointer: { type: bars ? "shadow" : "line", lineStyle: { color: ink.muted, width: 1 }, shadowStyle: { color: "rgba(127,127,127,0.08)" } },
       backgroundColor: dark ? "#16191d" : "#ffffff",
@@ -196,6 +197,7 @@ export function ExhibitChart({
     textStyle: { fontFamily: FONT },
     grid: { left: 0, right: 16, top: 22, bottom: 4, containLabel: true },
     tooltip: {
+      confine: true,
       trigger: "axis",
       axisPointer: { type: bars ? "shadow" : "line", lineStyle: { color: ink.muted, width: 1 }, shadowStyle: { color: "rgba(127,127,127,0.08)" } },
       backgroundColor: dark ? "#16191d" : "#ffffff",

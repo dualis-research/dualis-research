@@ -56,7 +56,7 @@ const fake: Complete = async ({ prompt, system }) => {
     calls.push("note");
     expect(prompt).toContain("ONE short sentence");
     expect(prompt).not.toMatch(/Fair value \d/);
-    return { text: prompt.includes("to BUY (strong inflection)") ? "BUY: a buyback trust turns the cash story." : "Signal moved.", model: "fake" };
+    return { text: prompt.includes("to Strong BUY") ? "BUY: a buyback trust turns the cash story." : "Signal moved.", model: "fake" };
   }
   if (system === SIGNAL_SYSTEM) {
     calls.push("signal");

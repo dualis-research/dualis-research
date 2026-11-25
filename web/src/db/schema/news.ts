@@ -85,7 +85,10 @@ export const goldNewsItems = gold.table(
   "news_items",
   {
     id: uuid("id").primaryKey(),
+    /** In English (Kevin 2026-11-25): the stored translation of a non-English title (`translate`), else as published. */
     title: text("title").notNull(),
+    /** The title as published when `title` is its translation, else null. */
+    titleOriginal: text("title_original"),
     url: text("url").notNull(),
     publisher: text("publisher"),
     summary: text("summary"),
@@ -128,3 +131,22 @@ export const goldNewsLinks = gold.table(
   (t) => [primaryKey({ columns: [t.newsItemId, t.symbol] }), index("gold_news_links_symbol").on(t.symbol, t.publishedAt)],
 );
 export type GoldNewsLink = typeof goldNewsLinks.$inferSelect;
+
+/**
+ * English titles (Kevin 2026-11-25: « all non English news (title, content) must be translated in EN », console and
+ * emails alike): one row per news item or filing whose title is not in English, translated ONCE by Claude (dimension
+ * `translate`, bronze = the answer). Gold `news_items.title` and `filings.title` read the English, the original beside it.
+ */
+export const translations = silver.table(
+  "translations",
+  {
+    kind: text("kind").$type<"news" | "filing">().notNull(),
+    itemId: text("item_id").notNull(),
+    original: text("original").notNull(),
+    english: text("english").notNull(),
+    model: text("model"),
+    bronzeId: uuid("bronze_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.kind, t.itemId] })],
+);

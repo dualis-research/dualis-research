@@ -21,15 +21,15 @@ export const STATE_WORD: Record<DriverReversal["intrinsic"]["state"], string> = 
 export const turnsAgainst = (r: DriverReversal | null | undefined): boolean => !!r && r.stance === "against" && (r.strength === "strong" || r.strength === "weak");
 
 /**
- * Step D's bottom line: « Strong inflection », « Weak crack » (a reversal against a pessimistic / an optimistic
- * narrative), « Strong continuation », « Weak continuation » (the story gets stronger), else « Noise ». A reading made
+ * Step D's bottom line: « Strong BUY », « Weak SELL » (a reversal against a pessimistic / an optimistic narrative,
+ * Kevin 2026-11-25), « Strong continuation », « Weak continuation » (the story gets stronger), else « Noise ». A reading made
  * before the narrative step (no stance) is « Not read against the narrative yet ».
  */
 export function reversalWord(r: DriverReversal | null | undefined): { word: string; variant: "success" | "warning" | "neutral" } {
   if (!r) return { word: "Not assessed yet", variant: "neutral" };
   if (r.stance === undefined) return { word: "Not read against the narrative yet", variant: "neutral" };
   const strong = r.strength === "strong" ? "Strong" : "Weak";
-  if (turnsAgainst(r)) return { word: `${strong} ${r.turn ?? (r.side === "short" ? "crack" : "inflection")}`, variant: r.strength === "strong" ? "success" : "warning" };
+  if (turnsAgainst(r)) return { word: `${strong} ${(r.turn ?? (r.side === "short" ? "crack" : "inflection")) === "crack" ? "SELL" : "BUY"}`, variant: r.strength === "strong" ? "success" : "warning" };
   if (r.stance === "with") return { word: r.strength === "none" ? "Continuation" : `${strong} continuation`, variant: "neutral" };
   return { word: "Noise", variant: "neutral" };
 }

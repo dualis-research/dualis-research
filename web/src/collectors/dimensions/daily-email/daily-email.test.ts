@@ -484,14 +484,14 @@ describe("Price Driver impact (NEWS-KEY-POINTS-1124): the emails read step D, th
     expect(claudeCalls).toBe(before + 1);
     expect(await db.select().from(silver.judgments)).toEqual([]);
     expect((await db.select().from(fetches)).map((f) => f.source).filter((x) => x === "evidence")).toEqual([]);
-    expect(sent[0].text).toContain("  Price Drivers: Net income (strong): strong inflection · Store count (weak): weak continuation");
+    expect(sent[0].text).toContain("  Price Drivers: Net income (strong): Strong BUY · Store count (weak): Weak continuation");
     expect(sent[0].html).toContain("Price Drivers:");
     expect(sent[0].html).not.toContain("Tire prices");
     expect(sent[0].html).not.toContain("Rent");
     const [digest] = await db.select().from(goldDailyDigests);
     expect(digest.items[0].drivers).toEqual([
-      { name: "Net income", confidence: "strong", effect: "reversal", strength: "strong", words: "strong inflection" },
-      { name: "Store count", confidence: "weak", effect: "continuation", strength: "weak", words: "weak continuation" },
+      { name: "Net income", confidence: "strong", effect: "reversal", strength: "strong", words: "Strong BUY" },
+      { name: "Store count", confidence: "weak", effect: "continuation", strength: "weak", words: "Weak continuation" },
     ]);
   });
 
@@ -501,14 +501,14 @@ describe("Price Driver impact (NEWS-KEY-POINTS-1124): the emails read step D, th
     expect(sent[0].html).not.toContain("Price Drivers");
 
     const k = { name: "Backlog", level: "weak" as const, rank: 1, measure: null, periods: [], rows: [], reversal: reversal("short", { strength: "weak", leading: { probability: "medium", why: "w", events: [{ ...ev("x"), id: "X|release:doc-1" }] } }) };
-    expect(impactsOf(["X|filing:doc-1", "X|release:doc-1"], [k])).toEqual([{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "weak crack" }]);
+    expect(impactsOf(["X|filing:doc-1", "X|release:doc-1"], [k])).toEqual([{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "Weak SELL" }]);
     expect(impactsOf(["X|news:other"], [k])).toEqual([]);
     // Noise (stance none) shows nothing.
     expect(impactsOf(["X|release:doc-1"], [{ ...k, reversal: { ...k.reversal, stance: "none" as const, strength: "none" as const } }])).toEqual([]);
 
-    const { html, text } = renderUrgent("2026-11-24", { symbol: "X", company: "X Co", kind: "news", title: "t", url: null, publisher: null, at: null, summary: "s", why: "", keyPoints: ["a", "b", "c"], drivers: [{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "weak crack" }] }, MARK);
-    expect(text).toContain("  Price Drivers: Backlog (weak): weak crack");
+    const { html, text } = renderUrgent("2026-11-24", { symbol: "X", company: "X Co", kind: "news", title: "t", url: null, publisher: null, at: null, summary: "s", why: "", keyPoints: ["a", "b", "c"], drivers: [{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "Weak SELL" }] }, MARK);
+    expect(text).toContain("  Price Drivers: Backlog (weak): Weak SELL");
     expect(text).toContain("  • a");
-    expect(html).toContain("weak crack");
+    expect(html).toContain("Weak SELL");
   });
 });

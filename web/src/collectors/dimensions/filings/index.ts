@@ -85,7 +85,9 @@ export async function rebuildGoldFilings(db: Db, symbols: string[]): Promise<voi
   if (symbols.length === 0) return;
   await db.delete(gold.filings).where(inArray(gold.filings.symbol, symbols));
   await db.execute(sql`
-    INSERT INTO gold.filings (id, symbol, registry, filing_key, form, title, filed_at, url, language, sources)
-    SELECT id, symbol, registry, filing_key, form, title, filed_at, url, language, sources
-    FROM silver.filings WHERE ${inArray(filings.symbol, symbols)}`);
+    INSERT INTO gold.filings (id, symbol, registry, filing_key, form, title, title_original, filed_at, url, language, sources)
+    SELECT f.id, f.symbol, f.registry, f.filing_key, f.form, coalesce(t.english, f.title), CASE WHEN t.english IS NULL THEN NULL ELSE f.title END, f.filed_at, f.url, f.language, f.sources
+    FROM silver.filings f
+    LEFT JOIN silver.translations t ON t.kind = 'filing' AND t.item_id = f.id::text AND t.original = f.title
+    WHERE f.symbol IN (${sql.join(symbols.map((x) => sql`${x}`), sql`, `)})`);
 }

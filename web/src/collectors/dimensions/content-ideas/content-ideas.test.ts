@@ -73,7 +73,7 @@ describe("content-ideas dimension", () => {
     expect(prompt).toContain(`[${EVENT}]`);
     expect(prompt).toContain(`[${PD}] Price Driver: Client revenue (strong confidence). What the market believes: The market thinks the lost client is gone for good.`);
     expect(prompt).toContain("Reported: 3 months to Sep-25 40.0M USD");
-    expect(prompt).toContain("Now: Strong inflection, Q2 client revenue $46.0M, up 15%.");
+    expect(prompt).toContain("Now: Strong BUY, Q2 client revenue $46.0M, up 15%.");
     expect(prompt).toContain("[change:");
     expect(prompt).not.toContain("evidence:");
     expect(prompt).not.toContain("report:");

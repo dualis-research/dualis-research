@@ -66,4 +66,4 @@ jobs:
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - run: pnpm collect news,filings,news-alert
+      - run: pnpm collect news,filings,translate,news-alert

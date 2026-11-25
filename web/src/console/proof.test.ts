@@ -42,8 +42,8 @@ const kpis = [
   kpi(3, "Hong Kong revenue", "kpi", "weak", { reversal: { intrinsic: { state: "continuing-to-fall", period: null, why: "Revenue fell again." }, leading: { probability: "none", why: "Nothing recent.", events: [] }, strength: "weak", direction: "down", why: "Revenue keeps falling, as the market assumes.", side: "long", stance: "with", turn: null } }),
 ];
 const narrative = { side: "long" as const, confidence: "strong" as const, text: "The market prices Water Oasis as a flat, mature chain.", detail: "Profit halved while rents rose.", sideWhy: "The price sits a third under the fair value while profit halved.", beliefs: [{ id: `${S}:kpi:2`, name: "Net income", belief: "The market assumes profit stays stuck after the rent shock." }] };
-const signal = { signal: "BUY" as const, strength: "strong" as const, why: "Net income is turning up: profit nearly doubled.", evidenceIds: [events[0].id] };
-const data = { events, arrows, kpis, narrative, signal, chart: { price: [], beta: 1, indexName: "Hang Seng", windowEnd: (d: string) => d }, industryNews: new Set(["n2"]) };
+const signal = { signal: "BUY" as const, strength: "strong" as const, why: "Net income is turning up: profit nearly doubled.", evidenceIds: [events[0].id], since: new Date("2026-11-20T00:00:00Z") };
+const data = { events, arrows, kpis, narrative, signal, chart: { price: [], beta: 1, indexName: "Hang Seng", windowEnd: (d: string) => d }, industryNews: new Set(["n2"]), reversalSince: new Map<string, Date | null>() };
 
 describe("the analysis of a stock on screen: steps A to E", async () => {
   const { ProofView, ConfidenceBody, ReversalBody } = await import("./proof");
@@ -60,7 +60,7 @@ describe("the analysis of a stock on screen: steps A to E", async () => {
     expect(html).toContain("1 strong, 1 weak, 1 noise");
     expect(html).toContain("Pessimistic, strong confidence: ");
     expect(html).toContain("The market prices Water Oasis as a flat, mature chain.");
-    expect(html).toContain("Net income: strong inflection");
+    expect(html).toContain("Net income: Strong BUY");
     expect(html).toContain("Narrative turning: strong");
     expect(html).toContain(`aria-expanded="false"`);
     expect(html).not.toContain(`aria-expanded="true"`);
@@ -69,7 +69,7 @@ describe("the analysis of a stock on screen: steps A to E", async () => {
   });
 
   it("A: the events (industry news counted), the significant unbiased moves, the events of each move, the candidates; no verdict on a move", () => {
-    expect(html).toContain("2, 1 on its industry");
+    expect(html).toContain("2 events · 1 industry news, 1 company news");
     for (const t of ["Events", "Significant unbiased 1-week moves", "Events of each significant move", "Candidates read in those events"]) expect(html).toContain(t);
     expect(html).toContain("3 moves");
     expect(html).toContain("2 of 3 moves with an event");
@@ -83,12 +83,12 @@ describe("the analysis of a stock on screen: steps A to E", async () => {
 
   it("B: a candidate's sentence on top, then the two tests, on every significant move", () => {
     const one = renderToStaticMarkup(createElement(ConfidenceBody, { symbol: S, k: kpis[0], arrows }));
-    expect(one.indexOf("Commercial rent levels reason.")).toBeLessThan(one.indexOf("Each significant change: a significant move the week after?"));
+    expect(one.indexOf("Commercial rent levels reason.")).toBeLessThan(one.indexOf(`Each big change in ${kpis[0].name}: did the stock make a significant move (market removed) the week after?`));
     // The level sits in the drawer title only, never twice.
     expect(one).not.toContain("Noise");
     expect(one).toContain("1 of 1");
-    expect(one).toContain("Each significant move: did it change on its first day?");
-    expect(one).toContain("in 1 of 3");
+    expect(one).toContain(`Each significant 1-week stock move (market removed): did ${kpis[0].name} change on its first day?`);
+    expect(one).toContain("1 of 3");
     expect(one).toContain("Followed");
     expect(one).toContain("significant move 2");
     expect(one).not.toMatch(/fundamental|Market week|C · /);
@@ -108,9 +108,9 @@ describe("the analysis of a stock on screen: steps A to E", async () => {
   });
 
   it("D: continuation (weak | strong), reversal (weak | strong) or noise, worded from what the judge stored, never from `expected`", () => {
-    expect(reversalWord(kpis[1].reversal)).toEqual({ word: "Strong inflection", variant: "success" });
+    expect(reversalWord(kpis[1].reversal)).toEqual({ word: "Strong BUY", variant: "success" });
     // The same driver with the price expected to go the other way reads the same: `expected` plays no part.
-    expect(reversalWord({ ...kpis[1].reversal!, side: "short", turn: "crack", strength: "weak" })).toEqual({ word: "Weak crack", variant: "warning" });
+    expect(reversalWord({ ...kpis[1].reversal!, side: "short", turn: "crack", strength: "weak" })).toEqual({ word: "Weak SELL", variant: "warning" });
     expect(reversalWord(kpis[2].reversal).word).toBe("Weak continuation");
     expect(reversalWord({ ...kpis[2].reversal!, strength: "strong" }).word).toBe("Strong continuation");
     expect(reversalWord({ ...kpis[2].reversal!, stance: "none", strength: "none" }).word).toBe("Noise");
@@ -136,12 +136,27 @@ describe("the analysis of a stock on screen: steps A to E", async () => {
     }
   });
 
+  it("panel: the 10 newest events and the Price Drivers only, each list whole on the Analysis page", async () => {
+    const { PANEL_EVENTS } = await import("./proof");
+    const many = Array.from({ length: PANEL_EVENTS + 3 }, (_, i) => ({ ...events[0], id: `e${i}`, day: `2026-10-${String(i + 1).padStart(2, "0")}`, title: `Event number ${i}` }));
+    const panel = renderToStaticMarkup(createElement(ProofView, { symbol: S, data: { ...data, events: many }, panel: true }));
+    expect(panel).toContain(`See all ${many.length} events ›`);
+    expect(panel).toContain(`/tickers/${encodeURIComponent(S)}#events`);
+    expect(panel).not.toContain("Event number 0<");
+    expect(panel).toContain("Event number 12");
+    const noise = kpis.filter((k) => k.level !== "strong" && k.level !== "weak").length;
+    if (noise) expect(panel).toContain(`#price-drivers`);
+    const page = renderToStaticMarkup(createElement(ProofView, { symbol: S, data: { ...data, events: many } }));
+    expect(page).toContain("Event number 0");
+    expect(page).not.toContain("See all");
+  });
+
   it("E: the judge's sentence, the call, and the events behind it", () => {
     const e = html.slice(html.indexOf("E · Signal"));
     expect(e).toContain("BUY");
     expect(e).toContain("Net income is turning up: profit nearly doubled.");
     expect(e).toContain("Lunar New Year bookings full");
-    const none = renderToStaticMarkup(createElement(ProofView, { symbol: S, data: { ...data, signal: { signal: "none" as const, strength: "noise" as const, why: "One good half does not turn the story.", evidenceIds: [] } } }));
+    const none = renderToStaticMarkup(createElement(ProofView, { symbol: S, data: { ...data, signal: { signal: "none" as const, strength: "noise" as const, why: "One good half does not turn the story.", evidenceIds: [], since: new Date("2026-11-20T00:00:00Z") } } }));
     expect(none).toContain("Narrative turning: noise");
     expect(none).toContain("One good half does not turn the story.");
   });

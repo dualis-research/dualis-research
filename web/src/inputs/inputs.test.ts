@@ -151,12 +151,12 @@ describe("read tools", () => {
   it("get_ticker gives the signal, narrative, fair value, quote, trusted Price Drivers with their belief, reversal and the events it read", async () => {
     const text = (await callResearchTool("get_ticker", { symbol: "ccld" }))!.text;
     expect(text).toContain("Fakeco Health (CCLD): on the watchlist.");
-    expect(text).toContain("Signal: BUY, weak inflection, since 2026-11-20. Net income: turned up.");
+    expect(text).toContain("Signal: Weak BUY, since 2026-11-20. Net income: turned up.");
     expect(text).toContain("Last quote: 3.20 USD (2026-11-21).");
     expect(text).toContain("Fair value: 4.50 USD (low 3.80, high 5.40), weighted from 3 methods.");
     expect(text).toContain("a pessimistic story, an inflection would be a BUY): The market believes growth is over.");
     expect(text).toContain("Detail: Revenue fell two years in a row.");
-    expect(text).toContain("1. Net income: strong confidence, The price followed 4 of 5 changes. What the market believes: The market thinks profit will keep falling. Reversal: Weak inflection (Reversing up). Net income turned up for the first time in two years.");
+    expect(text).toContain("1. Net income: strong confidence, The price followed 4 of 5 changes. What the market believes: The market thinks profit will keep falling. Reversal: Weak BUY (Reversing up). Net income turned up for the first time in two years.");
     expect(text).not.toContain("Headcount");
     expect(text).toContain("   - 2026-11-20 news: Fakeco wins a hospital contract https://news.test/e1");
   });
@@ -169,7 +169,7 @@ describe("read tools", () => {
 
   it("get_watchlist lists every active ticker, analysed or not", async () => {
     const text = (await callResearchTool("get_watchlist", {}))!.text;
-    expect(text).toContain("CCLD | Fakeco Health | analysed | BUY, weak inflection | 3.20 USD (2026-11-21)");
+    expect(text).toContain("CCLD | Fakeco Health | analysed | Weak BUY | 3.20 USD (2026-11-21)");
     expect(text).toMatch(/1161\.HK \| .*\(portfolio\) \| not analysed \| not analysed \| none/);
   });
 

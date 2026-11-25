@@ -307,13 +307,13 @@ describe("the story-break frame (Thierry 2026-11-16: real figures, never our fai
     const story = (await storyBreak(db, "CCLD"))!;
     expect(story.signal).toEqual({ signal: "BUY", strength: "strong" });
     expect(story.drivers.map((d) => d.headline)).toEqual(["Hospital clients up to 45 from 31 in 2023"]);
-    expect(storyHeadline(story, "balanced")).toBe("BUY · Strong inflection · 1 reported figure against the story");
-    expect(storyHeadline(story, "urgent")).toBe("STRONG INFLECTION: BUY");
-    expect(storyHeadline(story, "neutral")).toBe("BUY, strong inflection. 1 reported figure against the story.");
-    expect(storyHeadline({ ...story, signal: null }, "balanced")).toBe("Strong inflection · 1 reported figure against the story");
+    expect(storyHeadline(story, "balanced")).toBe("Strong BUY · 1 reported figure against the story");
+    expect(storyHeadline(story, "urgent")).toBe("STRONG BUY");
+    expect(storyHeadline(story, "neutral")).toBe("Strong BUY. 1 reported figure against the story.");
+    expect(storyHeadline({ ...story, signal: null }, "balanced")).toBe("Strong BUY · 1 reported figure against the story");
     for (const tone of ["urgent", "balanced", "neutral"] as const) {
       for (const channel of ["x", "substack"] as const) {
-        const { svg } = storyBreakSvg({ company: "CareCloud", headline: storyHeadline(story, tone), up: true, intro: "i", panels: [{ narrative: "Client revenue", reality: "Hospital clients up to 45 from 31 in 2023", tag: "STRONG INFLECTION", png: PNG_1PX }], sources: "Source: SEC", look: { tone, channel } });
+        const { svg } = storyBreakSvg({ company: "CareCloud", headline: storyHeadline(story, tone), up: true, intro: "i", panels: [{ narrative: "Client revenue", reality: "Hospital clients up to 45 from 31 in 2023", tag: "STRONG BUY", png: PNG_1PX }], sources: "Source: SEC", look: { tone, channel } });
         expect(svg).not.toMatch(/fair value|opportunity|upside|downside|3\.19/i);
       }
     }

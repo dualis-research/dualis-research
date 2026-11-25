@@ -158,7 +158,7 @@ export function AnalysisBody({ analysis, variant }: { analysis: Analysis; varian
       )}
 
       {/* Steps A to E, closed: candidates, price drivers, narrative, reversals, signal. */}
-      <ProofSections symbol={symbol} />
+      <ProofSections symbol={symbol} panel={variant === "panel"} />
 
       {variant === "page" && (
         <Drawers>
