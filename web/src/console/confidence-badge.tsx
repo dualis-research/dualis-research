@@ -1,7 +1,7 @@
 import { Badge } from "@cloudflare/kumo";
 import type { ConfidenceLevel } from "@/db/schema/analysis";
 
-const WORD: Record<ConfidenceLevel, string> = { strong: "Strong confidence", weak: "Weak confidence", noise: "Noise" };
+const WORD: Record<ConfidenceLevel, string> = { strong: "Strong driver", weak: "Weak driver", noise: "Noise" };
 const VARIANT = { strong: "success", weak: "warning", noise: "neutral" } as const;
 
 /** Step B's confidence that a Price Driver Candidate is a Price Driver: does the market trade the stock on it? */
