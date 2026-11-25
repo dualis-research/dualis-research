@@ -42,17 +42,19 @@ toutes les pages soient une réflexion de ces étapes. »
 ## E. Signal (per ticker): Narrative Reversal
 - Given C and D: is the narrative turning? Confidence strong | weak | noise.
 
-## Additions proposed by Claude (2026-11-25), each to be struck by Kevin if unwanted
-1. **A, before deducing KPIs**: the LLM first says whether the move is fundamental (company or industry) or market /
-   macro; a macro move yields no PDC (Thierry 2026-11-23: « Fundamental = industry + company », macro is not).
-2. **D, leading indicators**: besides the PD's own value, a recent event announcing that the PD will change soon
+## Additions agreed by Kevin (2026-11-25)
+1. **D, leading indicators**: besides the PD's own value, a recent event announcing that the PD will change soon
    (« Lunar New Year bookings full » ahead of Water Oasis's next half) counts in the reversal (Thierry 2026-11-23:
    « a change of a PD or a leading indicator of it »).
-3. **Thierry's inputs in every LLM step (A to E)**, for the tickers they name, as context the LLM weighs, never an
+2. **Thierry's inputs in every LLM step (A to E)**, for the tickers they name, as context the LLM weighs, never an
    override (Kevin 2026-11-24).
-4. **Outputs outside the chain, kept as readers of these objects only**: the WhatsApp alert on a strong signal (E), the
+3. **Outputs outside the chain, kept as readers of these objects only**: the WhatsApp alert on a strong signal (E), the
    morning and critical emails (a separate product, Thierry 2026-11-23), the content (Ideas, drafts, pictures, Sandbox).
    They never add a step or a judgment of their own on the analysis.
+
+**Rejected (Kevin 2026-11-25, never re-propose)**: a « fundamental or macro? » filter on the moves. « If the unbiased
+price moves then there is a valid price driver »: a significant unbiased move always yields PDCs, an industry news
+(« Hong Kong retail sector under pressure ») is a valid one. No per-week fundamental / market / unknown verdict.
 
 ## Rules that apply to every step
 - Each step is stored (bronze raw answer, silver canonical, gold what pages read), one stored judgment per input,
