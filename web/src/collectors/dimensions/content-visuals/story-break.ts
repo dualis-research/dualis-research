@@ -19,7 +19,7 @@ export type StoryBreak = {
   input: VisualInput;
   side: ThesisSide;
   narrative: string;
-  /** The ticker's live signal in words (« BUY, strong inflection »), null when none. */
+  /** The ticker's live signal, null when none. */
   signal: { signal: "BUY" | "SELL"; strength: string } | null;
   /** `base` = the earlier period the reality line compares the latest value to (null: no comparison). */
   drivers: { title: string; tag: string; headline: string | null; exhibit: VisualExhibit; base: string | null }[];
@@ -35,13 +35,14 @@ export const STORY_CAPTION = "Story break:";
  * live signal on that thesis, the strongest reversing driver's tag stands in.
  */
 export function storyHeadline(story: Pick<StoryBreak, "signal" | "drivers">, tone: "urgent" | "balanced" | "neutral"): string {
-  const tag = story.signal ? tagWord("reversal", story.signal.strength, story.signal.signal === "BUY" ? "long" : "short") : (story.drivers[0]?.tag ?? "");
-  const word = tag.charAt(0).toUpperCase() + tag.slice(1).toLowerCase();
+  const driverTag = (story.drivers[0]?.tag ?? "").toLowerCase().replace(/^\w/, (c) => c.toUpperCase()).replace(/\b(buy|sell)\b/, (m) => m.toUpperCase());
+  const tag = story.signal ? tagWord("reversal", story.signal.strength, story.signal.signal === "BUY" ? "long" : "short") : driverTag;
+  // « Strong BUY » already says the call (Kevin 2026-11-25), never « BUY · Strong BUY ».
   const n = story.drivers.length;
   const figures = `${n} reported figure${n > 1 ? "s" : ""} against the story`;
-  if (tone === "urgent") return `${word.toUpperCase()}${story.signal ? `: ${story.signal.signal}` : ""}`;
-  if (tone === "neutral") return `${story.signal ? `${story.signal.signal}, ${word.toLowerCase()}` : word}. ${figures}.`;
-  return `${story.signal ? `${story.signal.signal} · ` : ""}${word} · ${figures}`;
+  if (tone === "urgent") return tag.toUpperCase();
+  if (tone === "neutral") return `${tag}. ${figures}.`;
+  return `${tag} · ${figures}`;
 }
 
 /** The line above the panels, per tone: what the market believes, then the reported figures. */

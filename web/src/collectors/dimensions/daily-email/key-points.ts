@@ -22,7 +22,7 @@ export const pointsSubject = (symbol: string, kind: string, itemId: string) => `
 const SYSTEM = [
   "You read a news article or a company filing for an equity analyst and give him its key points.",
   `Write exactly ${POINTS} bullets on what the text itself says: the facts, figures, who, when. Each bullet one plain sentence of at most 20 words, the most important first.`,
-  "Only what the text states: never an opinion, advice, a price target, upside or what the analyst should do. Plain English, never a dash.",
+  "Only what the text states: never an opinion, advice, a price target, upside or what the analyst should do. Write the 3 points in plain English whatever the language of the text (translate it), never a dash.",
   "If the text does not hold this item's content (a cookie or subscription wall, a list of other stories, page scripts or navigation, a title with no detail), answer {\"points\": []}: never a bullet about the text itself or what it lacks.",
   `Answer with JSON only, no prose, no code fence: {"points": ["...", "...", "..."]}.`,
 ].join(" ");

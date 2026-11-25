@@ -4,7 +4,6 @@ import { kpiDriversOf } from "@/console/kpi-queries";
 import { portfolioView } from "@/console/portfolio-queries";
 import { dailyDigest, getTickerAnalysis, listInputs } from "@/console/queries";
 import { reversalWord, STATE_WORD } from "@/content/reversal-words";
-import { tagWord } from "@/content/signal-words";
 import { INPUT_KINDS, type InputKind } from "@/db/schema/thierry-inputs";
 
 /**
@@ -62,7 +61,7 @@ const symbolOf = (v: unknown): string => {
   return s;
 };
 const money = (v: number | null, currency: string | null) => (v === null ? "none" : price(v, currency)!);
-const signalOf = (r: BoardRow) => (r.call ? `${r.call}, ${tagWord("reversal", r.strength, r.side).toLowerCase()}` : r.analysed ? "no signal" : "not analysed");
+const signalOf = (r: BoardRow) => (r.call ? `${r.strength === "strong" ? "Strong" : "Weak"} ${r.call}` : r.analysed ? "no signal" : "not analysed");
 const day = (d: Date) => d.toISOString().slice(0, 10);
 
 export async function callResearchTool(name: string, args: Record<string, unknown>): Promise<Result | null> {

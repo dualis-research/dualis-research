@@ -4,8 +4,8 @@ import { gapOf, positionReturn, signalWords, tagWord } from "./signal-words";
 
 describe("signal words (Thierry's terms)", () => {
   it("a BUY is an inflection, a SELL a crack", () => {
-    expect(signalWords("BUY", "strong")).toBe("BUY (strong inflection)");
-    expect(signalWords("SELL", "weak")).toBe("SELL (weak crack)");
+    expect(signalWords("BUY", "strong")).toBe("Strong BUY");
+    expect(signalWords("SELL", "weak")).toBe("Weak SELL");
     expect(signalWords("none", "noise")).toBe("no signal");
   });
 
@@ -18,7 +18,7 @@ describe("signal words (Thierry's terms)", () => {
 
   it("the WhatsApp signal is the Signal Change: the new signal, its Update Note, the why page", () => {
     const text = signalAlert({ symbol: "4238.T", fromSignal: "none", fromStrength: "noise", toSignal: "BUY", toStrength: "strong", updateNote: "Orders turn up." }, "Miraial");
-    expect(text.split("\n")).toEqual(["*4238.T* (Miraial): BUY (strong inflection), was no signal.", "Orders turn up.", expect.stringMatching(/^Why: https:\/\/.+\/tickers\/4238\.T$/)]);
+    expect(text.split("\n")).toEqual(["*4238.T* (Miraial): Strong BUY, was no signal.", "Orders turn up.", expect.stringMatching(/^Why: https:\/\/.+\/tickers\/4238\.T$/)]);
   });
 });
 
@@ -34,8 +34,8 @@ describe("position return", () => {
 
 describe("tagWord", () => {
   it("a reversal reads Inflection on the long thesis, Crack on the short one", () => {
-    expect(tagWord("reversal", "strong", "long")).toBe("Strong inflection");
-    expect(tagWord("reversal", "weak", "short")).toBe("Weak crack");
+    expect(tagWord("reversal", "strong", "long")).toBe("Strong BUY");
+    expect(tagWord("reversal", "weak", "short")).toBe("Weak SELL");
     expect(tagWord("continuation", "strong", "long")).toBe("Strong continuation");
     expect(tagWord("noise", "noise", "short")).toBe("Noise");
   });

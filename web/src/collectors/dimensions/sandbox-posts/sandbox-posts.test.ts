@@ -311,7 +311,7 @@ describe("sandbox-posts", () => {
     await setReversal(db, "CCLD", reversal("long", { headline: "Revenue up 7% in Q3" }));
     const story = await storyBreak(db, "CCLD");
     expect(story?.signal).toEqual({ signal: "BUY", strength: "strong" });
-    expect(story?.drivers.map((d) => [d.title, d.tag, d.headline])).toEqual([["Client revenue", "STRONG INFLECTION", "Revenue up 7% in Q3"]]);
+    expect(story?.drivers.map((d) => [d.title, d.tag, d.headline])).toEqual([["Client revenue", "STRONG BUY", "Revenue up 7% in Q3"]]);
     // With a judge, the line's compared period is the one before the latest (boxed with it, the arrow between them).
     const judged = await storyBreak(db, "CCLD", complete);
     expect(judged?.drivers[0].base).toBe(day(6));

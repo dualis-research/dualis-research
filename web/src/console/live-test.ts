@@ -208,8 +208,8 @@ export function portfolioPnl(positions: PnlPosition[], bars: Record<string, Bar[
   return { lines, totalReturn: equity - 1, benchmarkReturn: bench ? bench.points.at(-1)!.value : null };
 }
 
-/** "Weak inflection" / "Strong crack": a BUY is a bad story inflecting, a SELL a loved one cracking. */
+/** "Weak BUY" / "Strong SELL" (Kevin 2026-11-25). */
 export function signalLabel(signal: string | null, strength: string | null): string {
   if (!signal || signal === "none") return "No signal";
-  return `${strength === "strong" ? "Strong" : "Weak"} ${signal === "BUY" ? "inflection" : "crack"}`;
+  return `${strength === "strong" ? "Strong" : "Weak"} ${signal}`;
 }

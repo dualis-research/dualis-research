@@ -30,6 +30,7 @@ export function FootballField({ rows, fairValue, currency }: { rows: FieldRow[];
     textStyle: { fontFamily: FONT },
     grid: { left: 0, right: 24, top: 24, bottom: 4, containLabel: true },
     tooltip: {
+      confine: true,
       trigger: "item",
       backgroundColor: dark ? "#16191d" : "#ffffff",
       borderColor: ink.grid,

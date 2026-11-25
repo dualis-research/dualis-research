@@ -80,11 +80,11 @@ describe("content-drafts dimension", () => {
     expect(prompt).toContain("Idea: CareCloud replaced the client the market thinks it lost.");
     // One chain: the event the Idea cites, then each Price Driver under its name with its belief, reversal and own figures.
     expect(prompt).toContain("CCLD signs a new hospital client (https://news.example/n1)");
-    expect(prompt).toContain("- Client revenue: The market thinks the lost client is gone for good. Now: Strong inflection, Q2 client revenue $46.0M, up 15% (Not in the price yet)");
+    expect(prompt).toContain("- Client revenue: The market thinks the lost client is gone for good. Now: Strong BUY, Q2 client revenue $46.0M, up 15% (Not in the price yet)");
     expect(prompt).toContain("- Client revenue, quarters (Client revenue, quarters): Sep-25 40M USD, Dec-25 38M USD, Mar-26 39M USD, Jun-26 46M USD");
     // No fair value, quote vs it or gap reaches the writer (Thierry 2026-11-16): it cannot print what it is not given.
     expect(prompt).not.toMatch(/fair value|8x EV\/EBITDA|% vs/i);
-    expect(prompt).toContain("Signal: BUY (strong inflection)");
+    expect(prompt).toContain("Signal: Strong BUY");
 
     const [draft] = await db.select().from(content.contentDrafts);
     expect(draft).toMatchObject({ ideaId, inputKey: `idea:${ideaId}`, format: "linkedin-post", accountId: "linkedin:thierrymatin", body: "$CCLD post for Thierry Matin, sourced.", scheduledAt: null });
@@ -145,19 +145,19 @@ describe("draft format", () => {
       { symbol: "CCLD", companyName: "CareCloud", news: null, worthJudgmentId: null, worth: null, thesis: null, driver: null, chart: null, idea: { id: "i1", title: "Margin turn", angle: "Q3", sources: [] } },
       {
         narrative: "A shrinking billing shop.",
-        signal: "BUY (strong inflection)",
+        signal: "Strong BUY",
         signalSince: "2026-11-10",
         figures: [{ title: "Operating margin per quarter (Operating margin)", values: "Sep-25 12.1%, Sep-26 19.6%" }],
         events: [],
         drivers: [
-          { title: "Margins in decline", summary: null, state: { word: "Strong inflection", since: "2026-11-10", headline: "Q3 operating margin 19.6%", pricedIn: "Not in the price yet" } },
+          { title: "Margins in decline", summary: null, state: { word: "Strong BUY", since: "2026-11-10", headline: "Q3 operating margin 19.6%", pricedIn: "Not in the price yet" } },
           { title: "Debt load", summary: null, state: null },
         ],
         signalChanges: [],
       },
     );
-    expect(prompt).toContain("Signal: BUY (strong inflection), since 2026-11-10");
-    expect(prompt).toContain("- Margins in decline. Now: Strong inflection since 2026-11-10, Q3 operating margin 19.6% (Not in the price yet)");
+    expect(prompt).toContain("Signal: Strong BUY, since 2026-11-10");
+    expect(prompt).toContain("- Margins in decline. Now: Strong BUY since 2026-11-10, Q3 operating margin 19.6% (Not in the price yet)");
     expect(prompt).toMatch(/^- Debt load$/m);
     expect(prompt).toContain("Reported figures (the only numbers a post may compare):\n- Operating margin per quarter (Operating margin): Sep-25 12.1%, Sep-26 19.6%");
     expect(prompt).not.toMatch(/fair value/i);

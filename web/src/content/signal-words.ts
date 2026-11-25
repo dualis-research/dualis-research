@@ -1,6 +1,6 @@
-/** A signal in words: "BUY (weak inflection)", "no signal" (a BUY is a bad story inflecting, a SELL a loved one cracking). */
+/** A signal in words: "Weak BUY", "Strong SELL", "no signal" (Kevin 2026-11-25: « Strong BUY » reads clearer than « strong inflection »). */
 export function signalWords(signal: string, strength: string): string {
-  return signal === "none" ? "no signal" : `${signal} (${strength} ${signal === "BUY" ? "inflection" : "crack"})`;
+  return signal === "none" ? "no signal" : `${strength === "strong" ? "Strong" : "Weak"} ${signal}`;
 }
 
 /** Price vs Thierry's own fair value: above or below, by how much. Never an AI number. */
@@ -24,16 +24,16 @@ export function positionReturn(entry: number | null, current: number | null, dir
 }
 
 /**
- * A narrative tag in Thierry's words (Kevin 2026-11-06): stored as reversal / continuation / noise; a reversal reads
- * "Inflection" on the long thesis (a bad story turning) and "Crack" on the short thesis (a loved story breaking). The
- * thesis decides the word, never where the price sits (Kevin 2026-11-09: NVRI's good Q3 read "Crack" at +0.2%).
+ * A narrative tag (Kevin 2026-11-25: « Strong BUY », « Weak SELL », never « inflection » / « crack »): stored as
+ * reversal / continuation / noise; a reversal of a pessimistic (long) story reads BUY, of an optimistic (short) one
+ * SELL. The narrative decides the word, never where the price sits.
  */
 export function tagWord(effect: string, strength: string, side: "long" | "short" | null): string {
   if (effect === "too-old") return "Too old";
   if (effect === "noise" || strength === "noise") return "Noise";
   const s = strength === "strong" ? "Strong" : "Weak";
   if (effect === "continuation") return `${s} continuation`;
-  return `${s} ${side === null ? "reversal" : side === "long" ? "inflection" : "crack"}`;
+  return `${s} ${side === null ? "reversal" : side === "long" ? "BUY" : "SELL"}`;
 }
 
 /** How much of a turn the price already moved, in plain words (console Status column and the alert image). */

@@ -83,7 +83,7 @@ const companyRow = (g: { symbol: string; company: string; logo: string | null },
       : ""
   }<td style="vertical-align:middle;font-size:16px;font-weight:600;color:${INK};overflow-wrap:anywhere;word-break:break-word;">${esc(g.company)} <span style="color:${MUTED};font-weight:400;font-size:13px;">${esc(g.symbol)}</span></td></tr></table>`;
 
-/** « Net income (strong): strong inflection · Store count (weak): continuation » (the console's words, `tagWord`). */
+/** « Net income (strong): Strong BUY · Store count (weak): Weak continuation » (the console's words, `tagWord`). */
 export const driversText = (drivers: readonly DriverImpact[]) => drivers.map((d) => `${d.name} (${d.confidence}): ${d.words}`).join(" · ");
 
 /**

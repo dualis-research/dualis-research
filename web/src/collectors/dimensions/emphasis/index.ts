@@ -24,7 +24,8 @@ export const EMPHASIS_DIMENSION = "emphasis";
 /** Where Claude's prose lives, first-sight texts first; the fields are the prose ones (never a title or a quote). */
 export const EMPHASIS_SOURCES: readonly { table: PgTable; fields: readonly string[] }[] = [
   { table: analysis.narratives, fields: ["text", "detail", "sideWhy"] },
-  { table: analysis.kpiDrivers, fields: ["marketBelief", "why", "reason", "signalWhy"] },
+  // `why` also reaches the reversal's `why`, `intrinsic.why` and `leading.why` (nested keys); `kpiWhy` = each B test row.
+  { table: analysis.kpiDrivers, fields: ["marketBelief", "why", "reason", "signalWhy", "kpiWhy", "headline"] },
   { table: analysis.signals, fields: ["why"] },
   { table: analysis.signalChanges, fields: ["updateNote"] },
   { table: analysis.signalEvents, fields: ["updateNote"] },

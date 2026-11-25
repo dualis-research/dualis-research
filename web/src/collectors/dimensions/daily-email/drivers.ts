@@ -27,7 +27,7 @@ export function impactsOf(eventIds: string[], drivers: Pick<GoldKpiDriver, "name
     if (r.stance !== "against" && r.stance !== "with") continue;
     const read = readEventIds(k);
     if (!eventIds.some((id) => read.has(id))) continue;
-    out.push({ name: k.name, confidence: k.level, effect: r.stance === "against" ? "reversal" : "continuation", strength: r.strength, words: reversalWord(r).word.toLowerCase(), rank: k.rank });
+    out.push({ name: k.name, confidence: k.level, effect: r.stance === "against" ? "reversal" : "continuation", strength: r.strength, words: reversalWord(r).word, rank: k.rank });
   }
   return out
     .sort((a, b) => Number(b.effect === "reversal") - Number(a.effect === "reversal") || RANK[a.strength] - RANK[b.strength] || a.rank - b.rank)

@@ -133,6 +133,7 @@ export function PriceFairValueChart({
     textStyle: { fontFamily: FONT },
     grid: { left: 0, right: 16, top: 16, bottom: 4, containLabel: true },
     tooltip: {
+      confine: true,
       trigger: "axis",
       axisPointer: { type: "line", lineStyle: { color: ink.muted, width: 1 } },
       backgroundColor: dark ? "#16191d" : "#ffffff",

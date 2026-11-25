@@ -57,7 +57,7 @@ describe("signal-alerts", () => {
       expect(o.requestedBy).toBe("signal-alerts");
       expect(o.imageMime).toBe("image/png");
       expect(o.image?.length).toBeGreaterThan(10_000);
-      expect(o.text).toContain("*CCLD* (CareCloud): BUY (strong inflection), was no signal.");
+      expect(o.text).toContain("*CCLD* (CareCloud): Strong BUY, was no signal.");
       expect(o.text).toContain("CCLD note.");
     }
     const msgs = await db.select().from(content.contentMessages);
@@ -75,7 +75,7 @@ describe("signal-alerts", () => {
     await run();
     const out = await db.select().from(whatsappOutbox);
     expect(out).toHaveLength(4);
-    expect(out.filter((o) => o.text?.includes("BUY (strong inflection), was SELL (strong crack)"))).toHaveLength(2);
+    expect(out.filter((o) => o.text?.includes("Strong BUY, was Strong SELL"))).toHaveLength(2);
   });
 
   it("the same strong signal is sent once in 30 days: blocked 10 days later, sent again after 31", async () => {
@@ -119,7 +119,7 @@ describe("signal-alerts", () => {
     expect(cmp.text).toMatch(/→ .* \(\+15%\)$/);
     expect(JSON.stringify(input)).not.toMatch(/fair|quote/i);
     const svg = alertSvg(input);
-    for (const t of ["CareCloud", "BUY", "Strong inflection", "was SELL (weak crack)", "THE MARKET BELIEVES", "lost its biggest client", "THE REPORTED FIGURE", "Q3 revenue $46.0M, up from $40.0M a year earlier", "Revenue per quarter", "(+15%)", "PRICE DRIVERS", "Client revenue", "The market thinks the lost", "Partly in the price", "Not investment advice"]) {
+    for (const t of ["CareCloud", "BUY", "Strong BUY", "was Weak SELL", "THE MARKET BELIEVES", "lost its biggest client", "THE REPORTED FIGURE", "Q3 revenue $46.0M, up from $40.0M a year earlier", "Revenue per quarter", "(+15%)", "PRICE DRIVERS", "Client revenue", "The market thinks the lost", "Partly in the price", "Not investment advice"]) {
       expect(svg).toContain(t);
     }
     expect(svg).not.toMatch(/fair value|Range |below fair|above fair|SELL zone|BUY zone|opportunity/i);
@@ -131,7 +131,7 @@ describe("signal-alerts", () => {
     await db.insert(signalChanges).values(change("CCLD", ["none", "noise"], ["BUY", "strong"]));
     await run();
     const [o] = await db.select().from(whatsappOutbox);
-    expect(o.text).toBe(`*CCLD* (CareCloud): BUY (strong inflection), was no signal.\nReported figure: Q3 revenue $46.0M, up from $40.0M a year earlier\nCCLD note.\nWhy: ${o.text!.split("Why: ")[1]}`);
+    expect(o.text).toBe(`*CCLD* (CareCloud): Strong BUY, was no signal.\nReported figure: Q3 revenue $46.0M, up from $40.0M a year earlier\nCCLD note.\nWhy: ${o.text!.split("Why: ")[1]}`);
     expect(o.text).not.toMatch(/fair value|%/);
   });
 });

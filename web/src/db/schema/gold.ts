@@ -109,7 +109,10 @@ export const filings = gold.table(
     registry: text("registry").notNull(),
     filingKey: text("filing_key").notNull(),
     form: text("form"),
+    /** In English: the stored translation of a non-English title (`silver.translations`), else as filed. */
     title: text("title").notNull(),
+    /** The title as filed when `title` is its translation, else null. */
+    titleOriginal: text("title_original"),
     filedAt: timestamp("filed_at", { withTimezone: true }).notNull(),
     url: text("url"),
     language: text("language").notNull(),

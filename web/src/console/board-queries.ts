@@ -31,7 +31,7 @@ export type BoardRow = {
   gap: { pct: number; side: "below" | "above" } | null;
   call: SignalCall | null;
   strength: SignalStrength;
-  /** The ticker's tag as shown (Kevin 2026-11-06: "Weak inflection", never a bare "Weak"): the signal's reversal, else its narrative's reading. */
+  /** The ticker's tag as shown (Kevin 2026-11-06: "Weak BUY", never a bare "Weak"): the signal's reversal, else its narrative's reading. */
   tag: { effect: string; strength: string } | null;
   /** The narrative's side the tag reads on (long = Inflection, short = Crack); null when no narrative is written yet. */
   side: ThesisSide | null;

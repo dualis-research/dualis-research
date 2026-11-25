@@ -81,8 +81,8 @@ describe("live test positions", () => {
   });
 
   it("labels a reading the way Thierry reads it", () => {
-    expect(signalLabel("BUY", "weak")).toBe("Weak inflection");
-    expect(signalLabel("SELL", "strong")).toBe("Strong crack");
+    expect(signalLabel("BUY", "weak")).toBe("Weak BUY");
+    expect(signalLabel("SELL", "strong")).toBe("Strong SELL");
     expect(signalLabel("none", "noise")).toBe("No signal");
   });
 });

@@ -1,5 +1,5 @@
 import { eq, inArray, sql } from "drizzle-orm";
-import { goldNewsItems, goldNewsLinks, type NewsMatch, newsItems, newsMentions } from "@/db/schema/news";
+import { goldNewsItems, goldNewsLinks, type NewsMatch, newsItems, newsMentions, translations } from "@/db/schema/news";
 import * as silver from "@/db/schema/silver";
 import type { Db } from "@/db/types";
 
@@ -26,6 +26,8 @@ export async function rebuildGoldNews(db: Db): Promise<void> {
           .innerJoin(newsItems, eq(newsItems.id, newsMentions.newsItemId))
           .where(inArray(newsMentions.tickerSymbol, symbols));
 
+  // English titles (`translate`): a translation counts only for the title it was made from.
+  const english = new Map((await db.select().from(translations).where(eq(translations.kind, "news"))).map((t) => [t.itemId, t]));
   type Link = typeof goldNewsLinks.$inferInsert;
   const items = new Map<string, typeof goldNewsItems.$inferInsert & { symbols: string[]; markets: string[] }>();
   const links = new Map<string, Link & { matchKinds: string[]; matchedTerms: string[]; sources: string[]; matches: NewsMatch[] }>();
@@ -33,7 +35,7 @@ export async function rebuildGoldNews(db: Db): Promise<void> {
     const market = marketOf.get(m.tickerSymbol)!;
     const it = items.get(i.id) ?? {
       id: i.id,
-      title: i.title,
+      ...(english.get(i.id)?.original === i.title ? { title: english.get(i.id)!.english, titleOriginal: i.title } : { title: i.title, titleOriginal: null }),
       url: i.url,
       publisher: i.publisher,
       summary: i.summary,

@@ -42,7 +42,8 @@ export function EventsTimeline({ events, from, to }: { events: { day: string; ki
     animation: false,
     textStyle: { fontFamily: FONT },
     aria: { enabled: true },
-    tooltip: { trigger: "item", formatter: (x: { data: [string, number, string] }) => `${x.data[0]} · ${x.data[2].replace(/</g, "&lt;")}` },
+    // Confined: a dot near the left edge put the tooltip outside the panel (Kevin 2026-11-25, « hover outflow »).
+    tooltip: { trigger: "item", confine: true, formatter: (x: { data: [string, number, string] }) => `${x.data[0]} · ${x.data[2].replace(/</g, "&lt;")}` },
     grid: { left: 64, right: 12, top: 8, bottom: 24 },
     xAxis: { type: "time", min: Date.parse(from), max: Date.parse(to), axisLine: { lineStyle: { color: ink.axis } }, axisTick: { show: false }, axisLabel: text, splitLine: { show: false } },
     yAxis: { type: "category", data: KINDS.map((k) => KIND_WORD[k]), inverse: true, axisLine: { show: false }, axisTick: { show: false }, axisLabel: text, splitLine: { show: true, lineStyle: { color: ink.grid } } },
@@ -81,7 +82,7 @@ export function KpiPeriodsChart({ periods, unit, currency, label }: { periods: {
     animation: false,
     textStyle: { fontFamily: FONT },
     aria: { enabled: true },
-    tooltip: { trigger: "axis", valueFormatter: (v: number) => formatUnit(v, unit, currency) },
+    tooltip: { trigger: "axis", confine: true, valueFormatter: (v: number) => formatUnit(v, unit, currency) },
     grid: { left: 64, right: 12, top: 40, bottom: 24 },
     xAxis: { type: "category", data: periods.map((p) => p.period), axisLine: { lineStyle: { color: ink.axis } }, axisTick: { show: false }, axisLabel: { ...text, interval: 0, fontSize: 10 } },
     yAxis: { type: "value", name: label, nameTextStyle: { ...text, align: "left" }, axisLabel: { ...text, formatter: (v: number) => formatUnit(v, unit, currency) }, splitLine: { lineStyle: { color: ink.grid } } },

@@ -41,6 +41,7 @@ import { intradayPrice } from "./dimensions/intraday-price";
 import { watchlist } from "./dimensions/watchlist";
 import { xPublish } from "./dimensions/x-publish";
 import { emphasisDim } from "./dimensions/emphasis";
+import { translateDim } from "./dimensions/translate";
 import { dailyEmailDim } from "./dimensions/daily-email";
 import { newsAlertDim } from "./dimensions/news-alert";
 import type { Dimension } from "./types";
@@ -70,6 +71,7 @@ import type { Dimension } from "./types";
  * X publish (Kevin 2026-11-13) runs ONLY when named (x-publish.yml, every hour): it posts for real on X, and two runs at
  * once would race the account's rotating token, so `all`, `core` and `growth` never include it.
  * Signal alerts right after signals: a Signal Change landing on a strong signal goes to Kevin and Thierry with its picture (a reader of steps C to E, no judgment of its own).
+ * Translate after news history: every non-English news or filing title gets its English, once (Kevin 2026-11-25).
  * News history (NEWS-HISTORY-1123) after news, in its own stage: 3 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
  * Daily email (DAILY-EMAIL-1123) runs only when named, last: the one daily run (02:00 UTC, `all,daily-email`) names it
  * (every watchlist ticker); it judges each new item once and sends the morning email.
@@ -77,7 +79,7 @@ import type { Dimension } from "./types";
  * judge and verdicts, an urgent email per critical item, never the morning digest.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, onedrive, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, kpiDriversDim, analysis, kpiReversalDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, translateDim, onedrive, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, kpiDriversDim, analysis, kpiReversalDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts); `core` = everything else, the analysis chain.
@@ -102,6 +104,8 @@ export const STAGES: readonly (readonly string[])[] = [
   ["intraday-price"],
   // Three years of Google News, one month x one term at a time, read once (NEWS-HISTORY-1123): alone, never beside the daily news (one Google rate limit).
   ["news-history"],
+  // English titles (Kevin 2026-11-25): every non-English news and filing title, before anything reads them.
+  ["translate"],
   ["onedrive-filings", "filing-documents", "consensus"],
   ["financials"],
   ["peers"],
