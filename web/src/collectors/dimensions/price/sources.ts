@@ -2,6 +2,7 @@ import type { Source } from "../../types";
 import { getJson, isUsSymbol } from "../../http";
 import { BROWSER_HEADERS, daysAgo, isMarket, isoDate, memo, suffixOf, tickerBase } from "../../markets";
 import { parseNumber } from "../company-profile/sources";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 /** An index (Yahoo spelling, "^GSPC"): only Yahoo serves it. */
 export const isIndex = (symbol: string) => symbol.startsWith("^");
@@ -16,18 +17,24 @@ export type PriceSource = Source & {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
- * Yahoo chart: five years of daily bars (the price vs fair value chart's 5Y view), every market, no key. Yahoo rate-limits bursts (HTTP 429), so calls are
+ * Yahoo chart: `HISTORY_YEARS` + 1 years of daily bars (the moves of 10 years and the trailing year their first z-score needs), every market, no key. Yahoo rate-limits bursts (HTTP 429), so calls are
  * spaced and a 429 is retried twice after a pause; a third 429 lands in bronze as a failed fetch.
  */
 /** Yahoo answers 429 to browser-style headers (Accept: application/json...) and 200 to this plain client. */
 const YAHOO_HEADERS = { "User-Agent": "Mozilla/5.0 (dualis-collector)" };
+
+/** Daily bars from `HISTORY_YEARS` + 1 years before `now` to now. */
+export function yahooChartUrl(symbol: string, now = new Date()): string {
+  const from = Date.UTC(now.getUTCFullYear() - HISTORY_YEARS - 1, now.getUTCMonth(), now.getUTCDate()) / 1000;
+  return `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?period1=${from}&period2=${Math.floor(now.getTime() / 1000)}&interval=1d`;
+}
 
 export const yahoo: PriceSource = {
   name: "yahoo",
   requiredEnv: [],
   covers: () => true,
   async fetch(symbol, ctx) {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=5y&interval=1d`;
+    const url = yahooChartUrl(symbol);
     // Once Yahoo has refused three symbols in a row it is blocking this machine: stop waiting on it for this run.
     const refusals = await memo(ctx, "yahoo-refusals", async () => ({ inARow: 0 }));
     const pauses = process.env.VITEST || refusals.inARow >= 3 ? [] : [5_000, 20_000];

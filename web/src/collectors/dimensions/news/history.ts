@@ -13,7 +13,7 @@ import { cleanCompanyName, googleEdition, parseRss, tickerBase } from "./parse";
 import { BROWSER_UA, extractGoogle, type GoogleAnswer, type NewsSource } from "./sources";
 
 /**
- * News history (NEWS-HISTORY-1123): the Price Drivers read 3 years of events per analysed ticker (`EVENT_YEARS`), and
+ * News history (NEWS-HISTORY-1123): the Price Drivers read 10 years of events per analysed ticker (`EVENT_YEARS`), and
  * news collection only started on 2026-11-04. This dimension reads Google News one calendar MONTH at a time
  * (`after:` / `before:` operators) for every term of the ticker: its name and aliases, its local-press names and
  * industry phrases (`local-terms.ts`), its English industry terms (`industry.ts`). One subject = one term x one month
@@ -27,8 +27,8 @@ export const NEWS_HISTORY_DIMENSION = "news-history";
 
 /** Google News RSS answers at most this many items: a full page means the window hides more. */
 const GOOGLE_PAGE = 100;
-/** Windows read per run (a first backfill of one ticker is ~10 terms x 36 months); the rest waits for the next run. */
-export const MAX_WINDOWS_PER_RUN = 400;
+/** Windows read per run, ~12 min at 1.5 s (a first backfill of one ticker is ~10 terms x 120 months, so 2-3 runs); the rest waits for the next run. */
+export const MAX_WINDOWS_PER_RUN = 500;
 const DEFAULT_SPACING_MS = 1500;
 /** A 429 / 503 is retried this many times, after `spacing x 20`, then recorded as a failed fetch. */
 const RETRIES = 2;
@@ -180,7 +180,7 @@ export const googleNewsHistory: NewsSource = {
 
 export const newsHistory: Dimension = {
   name: NEWS_HISTORY_DIMENSION,
-  description: "Three years of Google News per analysed ticker, one term x one month at a time, read once (name, aliases, local-press names, industry).",
+  description: "Ten years of Google News per analysed ticker, one term x one month at a time, read once (name, aliases, local-press names, industry).",
   sources: [googleNewsHistory],
   subjects: historySubjects,
   promote: async (db, rows) => {

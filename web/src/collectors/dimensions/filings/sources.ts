@@ -4,6 +4,7 @@ import { filings, tickers } from "@/db/schema/silver";
 import type { FetchOutcome, Source, SourceContext } from "../../types";
 import { getJson, isUsSymbol } from "../../http";
 import { BROWSER_HEADERS, SEC_HEADERS, companiesHouseNumber, dartCorpCode, daysAgo, isMarket, isoDate, memo, tickerBase } from "../../markets";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 export type FilingItem = {
   registry: string;
@@ -28,18 +29,18 @@ const withError = (out: FetchOutcome, error: string | null): FetchOutcome => (er
 const at = (local: string, offset: string) => new Date(`${local.trim().replace(" ", "T")}${local.length <= 10 ? "T00:00" : ""}${offset}`);
 
 /**
- * Every registry is read 5 years back (Kevin 2026-11-19): a driver is found from the significant price moves of the
+ * Every registry is read `HISTORY_YEARS` (10) back (Kevin 2026-11-19: 5; Thierry 2026-11-26: 10): a driver is found from the significant price moves of the
  * last years, and a move is explained only by the filings around it. Before, one year (SEC: the last 200 filings,
  * October 2023 for CareCloud): 2,473 of 3,056 moves had no document to read.
  */
-export const FILINGS_HISTORY_YEARS = 5;
+export const FILINGS_HISTORY_YEARS = HISTORY_YEARS;
 export const historyStart = (now = new Date()) => daysAgo(Math.round(FILINGS_HISTORY_YEARS * 365.25), now);
 /**
  * A watched ticker outside the analysis scope is read 14 days back only (DAILY-EMAIL-1123): the morning email needs
- * each watchlist ticker's new filings, never its 5 years, which only the analysis reads.
+ * each watchlist ticker's new filings, never its 10 years, which only the analysis reads.
  */
 export const WATCH_HISTORY_DAYS = 14;
-/** Since when one ticker's registry is read: 5 years in the analysis scope (or with no database: tests), else 14 days. */
+/** Since when one ticker's registry is read: `HISTORY_YEARS` in the analysis scope (or with no database: tests), else 14 days. */
 export async function sinceFor(ctx: SourceContext, symbol: string): Promise<Date> {
   if (!ctx.db) return historyStart();
   const db = ctx.db;
@@ -51,7 +52,7 @@ export async function sinceFor(ctx: SourceContext, symbol: string): Promise<Date
 }
 const compact = (d: Date) => isoDate(d).replace(/-/g, "");
 /** Pages a paginated registry is read for, per ticker and run (100 filings each): a bound, said in the answer. */
-export const MAX_HISTORY_PAGES = 15;
+export const MAX_HISTORY_PAGES = 30;
 
 /** SEC EDGAR submissions: every US filing (10-K, 10-Q, 8-K, Form 4, proxy...). No key, needs a contact User-Agent. */
 export const secEdgar: FilingSource = {
@@ -73,7 +74,7 @@ export const secEdgar: FilingSource = {
     const out = await getJson(ctx, url, { url, cik, trimmed: `filings since ${since}` }, { headers: SEC_HEADERS });
     if (out.error) return out;
     const p = out.payload as { cik: string; name: string; filings: { recent: Record<string, unknown[]> } };
-    // `recent` holds up to 1,000 filings, newest first: keep the ones of the last 5 years.
+    // `recent` holds up to 1,000 filings, newest first: keep the ones of the last 10 years.
     const keep = (p.filings.recent.filingDate as string[]).filter((d) => d >= since).length;
     const recent = Object.fromEntries(Object.entries(p.filings.recent).map(([k, v]) => [k, v.slice(0, keep)]));
     return { ...out, payload: { cik: p.cik, name: p.name, filings: { recent } } };
@@ -175,10 +176,10 @@ export const tdnet: FilingSource = {
 
 /** How many past days the EDINET source scans each run (EDINET lists filings by day, not by company). */
 export const EDINET_DAYS = 14;
-/** Years of statutory reports we look for (the documents dimension reads 5). */
-export const EDINET_HISTORY_YEARS = 5;
-/** Past EDINET day lists one run may read for the history, all tickers together (~0.4 s each): a ticker's 5 years take
- * ~300, so the backlog drains in a run or two and later runs read only the windows of new 決算短信. */
+/** Years of statutory reports we look for (the documents dimension reads as many). */
+export const EDINET_HISTORY_YEARS = HISTORY_YEARS;
+/** Past EDINET day lists one run may read for the history, all tickers together (~0.4 s each): a ticker's 10 years take
+ * ~600, so the backlog drains in a run or two and later runs read only the windows of new 決算短信. */
 export const EDINET_HISTORY_DAYS_PER_RUN = 400;
 /** Statutory periodic reports: 有価証券報告書 (120), 四半期報告書 (140, abolished for periods from April 2024), 半期報告書 (160). */
 const EDINET_PERIODIC = new Set(["120", "140", "160"]);
@@ -232,7 +233,7 @@ async function searchedBefore(ctx: SourceContext, symbol: string): Promise<strin
 
 /**
  * EDINET (Japan FSA): statutory reports (annual, half-year, quarterly, large holdings). Free key. The last 14 days, plus
- * the history: the window after each TDnet 決算短信 of the last 5 years, read through once (`edinetHistoryWindows`).
+ * the history: the window after each TDnet 決算短信 of the last 10 years, read through once (`edinetHistoryWindows`).
  * Before (2026-11-18) only the 14 days were read, so Miraial had one EDINET filing and no report text at all.
  */
 export const edinet: FilingSource = {
@@ -312,7 +313,7 @@ export const edinet: FilingSource = {
   },
 };
 
-/** OpenDART disclosure list (Korea FSS): 5 years of filings, 100 a page. Free key. */
+/** OpenDART disclosure list (Korea FSS): 10 years of filings, 100 a page. Free key. */
 export const dart: FilingSource = {
   name: "dart",
   registryName: "DART (Korea FSS)",
@@ -364,7 +365,7 @@ export const companiesHouse: FilingSource = {
     const items: { date: string }[] = [];
     let first: FetchOutcome | null = null;
     let pages = 0;
-    // Newest first, 100 a page: read until a page reaches past 5 years or the history ends.
+    // Newest first, 100 a page: read until a page reaches past 10 years or the history ends.
     for (let page = 0; page < MAX_HISTORY_PAGES; page++) {
       const out = await getJson(ctx, `${base}&start_index=${page * 100}`, { url: `${base}&start_index=${page * 100}` }, { headers: { Authorization: `Basic ${btoa(`${ctx.env.COMPANIES_HOUSE_API_KEY}:`)}` } });
       if (out.error) return out;

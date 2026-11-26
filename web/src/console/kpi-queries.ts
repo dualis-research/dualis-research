@@ -24,7 +24,7 @@ export async function kpiDriver(id: string) {
 const sinceDay = () => new Date(Date.now() - KPI_YEARS * 365.25 * 86_400_000).toISOString().slice(0, 10);
 
 /**
- * The share price of 3 years as traded and with its local market's move taken out (price x (index then / index now)
+ * The share price of `KPI_YEARS` as traded and with its local market's move taken out (price x (index then / index now)
  * ^ beta, beta = the latest 5-day window's, as market-reaction measures it), and the 5th trading day after any day.
  */
 export const cleanPrice = cache(async (symbol: string) => {
@@ -49,7 +49,7 @@ export const cleanPrice = cache(async (symbol: string) => {
 });
 
 /**
- * Steps A to E of a ticker as stored (docs/architecture.md): the events of 3 years (industry news marked) and the
+ * Steps A to E of a ticker as stored (docs/architecture.md): the events of `KPI_YEARS` (industry news marked) and the
  * significant unbiased moves each with its events (A), the candidates with their tests and confidence (B), the
  * narrative with its side, confidence and one belief per Price Driver that explains it (C), each Price Driver's reading
  * against it (D, on the rows), and the signal (E); plus the price chart.

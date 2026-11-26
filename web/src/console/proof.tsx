@@ -4,6 +4,7 @@ import type { DriverReversal, GoldDriverEvent, GoldKpiDriver, KpiEventRow } from
 import { reversalWord, STATE_WORD, turnsAgainst } from "@/content/reversal-words";
 import { PRICED_WORD } from "@/content/signal-words";
 import { decodeEntities } from "@/collectors/dimensions/content-posts/parse";
+import { HISTORY_YEARS } from "@/collectors/history";
 import { kpiChange, kpiValue, periodWords } from "@/collectors/dimensions/kpi-drivers/steps";
 import { ConfidenceBadge } from "./confidence-badge";
 import { docItemId } from "./document-page";
@@ -244,7 +245,7 @@ export function ConfidenceBody({ symbol, k, arrows }: { symbol: string; k: GoldK
                 ))}
               </ul>
             ) : (
-              <p className="text-base text-kumo-subtle">{`No change of it in 3 years was big enough to matter.`}</p>
+              <p className="text-base text-kumo-subtle">{`No change of it in ${HISTORY_YEARS} years was big enough to matter.`}</p>
             )}
           </Drawer>
           <Drawer icon={<ArrowsDownUpIcon size={16} aria-hidden />} title={<Title name={`Each significant 1-week stock move (market removed): did ${k.name} change on its first day?`} conclusion={`${t.explained} of ${t.moves}`} />}>

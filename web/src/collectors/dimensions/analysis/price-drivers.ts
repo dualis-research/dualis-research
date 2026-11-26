@@ -47,7 +47,7 @@ const driverKey = (k: GoldKpiDriver) =>
 export function priceDriversText(drivers: GoldKpiDriver[]): { text: string; hash: string; labels: Map<string, GoldKpiDriver> } {
   const labels = new Map(drivers.map((k, i) => [`P${i + 1}`, k]));
   return {
-    text: ["The Price Drivers of this stock: the fundamental facts the market has been SHOWN to trade it on (each tested on 3 years of events and significant unbiased 1-week moves), strong confidence first:", ...[...labels].map(([l, k]) => driverLines(k, l))].join("\n"),
+    text: ["The Price Drivers of this stock: the fundamental facts the market has been SHOWN to trade it on (each tested on 10 years of events and significant unbiased 1-week moves), strong confidence first:", ...[...labels].map(([l, k]) => driverLines(k, l))].join("\n"),
     hash: fnv(drivers.map(driverKey).join("\n")),
     labels,
   };

@@ -5,9 +5,10 @@ import * as gold from "@/db/schema/gold";
 import { goldNewsItems, goldNewsLinks } from "@/db/schema/news";
 import type { Db } from "@/db/types";
 import { moveOf, windowOf, type MoveWindow, type PriceMove } from "./moves";
+import { HISTORY_YEARS } from "@/collectors/history";
 
-/** The analysis reads 3 years of events (docs/architecture.md, common objects). */
-export const EVENT_YEARS = 3;
+/** The analysis reads 10 years of events (docs/architecture.md, common objects; `HISTORY_YEARS`). */
+export const EVENT_YEARS = HISTORY_YEARS;
 const DAY = 86_400_000;
 
 /** A dated event before any price is put on it. */
@@ -15,7 +16,7 @@ export type RawEvent = { kind: DriverEventKind; sourceId: string; day: string; t
 
 /**
  * The events (common objects): every results release (gold.documents), news item (gold.news_links) and
- * other filing (gold.filings not already a release) of the last 3 years, oldest first. Data only, no judgment.
+ * other filing (gold.filings not already a release) of the last `EVENT_YEARS`, oldest first. Data only, no judgment.
  */
 export async function rawEventsOf(db: Db, symbol: string, now = new Date()): Promise<RawEvent[]> {
   const since = new Date(now.getTime() - EVENT_YEARS * 365.25 * DAY);

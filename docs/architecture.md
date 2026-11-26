@@ -7,9 +7,9 @@ deleted. Kevin's words: « Voici les uniques étapes, tout le reste est à jeter
 toutes les pages soient une réflexion de ces étapes. »
 
 ## Common objects (inputs, stored bronze / silver / gold)
-- **Events**: company news, industry news, releases (results, filings), 3 years.
+- **Events**: company news, industry news, releases (results, filings), 10 years (Thierry 2026-11-26: « we just do it 10 years for every stock »; `HISTORY_YEARS`).
 - **Thierry's inputs**: what his Claude Desktop shares (opinions, analyses, questions), `gold.thierry_inputs`.
-- **Prices**: per ticker, 3 years of daily closes + the unbiased version (the market's move taken out).
+- **Prices**: per ticker, 10 years of daily closes + the unbiased version (the market's move taken out).
 - **Fundamental KPIs**: the company's figures; may include a policy when it can happen again (e.g. a cut in a given
   metric).
 - **Fair value** and its range, per ticker.
