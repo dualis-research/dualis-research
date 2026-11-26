@@ -6,6 +6,7 @@ import { moveArrows, NO_EVENT } from "./move-arrows";
 
 vi.mock("@/console/link", () => ({ default: ({ href, children, className }: { href: string; children: React.ReactNode; className?: string }) => createElement("a", { href, className }, children) }));
 vi.mock("@/console/moves-chart", () => ({ MovesChart: () => createElement("div", null, "chart") }));
+vi.mock("@/console/story-chart", async (orig) => ({ ...(await orig<typeof import("./story-chart")>()), StoryChart: () => createElement("div", null, "story chart") }));
 vi.mock("@/console/driver-steps-charts", () => ({ EventsTimeline: () => createElement("div", null, "timeline") }));
 vi.mock("@/console/kpi-queries", () => ({ proofData: async () => null }));
 
@@ -43,7 +44,7 @@ const kpis = [
 ];
 const narrative = { side: "long" as const, confidence: "strong" as const, text: "The market prices Water Oasis as a flat, mature chain.", detail: "Profit halved while rents rose.", sideWhy: "The price sits a third under the fair value while profit halved.", beliefs: [{ id: `${S}:kpi:2`, name: "Net income", belief: "The market assumes profit stays stuck after the rent shock." }] };
 const signal = { signal: "BUY" as const, strength: "strong" as const, why: "Net income is turning up: profit nearly doubled.", evidenceIds: [events[0].id], since: new Date("2026-11-20T00:00:00Z") };
-const data = { events, arrows, kpis, narrative, signal, chart: { price: [], beta: 1, indexName: "Hang Seng", windowEnd: (d: string) => d }, industryNews: new Set(["n2"]), reversalSince: new Map<string, Date | null>() };
+const data = { events, arrows, kpis, narrative, signal, chart: { price: [], beta: 1, indexName: "Hang Seng", windowEnd: (d: string) => d }, industryNews: new Set(["n2"]), reversalSince: new Map<string, Date | null>(), story: [{ id: `${S}:2024-05-13`, startDay: "2024-05-13", endDay: "2024-06-03", cause: "company" as const, title: "Profit warning on mainland stores", returnPct: -0.3, bench: "Hang Seng", benchReturn: -0.01 }] };
 
 describe("the analysis of a stock on screen: steps A to E", async () => {
   const { ProofView, ConfidenceBody, ReversalBody } = await import("./proof");
@@ -159,5 +160,20 @@ describe("the analysis of a stock on screen: steps A to E", async () => {
     const none = renderToStaticMarkup(createElement(ProofView, { symbol: S, data: { ...data, signal: { signal: "none" as const, strength: "noise" as const, why: "One good half does not turn the story.", evidenceIds: [], since: new Date("2026-11-20T00:00:00Z") } } }));
     expect(none).toContain("Narrative turning: noise");
     expect(none).toContain("One good half does not turn the story.");
+  });
+});
+
+describe("step F, the story of the stock, last (Thierry 2026-11-26)", async () => {
+  const { ProofView } = await import("./proof");
+  it("closes the analysis with its episodes, each title in words", () => {
+    const html = renderToStaticMarkup(createElement(ProofView, { symbol: S, data }));
+    expect(html.indexOf("F · Stock story")).toBeGreaterThan(html.indexOf("E · Signal"));
+    expect(html).toContain("1 episode");
+    expect(html).toContain("Profit warning on mainland stores");
+    expect(html).toContain(`?item=${encodeURIComponent(`story:${S}:2024-05-13`)}`);
+  });
+  it("says so when the story is not told yet", () => {
+    const html = renderToStaticMarkup(createElement(ProofView, { symbol: S, data: { ...data, story: [] } }));
+    expect(html).toContain("Not told yet");
   });
 });

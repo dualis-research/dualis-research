@@ -24,6 +24,7 @@ import { marketReactionDim } from "./dimensions/market-reaction";
 import { kpiDriversDim } from "./dimensions/kpi-drivers";
 import { kpiReversalDim } from "./dimensions/kpi-reversal";
 import { signalsDim } from "./dimensions/signals";
+import { stockStoryDim } from "./dimensions/stock-story";
 import { signalAlertsDim } from "./dimensions/signal-alerts";
 import { growthBriefDim } from "./dimensions/growth-brief";
 import { growthOutreach } from "./dimensions/growth-outreach";
@@ -62,7 +63,8 @@ import type { Dimension } from "./types";
  * kpi-drivers (A: Price Driver Candidates read in the events of the significant moves; B: the confidence that each is a
  * Price Driver) -> analysis (C: the narrative, its side and confidence, the Price Drivers that explain it) ->
  * kpi-reversal (D: each Price Driver in continuation, reversal or noise, only on a weak or strong narrative) ->
- * signals (E: is the narrative turning? the Signal is its output) -> signal-alerts -> emphasis.
+ * signals (E: is the narrative turning? the Signal is its output) -> stock-story (F: the story of the stock, Thierry
+ * 2026-11-26) -> signal-alerts -> emphasis.
  * Cover photos right after content-posts: one photo per own article for the website covers.
  * Content ideas after content-voices (the day's Ideas, scored per channel x format); content-picks after it files the day's 2 posts (best X post, best Substack Note); content-drafts after it writes the drafts Thierry asked for and the picks; content-visuals after it draws each drafted Idea's chart, card, video and news capture.
  * Intraday price (5-minute bars, Yahoo) alone in its stage right after price (Yahoo rate limit): it moves gold.quotes to the latest 5-minute price, so EV, valuation, every judge and the live test read the real price, and market reaction the price at the minute a news item lands.
@@ -79,7 +81,7 @@ import type { Dimension } from "./types";
  * judge and verdicts, an urgent email per critical item, never the morning digest.
  * Emphasis after them (Kevin 2026-11-23): a second Claude pass bolds the key words of every text Claude wrote for the console.
  */
-export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, translateDim, onedrive, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, kpiDriversDim, analysis, kpiReversalDim, signalsDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
+export const DIMENSIONS: readonly Dimension[] = [watchlist, portfolio, companyProfile, news, newsHistory, translateDim, onedrive, price, intradayPrice, filingsDimension, filingDocumentsDim, onedriveFilings, earnings, financials, consensusDim, peersDim, fxDim, valuationDim, marketReactionDim, kpiDriversDim, analysis, kpiReversalDim, signalsDim, stockStoryDim, signalAlertsDim, emphasisDim, contentAccounts, contentPosts, coverPhotos, contentVoices, contentIdeas, contentPicks, contentDrafts, contentVisuals, sandboxAccounts, sandboxPosts, sandboxVisuals, sandboxImageFix, sandboxReview, contentDispatch, contentReplies, growthOutreach, substackNetwork, growthBriefDim, xPublish, dailyEmailDim, newsAlertDim];
 
 /**
  * Growth and content dimensions (Substack crawl, outreach, posts, voices, drafts); `core` = everything else, the analysis chain.
@@ -121,7 +123,8 @@ export const STAGES: readonly (readonly string[])[] = [
   ["kpi-reversal"],
   // E: is the narrative turning? The Signal.
   ["signals"],
-  ["signal-alerts"],
+  // F: the story of the stock (episodes of its significant moves), a reader of the common objects, after the Signal.
+  ["signal-alerts", "stock-story"],
   // Bold on the texts the analysis chain just wrote (Kevin 2026-11-23); the Ideas get theirs on the next run.
   ["emphasis"],
   ...GROWTH_DIMENSIONS.map((d) => [d]),

@@ -1,7 +1,7 @@
 import { cache } from "react";
 import { and, asc, eq, gte, like, sql } from "drizzle-orm";
 import { getDb } from "@/db/client";
-import { driverEvents, kpiDrivers, narratives, priceMoves, signals } from "@/db/schema/analysis";
+import { driverEvents, kpiDrivers, narratives, priceMoves, signals, stockStory } from "@/db/schema/analysis";
 import { goldNewsLinks } from "@/db/schema/news";
 import { priceBars } from "@/db/schema/gold";
 import { judgments } from "@/db/schema/silver";
@@ -52,12 +52,12 @@ export const cleanPrice = cache(async (symbol: string) => {
  * Steps A to E of a ticker as stored (docs/architecture.md): the events of `KPI_YEARS` (industry news marked) and the
  * significant unbiased moves each with its events (A), the candidates with their tests and confidence (B), the
  * narrative with its side, confidence and one belief per Price Driver that explains it (C), each Price Driver's reading
- * against it (D, on the rows), and the signal (E); plus the price chart.
+ * against it (D, on the rows), the signal (E) and the story of the stock (F); plus the price chart.
  */
 export const proofData = cache(async (symbol: string) => {
   const db = getDb();
   const since = sinceDay();
-  const [events, moves, kpis, chart, industry, [story], [signal], readings] = await Promise.all([
+  const [events, moves, kpis, chart, industry, [story], [signal], readings, episodes] = await Promise.all([
     db.select().from(driverEvents).where(eq(driverEvents.symbol, symbol)).orderBy(asc(driverEvents.day), asc(driverEvents.id)),
     db.select().from(priceMoves).where(and(eq(priceMoves.symbol, symbol), gte(priceMoves.endDay, since))).orderBy(asc(priceMoves.startDay)),
     kpiDriversOf(symbol),
@@ -67,6 +67,8 @@ export const proofData = cache(async (symbol: string) => {
     db.select({ signal: signals.signal, strength: signals.strength, why: signals.why, evidenceIds: signals.evidenceIds, since: signals.since }).from(signals).where(eq(signals.symbol, symbol)),
     // Every step D reading of this ticker's Price Drivers (subject `<symbol>:<driver name>`), for « since ».
     db.select({ subjectId: judgments.subjectId, verdict: judgments.verdict, at: judgments.createdAt }).from(judgments).where(and(eq(judgments.subjectKind, REVERSAL_SUBJECT_KIND), like(judgments.subjectId, `${symbol}:%`), like(judgments.questionKey, "kpi-reversal@%"))),
+    // Step F: the story of the stock, its episodes oldest first.
+    db.select({ id: stockStory.id, startDay: stockStory.startDay, endDay: stockStory.endDay, cause: stockStory.cause, title: stockStory.title, returnPct: stockStory.returnPct, bench: stockStory.bench, benchReturn: stockStory.benchReturn }).from(stockStory).where(eq(stockStory.symbol, symbol)).orderBy(asc(stockStory.startDay)),
   ]);
   // Each Price Driver the narrative rests on, under its own name, with the narrative's one belief about it.
   const pds = kpis.filter((k) => k.level === "strong" || k.level === "weak").sort((a, b) => (a.level === b.level ? a.rank - b.rank : a.level === "strong" ? -1 : 1));
@@ -79,6 +81,6 @@ export const proofData = cache(async (symbol: string) => {
   const reversalSince = new Map(kpis.map((k) => [k.id, readingSince(bySubject.get(`${symbol}:${k.name}`) ?? [], readingVerdict(k.reversal))]));
   const from = chart.price[0]?.date ?? events[0]?.day ?? since;
   const weeks = moves.filter((m) => m.startDay >= from);
-  return { events, arrows: moveArrows(weeks, events), kpis, narrative, signal: signal ? await withBold(signal) : null, reversalSince, chart, industryNews: new Set(industry.map((x) => String(x.id))) };
+  return { events, arrows: moveArrows(weeks, events), kpis, narrative, signal: signal ? await withBold(signal) : null, reversalSince, chart, industryNews: new Set(industry.map((x) => String(x.id))), story: episodes };
 });
 export type ProofData = Awaited<ReturnType<typeof proofData>>;

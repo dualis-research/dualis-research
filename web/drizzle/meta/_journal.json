@@ -498,6 +498,13 @@
       "when": 1795611049849,
       "tag": "0070_english-titles",
       "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1795709339670,
+      "tag": "0071_stock_story",
+      "breakpoints": true
     }
   ]
 }

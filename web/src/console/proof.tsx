@@ -1,4 +1,4 @@
-import { ArrowsDownUpIcon, BookOpenTextIcon, CalendarDotsIcon, ChartBarIcon, CompassIcon, FileTextIcon, GaugeIcon, LightbulbIcon, ListChecksIcon, MagnifyingGlassIcon, SealCheckIcon, SirenIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
+import { ArrowsDownUpIcon, BookOpenTextIcon, CalendarDotsIcon, ChartBarIcon, ChartLineIcon, CompassIcon, FileTextIcon, GaugeIcon, LightbulbIcon, ListChecksIcon, MagnifyingGlassIcon, SealCheckIcon, SirenIcon, TrendUpIcon } from "@phosphor-icons/react/ssr";
 import { Badge } from "@cloudflare/kumo";
 import type { DriverReversal, GoldDriverEvent, GoldKpiDriver, KpiEventRow } from "@/db/schema/analysis";
 import { reversalWord, STATE_WORD, turnsAgainst } from "@/content/reversal-words";
@@ -16,6 +16,7 @@ import { proofData, type ProofData } from "./kpi-queries";
 import Link from "./link";
 import { NO_EVENT, type MoveArrow } from "./move-arrows";
 import { MovesChart } from "./moves-chart";
+import { StoryChart, StoryList } from "./story-chart";
 import { Rich } from "./rich";
 import { Sourced, SourcedFigure, sourceItemId } from "./sourced";
 
@@ -441,7 +442,7 @@ export function eventCounts(events: Pick<GoldDriverEvent, "kind" | "sourceId">[]
 
 /** Steps A to E from loaded data (pure: the test renders it). The panel lists the latest events and the Price Drivers only, each with a link to the whole list on the Analysis page. */
 export function ProofView({ symbol, data, panel = false }: { symbol: string; data: ProofData; panel?: boolean }) {
-  const { events, arrows, kpis, chart, industryNews, narrative, signal, reversalSince } = data;
+  const { events, arrows, kpis, chart, industryNews, narrative, signal, reversalSince, story } = data;
   const ranked = [...kpis].sort((a, b) => LEVEL_RANK[a.level ?? "none"] - LEVEL_RANK[b.level ?? "none"] || a.rank - b.rank);
   const count = (l: "strong" | "weak") => kpis.filter((k) => k.level === l).length;
   const strong = count("strong");
@@ -541,11 +542,20 @@ export function ProofView({ symbol, data, panel = false }: { symbol: string; dat
             )} />}>
         {signal && stepD ? <SignalBody symbol={symbol} signal={signal} events={events} /> : <p className="text-base text-kumo-subtle">Read once the narrative and the reversals of its price drivers are.</p>}
       </Drawer>
+      {/* F (Thierry, call 2026-11-26; Kevin: the last step, after the Signal): what moved the price, episode by episode. */}
+      <Drawer id="stock-story" icon={<ChartLineIcon size={18} aria-hidden />} title={<Title big name="F · Stock story" conclusion={story.length ? plural(story.length, "episode") : "Not told yet"} />}>
+        {story.length ? (
+          <div className="flex flex-col gap-3">
+            <StoryChart symbol={symbol} price={chart.price} episodes={story} height={panel ? 380 : 460} />
+            <StoryList symbol={symbol} episodes={story} />
+          </div>
+        ) : <p className="text-base text-kumo-subtle">Told once the significant moves of the stock are read.</p>}
+      </Drawer>
     </Drawers>
   );
 }
 
-/** The Analysis page and the ticker panel: steps A to E, closed. */
+/** The Analysis page and the ticker panel: steps A to F, closed. */
 export async function ProofSections({ symbol, panel = false }: { symbol: string; panel?: boolean }) {
   const data = await proofData(symbol);
   if (data.events.length === 0 && data.kpis.length === 0) return null;
