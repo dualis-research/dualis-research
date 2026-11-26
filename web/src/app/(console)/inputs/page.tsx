@@ -1,6 +1,7 @@
 import { Badge } from "@cloudflare/kumo";
 import { utc } from "@/console/format";
-import { INPUT_TABS, type InputTab, InputsTabs } from "@/console/inputs-tabs";
+import { INPUT_TABS, type InputTab } from "@/console/input-tab-list";
+import { InputsTabs } from "@/console/inputs-tabs";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import Link from "@/console/link";
 import { getInput, inputCounts, listInputs } from "@/console/queries";
