@@ -15,6 +15,7 @@ import { stripDashes } from "@/llm/dashes";
 import { notesText } from "@/inputs/notes";
 import { analysedSymbols } from "../watchlist";
 import { changeRows, driverTests, eventRows, kpiChange, kpiPeriods, kpiValue, measureKpi, parseFormula, periodEnd, periodWords, type CandidateChange, type JudgedMove } from "./steps";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 export * from "./steps";
 
@@ -32,7 +33,7 @@ export * from "./steps";
  */
 
 export const KPI_DIMENSION = "kpi-drivers";
-export const KPI_YEARS = 3;
+export const KPI_YEARS = HISTORY_YEARS;
 /**
  * v5 (Kevin 2026-11-25, step A): candidates are deduced ONLY from the events whose week was a significant unbiased
  * move, every such move valid (an industry news included, no macro filter); no KPI added from the business model alone.
@@ -48,8 +49,8 @@ export const ANNOUNCES_QUESTION = "event-announces@v1";
 export const MOVES_QUESTION = "kpi-moves@v1";
 /** v6 (Kevin 2026-11-25, step B): the two tests on every significant unbiased move, no week verdict; strong | weak | noise. */
 export const VERDICT_QUESTION = "kpi-verdict@v6";
-/** A KPI is read over 5 years (Kevin 2026-11-23); the events stay 3 years. */
-export const KPI_HISTORY_YEARS = 5;
+/** A KPI is read over the same 10 years as the events (Thierry 2026-11-26, `HISTORY_YEARS`). */
+export const KPI_HISTORY_YEARS = HISTORY_YEARS;
 /** The verdict's sentence cut to at most 15 words, same meaning (a meta-task on the finished text). v2: v1 echoed its own instruction once (Water Oasis, Hong Kong and Macau revenue). */
 export const REASON_QUESTION = "kpi-reason@v2";
 export const REASON_SYSTEM = "You shorten ONE verdict an analyst wrote about a company KPI. Keep its facts and its conclusion (does the stock trade on this KPI, and what moved the price instead), in AT MOST 15 words, plain English. Never describe the task, never ask a question. No dates, no em dash. Answer with the shortened sentence only.";
@@ -122,7 +123,7 @@ const releasesText = (rs: Release[]) => rs.map((r) => [`${r.label} ${r.day}: ${r
 
 export const CANDIDATES_SYSTEM = [
   "You are the equity research associate of a small-cap long/short analyst. You look for the PRICE DRIVER CANDIDATES of one stock: the fundamental KPIs that may drive its price.",
-  "You are given every event of 3 years (results release, company news, industry news, filing) whose following week was a significant UNBIASED move of the share price (the market's own move is already taken out), labelled M1, M2... If the unbiased price moved, a price driver moved it: every event listed is valid, an industry news as much as a company one. Never set one aside as macro, market noise or unexplained.",
+  "You are given every event of 10 years (results release, company news, industry news, filing) whose following week was a significant UNBIASED move of the share price (the market's own move is already taken out), labelled M1, M2... If the unbiased price moved, a price driver moved it: every event listed is valid, an industry news as much as a company one. Never set one aside as macro, market noise or unexplained.",
   "Read each event and deduce the fundamental KPIs that may have driven the move. A candidate is one of three kinds: kpi = a figure of the company (reported, or computed from what it reports: capacity utilization ~ revenue / PP&E for a manufacturer, same-store sales for a retailer, backlog for a contractor); policy = a decision that can happen again and bears on the business (a dividend cut, a subsidy, a tariff, a licence, a regulation); industry = a qualitative fact of its industry that reaches its figures later (an overhang lifting, a competitor failing, demand shifting). Never the share price or a valuation multiple.",
   "Every event listed is named by at least one candidate (found). One candidate per fact, named in a few words that stay true over years (« Hong Kong store revenue », never a dated event); several events often share one candidate.",
   "expected = which way the share price should go when the candidate goes UP (a KPI rises; a policy or industry fact turns more favourable): up, or down (costs, debt, inventory days).",
@@ -142,7 +143,7 @@ export const READ_SYSTEM = [
 export const VERDICT_SYSTEM = [
   "You give the confidence level of ONE hypothesis for a small-cap long/short analyst: « this Price Driver Candidate (a company KPI, a policy or a qualitative industry fact) is a Price Driver of this stock ».",
   "You read ONLY what you are given. A significant move = a 1-week (5 trading days) move of the stock at least twice its usual one once its own market is taken out (the unbiased move). Every significant unbiased move is a real move of the price: none is set aside as market or macro.",
-  "The table lists every event of 3 years (results release, news, filing): whether the candidate changed significantly then (a KPI: its change on the same period a year earlier, judged big enough to matter, at the event that first disclosed it; a policy or industry fact: the event carries a change of it), the unbiased price move over the 1 week after, and the result: confirms (the candidate changed and a significant move followed the expected way), invalidates (it changed, no significant move followed or it went the other way), other cause (a significant move, the candidate did not change: never against it).",
+  "The table lists every event of 10 years (results release, news, filing): whether the candidate changed significantly then (a KPI: its change on the same period a year earlier, judged big enough to matter, at the event that first disclosed it; a policy or industry fact: the event carries a change of it), the unbiased price move over the 1 week after, and the result: confirms (the candidate changed and a significant move followed the expected way), invalidates (it changed, no significant move followed or it went the other way), other cause (a significant move, the candidate did not change: never against it).",
   "Then the two tests. A) each significant change of the candidate: was the 1 week after it a significant unbiased move, the expected way? A big change the price ignored says the market does not trade on it. B) each significant 1-week move: did the candidate change on the first day of that week? A candidate that explains several moves is worth more; moves it does not explain only mean other drivers exist, never against it.",
   "level: decide it yourself, as the analyst would, never by counting. Weigh each moment: how big the change was, how clear the price move was, whether the event's title says another fact moved the price, how recent it is. A small cap's price is noisy: one contrary moment can be noise, a clean, large change the price ignored says much more. strong = the market clearly trades the stock on this candidate; weak = it does sometimes, or the evidence is thin; noise = it does not.",
   "reason = ONE plain sentence, at most 15 words, a reader understands at once: how the stock reacts to this candidate. When some moments went against it, the same sentence says whether that is normal (another fact moved the price those days) or a real doubt. No dates, no list of figures, no labels.",
@@ -168,7 +169,7 @@ export function parseCandidates(text: string, catalog: Map<string, StoredSeries>
 }
 
 export const CHANGES_SYSTEM = [
-  "You read a company's events of 3 years (results releases, news, filings) for an equity analyst, about ONE candidate price driver that is not a figure: a policy or a qualitative industry fact.",
+  "You read a company's events of 10 years (results releases, news, filings) for an equity analyst, about ONE candidate price driver that is not a figure: a policy or a qualitative industry fact.",
   "For each event that carries a CHANGE of that candidate (it is passed, dropped, eased, tightened, starts, ends, gets clearly better or worse), say which way: up = more favourable to the company, down = less. An event that only mentions it, or repeats what was known, carries no change: leave it out. Never use the share price.",
   "why = at most 12 words: what changed.",
   "No em dash. JSON only, no prose, no code fence:",
@@ -250,9 +251,9 @@ export const ANNOUNCES_SYSTEM = [
 
 export const MOVES_SYSTEM = [
   "You judge, for a small-cap long/short analyst, when ONE fundamental KPI of a company really moved.",
-  "Each period of 5 years is listed with its value, the same period a year earlier and the change. Decide yourself, as the analyst would, whether each change is big enough to matter to the market (his rule of thumb: « if the backlog doubles, it matters; a 3% difference, who cares »). Weigh it against this KPI's own history and what it is (a margin, a revenue line, a share count); never apply a fixed threshold.",
+  "Each period of 10 years is listed with its value, the same period a year earlier and the change. Decide yourself, as the analyst would, whether each change is big enough to matter to the market (his rule of thumb: « if the backlog doubles, it matters; a 3% difference, who cares »). Weigh it against this KPI's own history and what it is (a margin, a revenue line, a share count); never apply a fixed threshold.",
   "first = the event that first told the market THIS KPI's change for that period: an announcement listed before the report only when what it announces carries this KPI (a profit warning carries profit and margins, rarely revenue), else the report. Copy its label exactly.",
-  "why = at most 12 words, the size in plain words (« net profit fell 47%, its largest drop in 5 years »).",
+  "why = at most 12 words, the size in plain words (« net profit fell 47%, its largest drop in 10 years »).",
   "No em dash. JSON only, no prose, no code fence:",
   '{"periods": [{"period": "P1", "moved": boolean, "why": string, "first": "R3" | "A2"}]}',
 ].join("\n");
@@ -368,7 +369,7 @@ export async function judgeKpiMoves(
     const before = release ? [...announced].filter(([id, a]) => a.announces && a.releaseId === release.id && Date.parse(byId.get(id)!.day) > periodEnd(p.period)).map(([id, a]) => ({ e: byId.get(id)!, a })) : [];
     return [
       `P${i + 1} ${periodWords(p.periodType, p.period)}: ${kpiValue(p.value, measure)} vs ${kpiValue(p.prior, measure)} a year earlier (${kpiChange(p.change, p.changeKind)}).`,
-      release ? `  Report: ${label(release.id, "R")} ${release.day} ${release.title.replace(/\s+/g, " ")}` : "  Report: none stored (older than 3 years)",
+      release ? `  Report: ${label(release.id, "R")} ${release.day} ${release.title.replace(/\s+/g, " ")}` : `  Report: none stored (older than ${KPI_YEARS} years)`,
       ...before.map(({ e, a }) => `  Announced before it: ${label(e.id, "A")} ${e.day} ${KIND[e.kind]}: ${e.title.replace(/\s+/g, " ")} (it announces: ${a.what})`),
     ].join("\n");
   });

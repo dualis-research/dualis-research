@@ -7,6 +7,7 @@ import type { FetchOutcome, Source, SourceContext } from "../../types";
 import { parseNumber } from "../company-profile/sources";
 import { LINES, SEGMENT_AXES, isLineKey, reading, segmentLine, type LineReading, type PeriodType } from "./lines";
 import { unzip } from "./zip";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 /** A financials source = how to fetch one ticker's statements + how to read canonical lines out of the raw answer. */
 export type FinancialsSource = Source & {
@@ -21,7 +22,9 @@ const nodeImport = (spec: string): Promise<unknown> => import(/* webpackIgnore: 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const month = (d: string) => d.slice(0, 7);
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
-const YEARS = 5;
+/** Fiscal years of statements read (+1 for the growth of the first one). */
+export const STATEMENT_YEARS = HISTORY_YEARS;
+const YEARS = STATEMENT_YEARS;
 
 /** "2026-01" minus n years. */
 const minusYears = (ym: string, n: number) => `${Number(ym.slice(0, 4)) - n}${ym.slice(4)}`;
@@ -142,7 +145,7 @@ type YahooChart = { meta: { currency?: string; gmtoffset?: number }; timestamp?:
 
 export const yahooChart: FinancialsSource = {
   name: "yahoo-chart",
-  publisher: "Yahoo Finance month-end closes, 5 years, every market",
+  publisher: "Yahoo Finance month-end closes, 10 years, every market",
   requiredEnv: [],
   covers: () => true,
   async fetch(symbol, ctx) {
@@ -213,7 +216,7 @@ const DART_DA = /^(감가상각비|무형자산상각비|사용권자산상각�
 
 export const dart: FinancialsSource = {
   name: "dart",
-  publisher: "OpenDART (Korea FSS), statements as filed: 5 annual reports + the last 2 years of quarterly reports",
+  publisher: "OpenDART (Korea FSS), statements as filed: 10 annual reports + 11 years of quarterly reports",
   requiredEnv: ["DART_API_KEY"],
   covers: (symbol) => isMarket("KR")(symbol) && dartCorpCode(symbol) !== null,
   async fetch(symbol, ctx) {
@@ -222,8 +225,8 @@ export const dart: FinancialsSource = {
     const y = now.getUTCFullYear();
     const wanted: [number, DartReportCode][] = [
       ...Array.from({ length: YEARS }, (_, i) => [y - 1 - i, "11011"] as [number, DartReportCode]),
-      // 3 years of quarters (Kevin 2026-11-19: a KPI driver is tested on every release of 3 years).
-      ...[y, y - 1, y - 2, y - 3].flatMap((yr) => (["11013", "11012", "11014"] as const).map((rc) => [yr, rc] as [number, DartReportCode])),
+      // Quarters of the whole history (Kevin 2026-11-19: a KPI driver is tested on every release; Thierry 2026-11-26: 10 years).
+      ...Array.from({ length: YEARS + 1 }, (_, i) => y - i).flatMap((yr) => (["11013", "11012", "11014"] as const).map((rc) => [yr, rc] as [number, DartReportCode])),
     ];
     const reports: DartReport[] = [];
     let lastStatus = 200;
@@ -657,7 +660,7 @@ const SEC_FILING_MAX = 28;
 
 export const secFilings: FinancialsSource = {
   name: "sec-filings",
-  publisher: "SEC EDGAR 10-K, 10-Q and 20-F filings (inline XBRL), 5 years: preferred stock per series at its liquidation value, revenue per segment, backlog and remaining performance obligations",
+  publisher: "SEC EDGAR 10-K, 10-Q and 20-F filings (inline XBRL), 10 years: preferred stock per series at its liquidation value, revenue per segment, backlog and remaining performance obligations",
   requiredEnv: [],
   covers: isUsSymbol,
   async fetch(symbol, ctx) {
@@ -984,14 +987,14 @@ const REPORT_TITLES: Record<ReportKind, RegExp> = {
 };
 
 /**
- * How far back the report PDFs are read (HALF-YEAR-KPI-1123): every half year of 3 years, as the KPI drivers test them.
+ * How far back the report PDFs are read (HALF-YEAR-KPI-1123): every half year of `HISTORY_YEARS`, as the KPI drivers test them.
  * An interim report prints its six months and the same six months a year earlier; an annual report its fiscal year
  * (the second half = the fiscal year minus the first half, `secondHalves` in derive.ts).
  */
-export const REPORT_HISTORY_YEARS = 3;
+export const REPORT_HISTORY_YEARS = HISTORY_YEARS;
 
 /**
- * Every annual and interim report PDF filed in the last 3 years (the latest annual one whatever its date), newest
+ * Every annual and interim report PDF filed in the last `REPORT_HISTORY_YEARS` (the latest annual one whatever its date), newest
  * first, annual reports before interim ones: the first value read per (period, line) wins, so a restated comparative
  * beats the original and an annual year-end balance sheet beats the interim reprint.
  */

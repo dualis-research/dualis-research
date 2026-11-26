@@ -14,7 +14,7 @@ const BATCH = 500;
 
 export const price: Dimension = {
   name: PRICE_DIMENSION,
-  description: "Daily price history (five years from Yahoo, one year from the others, every market), last close and day change; plus the S&P 500 (^GSPC) and each stock's local market index.",
+  description: "Daily price history (eleven years from Yahoo, one year from the others, every market), last close and day change; plus the S&P 500 (^GSPC) and each stock's local market index.",
   sources: PRICE_SOURCES,
   subjects: async (db) => {
     const symbols = await activeSymbols(db);
@@ -32,7 +32,7 @@ export const PRICE_REWRITE_DAYS = 14;
  * bronze -> silver.price_bars: every source's bar is kept in `observations`; the shown bar comes from the group of
  * sources whose closes agree (`priceConsensus`). Then gold.price_bars and gold.quotes for the dates touched.
  * Egress (Neon free plan, 5 GB/month): a run reads back only the recent window (dates within PRICE_REWRITE_DAYS of the
- * last stored bar), never the five years Yahoo returns each time. A stored older date is skipped; a missing one is added.
+ * last stored bar), never the eleven years Yahoo returns each time. A stored older date is skipped; a missing one is added.
  */
 export async function promotePrices(db: Db, fetches: BronzeFetch[]): Promise<PromoteResult> {
   const ok = fetches.filter((f) => !f.error).sort((a, b) => a.fetchedAt.getTime() - b.fetchedAt.getTime());

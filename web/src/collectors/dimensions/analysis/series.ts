@@ -12,7 +12,7 @@ import { LINES, type LineKey } from "../financials/lines";
  *   metric:<m> / hmetric:<m> / qmetric:<m>   derived metric, fiscal years / half years / quarters (gold.financial_metrics)
  *   consensus:<m> / actual:<m>        analyst mean vs reported actual per fiscal year (gold.consensus)
  *   qconsensus:<m> / qactual:<m>      same per quarter
- *   price                             month-end close, 5 years
+ *   price                             month-end close, 10 years
  */
 export type StoredSeries = ExhibitSeries & { periodType: "year" | "half" | "quarter" | "month"; points: Map<string, number> };
 

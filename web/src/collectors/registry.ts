@@ -72,7 +72,7 @@ import type { Dimension } from "./types";
  * once would race the account's rotating token, so `all`, `core` and `growth` never include it.
  * Signal alerts right after signals: a Signal Change landing on a strong signal goes to Kevin and Thierry with its picture (a reader of steps C to E, no judgment of its own).
  * Translate after news history: every non-English news or filing title gets its English, once (Kevin 2026-11-25).
- * News history (NEWS-HISTORY-1123) after news, in its own stage: 3 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
+ * News history (NEWS-HISTORY-1123) after news, in its own stage: 10 years of Google News per analysed ticker, each month read once, so the Price Drivers see the news around every past move.
  * Daily email (DAILY-EMAIL-1123) runs only when named, last: the one daily run (02:00 UTC, `all,daily-email`) names it
  * (every watchlist ticker); it judges each new item once and sends the morning email.
  * News alert (URGENT-NEWS-1124) runs only when named too (news-alert.yml, every 6 hours after news and filings): the same
@@ -102,7 +102,7 @@ export const STAGES: readonly (readonly string[])[] = [
   ["portfolio", "company-profile"],
   ["news", "onedrive", "price", "filings", "earnings"],
   ["intraday-price"],
-  // Three years of Google News, one month x one term at a time, read once (NEWS-HISTORY-1123): alone, never beside the daily news (one Google rate limit).
+  // Ten years of Google News, one month x one term at a time, read once (NEWS-HISTORY-1123): alone, never beside the daily news (one Google rate limit).
   ["news-history"],
   // English titles (Kevin 2026-11-25): every non-English news and filing title, before anything reads them.
   ["translate"],

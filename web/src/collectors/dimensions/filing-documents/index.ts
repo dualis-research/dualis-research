@@ -6,6 +6,7 @@ import type { Db } from "@/db/types";
 import type { Dimension, PromoteResult } from "../../types";
 import { analysedSymbols } from "../watchlist";
 import { DOCUMENT_SOURCES, documentKind, parseSubject, subjectOf, type DocumentPayload } from "./sources";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 /**
  * filing-documents (right after `filings`): the text of each analysed company's core documents, page by page, so a
@@ -15,8 +16,8 @@ import { DOCUMENT_SOURCES, documentKind, parseSubject, subjectOf, type DocumentP
  */
 
 export const FILING_DOCUMENTS_DIMENSION = "filing-documents";
-export const YEARS = 5;
-/** Documents per ticker per run: the 5-year backlog drains over a few days without a long run. */
+export const YEARS = HISTORY_YEARS;
+/** Documents per ticker per run: the 10-year backlog drains over a few days without a long run. */
 export const MAX_PER_TICKER = 6;
 /** Documents per run, all tickers together (each one's newest first). */
 export const MAX_PER_RUN = 120;

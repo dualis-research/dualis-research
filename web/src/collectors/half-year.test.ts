@@ -91,7 +91,7 @@ describe("half years (HALF-YEAR-KPI-1123)", () => {
       expect(stored.derivation?.inputs).toHaveLength(2);
     });
 
-    it("reads every annual and interim report of 3 years, annual ones first, newest first", async () => {
+    it("reads every annual and interim report of 10 years, annual ones first, newest first", async () => {
       const f = (title: string, filedAt: string, n: number) => ({ id: `00000000-0000-4000-8000-00000000000${n}`, symbol: "1161.HK", registry: "hkex", filingKey: `k${n}`, title, filedAt: new Date(filedAt), url: `https://x/${n}.pdf`, language: "en", sources: ["hkex"] });
       await db.insert(gold.filings).values([
         f("Interim Report 2026", "2026-05-29", 1),
@@ -103,9 +103,10 @@ describe("half years (HALF-YEAR-KPI-1123)", () => {
         f("Interim Report 2023", "2023-06-09", 7),
         f("Annual Report 2022", "2023-01-06", 8),
         f("Interim Results Announcement", "2026-05-26", 9),
+        f("Annual Report 2015", "2016-01-04", 0),
       ]);
       const r = await latestReports({ db } as SourceContext, "1161.HK", new Date("2026-11-23T00:00:00Z"));
-      expect(r.map((x) => `${x.kind} ${x.doc.title}`)).toEqual(["annual Annual Report 2025", "annual Annual Report 2024", "annual Annual Report 2023", "interim Interim Report 2026", "interim Interim Report 2025", "interim Interim Report 2024"]);
+      expect(r.map((x) => `${x.kind} ${x.doc.title}`)).toEqual(["annual Annual Report 2025", "annual Annual Report 2024", "annual Annual Report 2023", "annual Annual Report 2022", "interim Interim Report 2026", "interim Interim Report 2025", "interim Interim Report 2024", "interim Interim Report 2023"]);
     });
   });
 });

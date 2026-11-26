@@ -9,17 +9,18 @@ import { BROWSER_HEADERS, memo, SEC_HEADERS } from "../../markets";
 import type { Dimension, FetchOutcome, PromoteResult, Source, SourceContext } from "../../types";
 import { analysedSymbols } from "../watchlist";
 import { connectedRoot, driveFor, DUALIS_SOURCE, MS_ENV, ONEDRIVE_SOURCE, rebuildGoldDocuments, tickerNames, union } from "../onedrive/shared";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 /**
  * onedrive-filings (write-back): for every watchlist ticker, makes sure Thierry's research root has its company
  * folder (his own when one matches, else "<Name> (<TICKER>)"), a "Filings (Dualis)" subfolder in it, and saves every
- * core filing we collected (annual, semi-annual, quarterly reports, last 5 years) there.
+ * core filing we collected (annual, semi-annual, quarterly reports, last `HISTORY_YEARS`) there.
  * Never deletes, never overwrites (a taken name is left as is and recorded), never writes outside "Filings (Dualis)"
  * except to create a missing company folder. Runs after `filings`.
  */
 
 export const WRITE_SOURCE = "onedrive-write";
-const YEARS = 5;
+const YEARS = HISTORY_YEARS;
 /** Uploads per ticker per run: the backlog drains over a few days without a long run. */
 const MAX_UPLOADS_PER_RUN = 10;
 

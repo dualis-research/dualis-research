@@ -12,6 +12,7 @@ import { analysedSymbols } from "../watchlist";
 import type { Bar, FvPoint } from "./compute";
 import { findMoves, moveWindows } from "./moves";
 import { pricedEvents, rawEventsOf } from "./events";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 export * from "./compute";
 export * from "./moves";
@@ -20,7 +21,7 @@ export * from "./events";
 /**
  * The common objects of the analysis (docs/architecture.md), pure code over stored data, no fetch, no LLM: the fair
  * value as it stood each day (one point a day, from every valuation synthesis), every significant unbiased 1-week move
- * (the stock's 5 trading days with its own market taken out), and every event of 3 years (release, company news,
+ * (the stock's 5 trading days with its own market taken out), and every event of 10 years (release, company news,
  * industry news, filing) with the 1 week after it and the significant move it sits in. Runs after `valuation`, before
  * step A (`kpi-drivers`).
  */
@@ -36,8 +37,8 @@ async function closes(db: Db, symbol: string, currency: string | null, days: num
   return bars.map((b) => ({ date: b.date, close: majorUnit(b.close, currency).price }));
 }
 
-/** The moves read every stored close (5 years) plus the year their first z-score needs. */
-const MOVE_HISTORY_DAYS = 6 * 366;
+/** The moves read every stored close of `HISTORY_YEARS` plus the year their first z-score needs. */
+export const MOVE_HISTORY_DAYS = (HISTORY_YEARS + 1) * 366;
 /** One read of each index per run (keyed on the run's fetch function), not one per ticker. */
 const runBench = new WeakMap<typeof fetch, Map<string, Promise<Bar[]>>>();
 function indexBars(db: Db, f: typeof fetch, symbol: string): Promise<Bar[]> {

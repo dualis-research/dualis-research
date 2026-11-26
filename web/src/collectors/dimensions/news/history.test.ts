@@ -87,11 +87,11 @@ describe("news history", () => {
     expect(await localTerms(db, "MNRO", complete)).toEqual({ names: [], industry: [] });
   });
 
-  it("months: whole calendar months that ended, 3 years back", () => {
+  it("months: whole calendar months that ended, 10 years back", () => {
     const m = historyMonths(new Date("2026-11-23T10:00:00Z"));
     expect(m.at(-1)).toEqual({ from: "2026-10-01", to: "2026-11-01" });
-    expect(m[0]).toEqual({ from: "2023-11-01", to: "2023-12-01" });
-    expect(m).toHaveLength(36);
+    expect(m[0]).toEqual({ from: "2016-11-01", to: "2016-12-01" });
+    expect(m).toHaveLength(120);
   });
 
   it("query: exact phrase + date operators; a one-word Latin alias carries the ticker", () => {

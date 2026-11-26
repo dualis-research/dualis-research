@@ -32,7 +32,7 @@ import { holdsNarrative } from "../analysis/prompt";
 import { notesText } from "@/inputs/notes";
 import { trustedDrivers } from "../analysis/price-drivers";
 import { marketKey, marketLine, narrativeOf, pathLines, priceAndFairValue, SIDE } from "../analysis/thesis";
-import { DAY, KIND, storedEvents, withNotes } from "../kpi-drivers";
+import { DAY, KIND, KPI_YEARS, storedEvents, withNotes } from "../kpi-drivers";
 import { kpiChange, kpiValue, periodWords } from "../kpi-drivers/steps";
 import { stripDashes } from "@/llm/dashes";
 import { READ_LATEST } from "@/content/reversal-words";
@@ -171,7 +171,7 @@ function ownLines(k: GoldKpiDriver): string {
       ? shown.map((p) => `${periodWords(p.periodType, p.period)} [${p.period}]: ${kpiValue(p.value, m)} (${kpiChange(p.change, p.changeKind)} on a year earlier)${p.significant ? `, judged a change that matters${p.why ? `: ${p.why}` : ""}` : ""}; first disclosed ${p.releaseDay ?? "in no stored event"}`).join("\n")
       : "No reported value.";
   }
-  return k.rows.filter((r) => r.kpiMoved === true).slice(-READ_LATEST).map((r) => `${r.day}: ${r.changeUp ? "more favourable" : "less favourable"}${r.kpiWhy ? `, ${r.kpiWhy}` : ""} (${r.title.replace(/\s+/g, " ")})`).join("\n") || "No change found in 3 years.";
+  return k.rows.filter((r) => r.kpiMoved === true).slice(-READ_LATEST).map((r) => `${r.day}: ${r.changeUp ? "more favourable" : "less favourable"}${r.kpiWhy ? `, ${r.kpiWhy}` : ""} (${r.title.replace(/\s+/g, " ")})`).join("\n") || `No change found in ${KPI_YEARS} years.`;
 }
 
 /**

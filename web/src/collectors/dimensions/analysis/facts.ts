@@ -9,6 +9,7 @@ import type { Db } from "@/db/types";
 import { notesText } from "@/inputs/notes";
 import { seriesCatalog, type StoredSeries } from "./series";
 import { fairValueHistoryLine } from "./thesis";
+import { HISTORY_YEARS } from "@/collectors/history";
 
 /**
  * Everything one analysis reads about a ticker, as plain text for the model, all from gold.
@@ -17,7 +18,7 @@ import { fairValueHistoryLine } from "./thesis";
 export type AnalysisFacts = { symbol: string; text: string; hash: string; catalog: Map<string, StoredSeries>; quote: { close: number; date: string; currency: string | null } | null; currency: string | null; hasFinancials: boolean };
 
 /** How far back the narrative reads the significant unbiased moves, and how many at most (the largest). */
-export const MOVE_YEARS = 3;
+export const MOVE_YEARS = HISTORY_YEARS;
 export const MOVES_SHOWN = 30;
 /** Events shown per move. */
 const EVENTS_PER_MOVE = 3;
