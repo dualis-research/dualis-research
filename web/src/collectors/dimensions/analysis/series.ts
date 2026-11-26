@@ -41,6 +41,8 @@ const METRIC_NAMES: Record<string, string> = {
   "net-debt-to-ebitda": "Net debt / EBITDA",
   "total-debt-to-ebitda": "Total debt / EBITDA",
   "interest-cover": "Interest cover (operating income / interest expense)",
+  "normalized-net-income": "Normalized net income (one-off items removed)",
+  "normalized-net-income-growth": "Normalized net income growth",
 };
 
 export async function seriesCatalog(db: Db, symbol: string): Promise<Map<string, StoredSeries>> {
@@ -57,7 +59,11 @@ export async function seriesCatalog(db: Db, symbol: string): Promise<Map<string,
       continue;
     }
     if (l.periodType === "month") continue;
-    const name = l.line.startsWith("segment:") ? `Segment revenue: ${l.line.split(":").slice(2).join(":")}` : (LINES[l.line as LineKey]?.name ?? titleCase(l.line));
+    const name = l.line.startsWith("segment:")
+      ? `Segment revenue: ${l.line.split(":").slice(2).join(":")}`
+      : l.line.startsWith("one-off:")
+        ? `One-off item (effect on pretax profit): ${l.line.slice("one-off:".length)}`
+        : (LINES[l.line as LineKey]?.name ?? titleCase(l.line));
     const unit = /^eps-/.test(l.line) ? "per-share" : /^shares-/.test(l.line) ? "count" : "currency";
     const prefix = { year: "line", half: "hline", quarter: "qline" }[l.periodType];
     const suffix = { year: "", half: " (half-yearly)", quarter: " (quarterly)" }[l.periodType];

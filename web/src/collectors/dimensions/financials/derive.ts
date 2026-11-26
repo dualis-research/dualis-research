@@ -113,6 +113,8 @@ export function secondHalves(lines: GoldLine[]): GoldLine[] {
 const LTM_STEPS = { year: [0], half: [0, 6], quarter: [0, 3, 6, 9] } as const;
 const LTM_WORDS = { year: "fiscal year", half: "last 2 reported half years", quarter: "last 4 reported quarters" } as const;
 const SAME_PERIOD = { year: "prior fiscal year", half: "same half prior year", quarter: "same quarter prior year" } as const;
+/** Sources that look for one-off items when they read a period: only their periods can say « none reported ». */
+export const ONE_OFF_SOURCES = ["pdf-extract", "sec"] as const;
 
 export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
   const currency = reportingCurrency(lines);
@@ -177,6 +179,15 @@ export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
     }
     add("book-to-bill", "multiple", "order intake / revenue of the same period", [g("order-intake"), g("revenue")], ([o, r]) => (r > 0 ? o / r : null));
     add("operating-income-growth", "ratio", `operating income / ${SAME_PERIOD[pt]} - 1`, [g("operating-income"), prior("operating-income")], ([r, p]) => (p > 0 ? r / p - 1 : null));
+    // Normalized net income (Thierry 2026-11-26: a write-off last year makes this year's +40% look like +100%): the
+    // company's own adjusted profit when it prints one; else net income without the one-off items it presents, taken at
+    // their pre-tax amount; else net income itself, only when a source that looks for one-offs read the period.
+    const oneOffs = lines.filter((l) => l.periodType === pt && l.periodEnd === pe && l.line.startsWith("one-off:"));
+    const ni = g("net-income");
+    if (g("adjusted-net-income")) add("normalized-net-income", "currency", "adjusted net income as the company prints it", [g("adjusted-net-income")], ([a]) => a);
+    else if (oneOffs.length > 0)
+      add("normalized-net-income", "currency", `net income - one-off items at their pre-tax amount (${oneOffs.map((o) => o.line.slice("one-off:".length)).join(", ")})`, [ni, ...oneOffs], ([n, ...o]) => n - o.reduce((a, x) => a + x, 0));
+    else if (ni && ni.sources.some((s) => (ONE_OFF_SOURCES as readonly string[]).includes(s))) add("normalized-net-income", "currency", "net income, no one-off item reported for the period", [ni], ([n]) => n);
   }
   // Second pass: metrics on metrics (EBITDA margin, FCF margin) and market values at each period end.
   for (const [pt, pe] of periods) {
@@ -189,6 +200,10 @@ export function deriveMetrics(symbol: string, lines: Line[]): Metric[] {
     const ebitdaInputs = [get(pt, pe, "operating-income")!, get(pt, pe, "depreciation-amortization")!];
     if (ebitda !== undefined && rev && rev.value > 0) base("ebitda-margin", ebitda / rev.value, "ratio", "EBITDA / revenue", [...ebitdaInputs, rev]);
     if (fcf !== undefined && rev && rev.value > 0) base("fcf-margin", fcf / rev.value, "ratio", "free cash flow / revenue", [get(pt, pe, "cfo")!, get(pt, pe, "capex")!, rev]);
+    const norm = m("normalized-net-income");
+    const normPrior = metrics.get(`${pt}|${minusYears(pe, 1)}|normalized-net-income`);
+    const normInputs = [get(pt, pe, "net-income"), get(pt, minusYears(pe, 1), "net-income")].filter((l): l is Line => !!l);
+    if (norm !== undefined && normPrior !== undefined && normPrior > 0) base("normalized-net-income-growth", norm / normPrior - 1, "ratio", `normalized net income / ${SAME_PERIOD[pt]} - 1`, normInputs);
 
     // Leverage read against earnings, the way a credit analyst reads it (Thierry 2026-11-17: debt / EBITDA, never debt
     // next to market cap): the debt at the period end over the EBITDA of the 12 months to it (the fiscal year, or the

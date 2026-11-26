@@ -251,3 +251,13 @@ describe("steps A and B end to end on the stored events and moves", () => {
     expect(indexesFor(["1161.HK", "SPCB"])).toEqual(["^GSPC", "^HSI"]);
   });
 });
+
+describe("step A: a reported figure is a kpi (Kevin 2026-11-26, Water Oasis's dividend tested 0-0 as a policy)", () => {
+  it("the prompt keeps policy and industry for what no reported figure measures, and cites no figure as a policy", async () => {
+    const { CANDIDATES_SYSTEM, CANDIDATES_QUESTION } = await import("./dimensions/kpi-drivers");
+    expect(CANDIDATES_QUESTION).toBe("kpi-candidates@v6");
+    expect(CANDIDATES_SYSTEM).toContain("Whatever the company reports as a figure, in its statements or its text (an amount, a per-share amount, a ratio, a count), is a kpi, even when a decision sets it.");
+    expect(CANDIDATES_SYSTEM).toContain("of a kind no figure the company reports measures");
+    expect(CANDIDATES_SYSTEM).not.toMatch(/dividend cut/);
+  });
+});

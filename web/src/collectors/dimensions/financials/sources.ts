@@ -5,7 +5,7 @@ import { getJson, isUsSymbol } from "../../http";
 import { BROWSER_HEADERS, SEC_HEADERS, dartCorpCode, isMarket, isoDate, memo, tickerBase } from "../../markets";
 import type { FetchOutcome, Source, SourceContext } from "../../types";
 import { parseNumber } from "../company-profile/sources";
-import { LINES, SEGMENT_AXES, isLineKey, reading, segmentLine, type LineReading, type PeriodType } from "./lines";
+import { LINES, SEGMENT_AXES, isLineKey, oneOffLine, reading, segmentLine, type LineReading, type PeriodType } from "./lines";
 import { unzip } from "./zip";
 import { HISTORY_YEARS } from "@/collectors/history";
 
@@ -326,6 +326,8 @@ export function fourthQuarters(readings: LineReading[]): LineReading[] {
 
 // ---------- SEC companyfacts (XBRL): US, every 10-K / 10-Q ----------
 
+/** us-gaap tags reported as a positive expense: a one-off charge, stored negative (its effect on profit). */
+const SEC_CHARGE_TAGS = new Set(["GoodwillImpairmentLoss", "AssetImpairmentCharges", "ImpairmentOfLongLivedAssetsHeldForUse", "RestructuringCharges"]);
 /** Canonical line -> us-gaap tags, in order of preference. */
 const SEC_TAGS: Record<string, string[]> = {
   revenue: ["Revenues", "RevenueFromContractWithCustomerExcludingAssessedTax", "SalesRevenueNet", "RevenueFromContractWithCustomerIncludingAssessedTax"],
@@ -339,6 +341,12 @@ const SEC_TAGS: Record<string, string[]> = {
   "pretax-income": ["IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest", "IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments"],
   "income-tax": ["IncomeTaxExpenseBenefit"],
   "net-income": ["NetIncomeLoss"],
+  // One-off items (Thierry 2026-11-26, normalized earnings): the filer's own tags for items it reports apart from its
+  // recurring operations; stored as the effect on pretax profit (a charge negative, `SEC_CHARGE_TAGS`).
+  "one-off:Goodwill impairment": ["GoodwillImpairmentLoss"],
+  "one-off:Asset impairment": ["AssetImpairmentCharges", "ImpairmentOfLongLivedAssetsHeldForUse"],
+  "one-off:Restructuring": ["RestructuringCharges"],
+  "one-off:Gain or loss on disposal": ["GainLossOnDispositionOfAssets1", "GainLossOnSaleOfPropertyPlantEquipment"],
   "eps-basic": ["EarningsPerShareBasic"],
   "eps-diluted": ["EarningsPerShareDiluted"],
   "shares-diluted-avg": ["WeightedAverageNumberOfDilutedSharesOutstanding"],
@@ -448,7 +456,7 @@ export const secCompanyFacts: FinancialsSource = {
         debt.set(k, d);
         if (c.line === "short-borrowings") continue;
       }
-      out.push(reading({ periodType: c.periodType, periodEnd: c.periodEnd, line: c.line, value: c.value, currency: c.currency, label: c.label, consolidated: true }));
+      out.push(reading({ periodType: c.periodType, periodEnd: c.periodEnd, line: c.line, value: SEC_CHARGE_TAGS.has(c.label) ? -c.value : c.value, currency: c.currency, label: c.label, consolidated: true }));
     }
     for (const d of debt.values()) out.push({ periodType: d.periodType, periodEnd: d.periodEnd, line: "total-debt", value: d.short + d.long, currency: "USD", label: `sum of ${d.parts.join(", ")}`, consolidated: true });
     return out;
@@ -898,14 +906,18 @@ export const edinetFinancials: FinancialsSource = {
 
 // ---------- Annual and interim report PDFs, read by Claude: markets without a free structured source (Hong Kong) ----------
 
-/** v3: backlog, remaining performance obligations and order intake too (their pages picked by OPERATING_PAGE). */
-export const PDF_EXTRACT_VERSION = "pdf-extract@v3";
+/**
+ * v3: backlog, remaining performance obligations and order intake too (their pages picked by OPERATING_PAGE).
+ * v4 (Thierry 2026-11-26, normalized earnings): the one-off items the company presents and its own adjusted profit.
+ */
+export const PDF_EXTRACT_VERSION = "pdf-extract@v4";
 type PdfPage = { page: number; text: string };
 /** `months` = how long the column's period is: 12 a fiscal year (a balance sheet at the year end too), 6 a half year, 3 a quarter. */
 type PdfExtraction = {
   currency?: string;
   periods?: { periodEnd: string; months?: number; lines: { line: string; printed: string; unit: string; page: number; label: string }[] }[];
   segments?: { periodEnd: string; months?: number; axis: string; name: string; printed: string; unit: string; page: number }[];
+  oneOffs?: { periodEnd: string; months?: number; name: string; printed: string; unit: string; page: number; effect: "charge" | "gain" }[];
 };
 type ReportKind = "annual" | "interim";
 type PdfDocument = { title: string; url: string; filedAt: string };
@@ -925,6 +937,8 @@ const PAGE_PATTERNS = [
 const SEGMENT_NOTE = /(^|\s)\d{1,2}\.\s+(revenue and |operating )?segments? information/i;
 /** A page that reports the order book or new orders, wherever its title sits (the business review runs on). */
 const OPERATING_PAGE = /\b(order )?backlog\b|order book|orders on hand|new orders|在手訂單|未完成訂單|手頭訂單/i;
+/** A page where the company sets items apart from its recurring profit (the results discussion, a reconciliation note). */
+const ONE_OFF_PAGE = /\b(one-off|non-recurring|exceptional items?|adjusted (net )?profit|underlying profit|core (net )?profit|impairment loss|written off|write-off)\b/i;
 const MAX_PAGES = 12;
 const MAX_PAGE_CHARS = 7000;
 
@@ -940,8 +954,8 @@ export function pickPages(pages: string[]): PdfPage[] {
     const hits = flat.map((t, i) => (!isContents(t) && (re.test(t.slice(0, 400)) || (segment && SEGMENT_NOTE.test(t))) ? i : -1)).filter((i) => i >= 0);
     for (const i of hits.slice(0, 2)) for (const j of /summary/i.test(re.source) ? [i] : [i, i + 1]) if (j < pages.length && !picked.includes(j)) picked.push(j);
   }
-  // The order book last: statements first when the cap bites.
-  for (const i of flat.map((t, i) => (!isContents(t) && OPERATING_PAGE.test(t) ? i : -1)).filter((i) => i >= 0).slice(0, 2)) if (!picked.includes(i)) picked.push(i);
+  // The order book and the one-off items last: statements first when the cap bites.
+  for (const re of [OPERATING_PAGE, ONE_OFF_PAGE]) for (const i of flat.map((t, i) => (!isContents(t) && re.test(t) ? i : -1)).filter((i) => i >= 0).slice(0, 2)) if (!picked.includes(i)) picked.push(i);
   // Pattern order = priority (the 5-year summary first), capped, then read in page order.
   return picked.slice(0, MAX_PAGES).sort((a, b) => a - b).map((i) => ({ page: i + 1, text: pages[i].slice(0, MAX_PAGE_CHARS) }));
 }
@@ -963,7 +977,9 @@ const pdfPrompt = (kind: ReportKind, title: string, pages: PdfPage[]) =>
       .join("; "),
     "and revenue per segment (by product or service line, business segment, region or customer), every period shown.",
     "backlog, remaining-performance-obligations and order-intake: only when the company prints that figure itself (a backlog or order book at a date, with months = the period the column closes; order intake = new orders over the period), never one you compute.",
-    'JSON shape: {"currency": "<ISO code of the figures, e.g. HKD>", "periods": [{"periodEnd": "YYYY-MM (the month the period ends)", "months": <12 | 6 | 3>, "lines": [{"line": "<canonical key>", "printed": "<the figure exactly as printed, e.g. (12,345) or 808,417>", "unit": "one|thousand|million|billion (from the column header, e.g. HK$\'000 = thousand)", "page": <PDF page number>, "label": "<the row label as printed>"}]}], "segments": [{"periodEnd": "YYYY-MM", "months": <12 | 6 | 3>, "axis": "product|business|region|customer", "name": "<segment name as printed>", "printed": "...", "unit": "...", "page": <n>}]}',
+    "adjusted-net-income: only when the company itself prints an adjusted, underlying, core or recurring profit attributable to shareholders.",
+    "oneOffs: every item of a period the company itself presents as outside its recurring business (it says one-off, non-recurring, exceptional, or sets it apart from its underlying profit: an impairment, a write-off, a gain or loss on a disposal, a fair value change, a restructuring), as printed, with effect = charge (it lowered profit) or gain (it raised profit). Never an item the company treats as ordinary business.",
+    'JSON shape: {"currency": "<ISO code of the figures, e.g. HKD>", "periods": [{"periodEnd": "YYYY-MM (the month the period ends)", "months": <12 | 6 | 3>, "lines": [{"line": "<canonical key>", "printed": "<the figure exactly as printed, e.g. (12,345) or 808,417>", "unit": "one|thousand|million|billion (from the column header, e.g. HK$\'000 = thousand)", "page": <PDF page number>, "label": "<the row label as printed>"}]}], "segments": [{"periodEnd": "YYYY-MM", "months": <12 | 6 | 3>, "axis": "product|business|region|customer", "name": "<segment name as printed>", "printed": "...", "unit": "...", "page": <n>}], "oneOffs": [{"periodEnd": "YYYY-MM", "months": <12 | 6 | 3>, "name": "<the item as the company names it>", "printed": "...", "unit": "...", "page": <n>, "effect": "charge" | "gain"}]}',
     "months = how long the column's period is: 12 for a fiscal year (and a balance sheet at a fiscal year end), 6 for six months (and a balance sheet at the interim date of a six-month report), 3 for three months.",
     "Only figures printed on these pages. EPS: unit one, in the currency per share. Shares: unit one (or thousand when the header says so). Skip a line you cannot find.",
     "",
@@ -1083,6 +1099,15 @@ export const pdfExtract: FinancialsSource = {
         const scale = UNIT[sg.unit] ?? null;
         if (!pt || v === null || scale === null || !/^\d{4}-\d{2}$/.test(sg.periodEnd) || !(SEGMENT_AXES as readonly string[]).includes(sg.axis) || !onPage(sg.printed, sg.page)) continue;
         out.push({ periodType: pt, periodEnd: sg.periodEnd, line: segmentLine(sg.axis, sg.name), value: v * scale, currency, label: sg.name, consolidated: true, citation: cite(sg.page, sg.printed) });
+      }
+      // A one-off item = its effect on pretax profit: a charge negative, a gain positive, whatever sign the page prints.
+      for (const o of read.extraction.oneOffs ?? []) {
+        const pt = periodType(o.months);
+        const v = parsePrinted(o.printed);
+        const scale = UNIT[o.unit] ?? null;
+        if (!pt || v === null || scale === null || !o.name?.trim() || !/^\d{4}-\d{2}$/.test(o.periodEnd) || (o.effect !== "charge" && o.effect !== "gain") || !onPage(o.printed, o.page)) continue;
+        const size = Math.abs(v * scale);
+        out.push({ periodType: pt, periodEnd: o.periodEnd, line: oneOffLine(o.name), value: o.effect === "charge" ? -size : size, currency, label: o.name, consolidated: true, citation: cite(o.page, o.printed) });
       }
     }
     // One value per (period, line): annual reports first (an interim report reprints its year-end balance sheet), each
