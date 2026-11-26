@@ -11,7 +11,7 @@
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
-    "collect": "tsx src/collectors/cli.ts",
+    "collect": "NODE_OPTIONS=\"--max-http-header-size=131072 $NODE_OPTIONS\" tsx src/collectors/cli.ts",
     "wa:test": "tsx scripts/whatsapp-test.ts",
     "wa:signal-test": "tsx scripts/signal-alert-test.ts",
     "private:push": "tsx scripts/private-push.ts"

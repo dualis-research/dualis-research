@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { dailyItemTexts, dailyItemVerdicts } from "@/db/schema/daily-email";
 import { documentPages } from "@/db/schema/documents";
+import { newsItems } from "@/db/schema/news";
 import type { BronzeFetch } from "@/db/schema/bronze";
 import type { Db } from "@/db/types";
 import type { FetchOutcome, Source, SourceContext } from "../../types";
@@ -170,7 +171,7 @@ function jsonLdBody(html: string): string | null {
 
 /**
  * The main text of a news page, no library: the JSON-LD `articleBody` when the publisher ships one, else the paragraphs
- * of its largest `<article>` (else of the whole page) once navigation, header, footer, asides, forms and scripts are
+ * of its largest `<article>` (else of the whole page) once navigation, header, footer, asides and scripts are
  * dropped; a paragraph under 40 characters (a caption, a share button, a byline) is left out. Null = no article text.
  */
 export function extractArticle(html: string): string | null {
@@ -178,7 +179,8 @@ export function extractArticle(html: string): string | null {
   if (ld && ld.length >= MIN_TEXT_CHARS) return ld.slice(0, MAX_TEXT_CHARS);
   const body = html
     .replace(/<!--[\s\S]*?-->/g, " ")
-    .replace(/<(script|style|noscript|svg|nav|header|footer|aside|form|figure|iframe|button)\b[\s\S]*?<\/\1>/gi, " ");
+    // Never `<form>`: an ASP.NET page wraps its whole body in one (MarketBeat, 2026-11-26: the article vanished with it).
+    .replace(/<(script|style|noscript|svg|nav|header|footer|aside|figure|iframe|button)\b[\s\S]*?<\/\1>/gi, " ");
   const articles = [...body.matchAll(/<article\b[^>]*>([\s\S]*?)<\/article>/gi)].map((m) => m[1]).sort((a, b) => b.length - a.length);
   const scope = articles[0] && /<p\b/i.test(articles[0]) ? articles[0] : body;
   const paragraphs = [...scope.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)].map((m) => stripTags(m[1])).filter((p) => p.length >= 40);
@@ -194,18 +196,60 @@ async function pdfText(bytes: Uint8Array): Promise<string> {
 }
 
 type Read = { url: string; method: string; text: string; httpStatus: number | null };
+type Miss = { error: string; httpStatus: number | null };
 
-/** GET a page or a document and read its text: a PDF whole, a filing's HTML whole, a news page's article only. */
-async function readUrl(url: string, kind: "news" | "filing", fetchFn: typeof fetch): Promise<Read | { error: string; httpStatus: number | null }> {
-  const res = await fetchFn(url, { headers: PAGE_HEADERS, redirect: "follow", signal: timed() });
+/** The text of a fetched page or document: a PDF whole, a filing's HTML whole, a news page's article only. */
+async function readResponse(res: Response, url: string, kind: "news" | "filing", method: string | null): Promise<Read | Miss> {
   if (!res.ok) return { error: `HTTP ${res.status} from ${url}`, httpStatus: res.status };
   const bytes = new Uint8Array(await res.arrayBuffer());
   const type = res.headers.get("content-type");
-  if (isPdf(bytes, type)) return { url, method: "pdf", text: (await pdfText(bytes)).slice(0, MAX_TEXT_CHARS), httpStatus: res.status };
+  if (isPdf(bytes, type)) return { url, method: method ?? "pdf", text: (await pdfText(bytes)).slice(0, MAX_TEXT_CHARS), httpStatus: res.status };
   const html = new TextDecoder().decode(bytes);
   const text = kind === "filing" ? htmlToText(html).slice(0, MAX_TEXT_CHARS) : extractArticle(html);
   if (!text || text.length < MIN_TEXT_CHARS) return { error: `no article text on the page (${(text ?? "").length} characters: a paywall or a page built by script?)`, httpStatus: res.status };
-  return { url, method: kind === "filing" ? "html" : "article", text, httpStatus: res.status };
+  return { url, method: method ?? (kind === "filing" ? "html" : "article"), text, httpStatus: res.status };
+}
+
+/** GET a page or a document and read its text. A network failure (a refused connection, a timeout) is a miss with its cause. */
+async function readUrl(url: string, kind: "news" | "filing", fetchFn: typeof fetch): Promise<Read | Miss> {
+  try {
+    return await readResponse(await fetchFn(url, { headers: PAGE_HEADERS, redirect: "follow", signal: timed() }), url, kind, null);
+  } catch (err) {
+    const cause = (err as { cause?: { code?: string } }).cause?.code;
+    return { error: `${(err as Error).message}${cause ? ` (${cause})` : ""} from ${url}`, httpStatus: null };
+  }
+}
+
+/**
+ * KEYPOINTS-FALLBACK-1126: a page we cannot read ourselves (a bot wall answering 403, a page built by script, a refused
+ * connection) is asked again through Jina's free reader (r.jina.ai, no key, $0), which renders the page in a browser and
+ * hands back its HTML; the same article extraction reads it. Live 2026-11-26: the MarketBeat transcript of OMS Energy's
+ * call answered us 403, the reader gave its full text. A page that is gone (404, 410) is not asked again.
+ */
+export const READER_URL = "https://r.jina.ai/";
+const READER_TIMEOUT_MS = 45_000;
+const worthReader = (m: Miss) => m.httpStatus !== 404 && m.httpStatus !== 410;
+async function readViaReader(url: string, kind: "news" | "filing", fetchFn: typeof fetch): Promise<Read | Miss> {
+  const via = `${READER_URL}${url}`;
+  try {
+    const res = await fetchFn(via, { headers: { Accept: "text/html", "X-Return-Format": "html" }, signal: timed(READER_TIMEOUT_MS) });
+    const r = await readResponse(res, via, kind, "reader");
+    return "error" in r ? { ...r, error: `reader: ${r.error.replace(` from ${via}`, "")}` } : { ...r, url };
+  } catch (err) {
+    return { error: `reader: ${(err as Error).message}`, httpStatus: null };
+  }
+}
+
+/** One link: read it ourselves, else through the reader. Every miss is kept for the item's reason. */
+async function readAny(url: string, kind: "news" | "filing", fetchFn: typeof fetch, misses: string[]): Promise<Read | null> {
+  const direct = await readUrl(url, kind, fetchFn);
+  if (!("error" in direct)) return direct;
+  misses.push(direct.error);
+  if (!worthReader(direct)) return null;
+  const via = await readViaReader(url, kind, fetchFn);
+  if (!("error" in via)) return via;
+  misses.push(`${via.error} (${url})`);
+  return null;
 }
 
 /** A filing's pages as `filing-documents` stored them (gold.document_pages, id = the filing id), else null. */
@@ -216,7 +260,55 @@ async function storedFilingText(db: Db, filingId: string): Promise<string | null
   return text.length >= MIN_TEXT_CHARS ? text.slice(0, MAX_TEXT_CHARS) : null;
 }
 
+/** Every link the sources gave for a news item (silver.news_items.urls) and its longest feed summary, else nothing. */
+async function newsCopies(db: Db, itemId: string): Promise<{ urls: string[]; summary: string | null }> {
+  if (!/^[0-9a-f-]{36}$/i.test(itemId)) return { urls: [], summary: null };
+  const [row] = await db.select({ urls: newsItems.urls, summary: newsItems.summary }).from(newsItems).where(eq(newsItems.id, itemId));
+  return { urls: row?.urls ?? [], summary: row?.summary ?? null };
+}
+
+/**
+ * The links to try for an item, in order: the verdict's own link, then every other link a source gave for the same
+ * article (Yahoo, Finnhub, Google News each carry their own); publisher links before Google News ones (each Google link
+ * costs two rate-limited calls to decode).
+ */
+export function linksToTry(first: string | null, copies: string[]): string[] {
+  const all = [...new Set([first, ...copies].filter((u): u is string => !!u))];
+  const google = all.filter((u) => googleArticleId(u));
+  return [...all.filter((u) => !googleArticleId(u)), ...google];
+}
+
 export type TextPayload = { kind: "news" | "filing"; itemId: string; url: string | null; method: string; text: string };
+export type Found = { text: { url: string | null; method: string; text: string; httpStatus: number | null } | null; resolved: string | null; misses: string[] };
+
+/**
+ * Every way to an item's text, tried in this one call (KEYPOINTS-FALLBACK-1126), so the run that sends a critical email
+ * already holds whatever text can be read: each link of the item (a Google News one decoded first), read directly then
+ * through the reader; last, the feed's own summary of the article when it is long enough to hold the story. Never the
+ * headline. `misses` = why each way failed, in order.
+ */
+export async function findText(kind: "news" | "filing", links: string[], summary: string | null, fetchFn: typeof fetch, pace: { spacing?: number; retry?: number } = {}): Promise<Found> {
+  const misses: string[] = [];
+  let resolved: string | null = null;
+  for (const link of links) {
+    let target = link;
+    if (googleArticleId(link)) {
+      try {
+        target = await decodeGoogleNews(link, fetchFn, pace);
+      } catch (err) {
+        misses.push((err as Error).message);
+        continue;
+      }
+    }
+    resolved = target;
+    const r = await readAny(target, kind, fetchFn, misses);
+    if (r) return { text: r, resolved, misses };
+  }
+  const feed = summary ? cleanText(summary) : "";
+  if (feed.length >= MIN_TEXT_CHARS) return { text: { url: links[0] ?? null, method: "feed-summary", text: feed.slice(0, MAX_TEXT_CHARS), httpStatus: null }, resolved, misses };
+  if (feed) misses.push(`feed summary too short (${feed.length} characters)`);
+  return { text: null, resolved, misses };
+}
 
 export const articleSource: Source = {
   name: ARTICLE_SOURCE,
@@ -232,18 +324,14 @@ export const articleSource: Source = {
       const stored = await storedFilingText(ctx.db!, itemId);
       if (stored) return { request, httpStatus: null, payload: { kind, itemId, url: v?.url ?? null, method: "stored-document", text: stored } satisfies TextPayload };
     }
-    if (!v?.url) return { request, httpStatus: null, error: "the item has no link" };
-    try {
-      // Tests pace Google at 0 (GOOGLE_PACE=0); production keeps the spacing.
-      const pace = ctx.env.GOOGLE_PACE === "0" ? { spacing: 0, retry: 0 } : {};
-      const target = googleArticleId(v.url) ? await decodeGoogleNews(v.url, ctx.fetch, pace) : v.url;
-      request.resolved = target;
-      const r = await readUrl(target, kind, ctx.fetch);
-      if ("error" in r) return { request, httpStatus: r.httpStatus, error: r.error };
-      return { request, httpStatus: r.httpStatus, payload: { kind, itemId, url: r.url, method: r.method, text: r.text } satisfies TextPayload };
-    } catch (err) {
-      return { request, httpStatus: null, error: (err as Error).message };
-    }
+    const copies = kind === "news" ? await newsCopies(ctx.db!, itemId) : { urls: [], summary: null };
+    const links = linksToTry(v?.url ?? null, copies.urls);
+    if (links.length === 0 && !copies.summary) return { request, httpStatus: null, error: "the item has no link" };
+    // Tests pace Google at 0 (GOOGLE_PACE=0); production keeps the spacing.
+    const found = await findText(kind, links, copies.summary, ctx.fetch, ctx.env.GOOGLE_PACE === "0" ? { spacing: 0, retry: 0 } : {});
+    Object.assign(request, { resolved: found.resolved, tried: found.misses });
+    if (!found.text) return { request, httpStatus: null, error: found.misses.join("; ") || "no text" };
+    return { request, httpStatus: found.text.httpStatus, payload: { kind, itemId, url: found.text.url, method: found.text.method, text: found.text.text } satisfies TextPayload };
   },
 };
 
