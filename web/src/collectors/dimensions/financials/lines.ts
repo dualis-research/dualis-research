@@ -21,6 +21,7 @@ export const LINES = {
   "pretax-income": { statement: "income", name: "Pretax income" },
   "income-tax": { statement: "income", name: "Income tax" },
   "net-income": { statement: "income", name: "Net income attributable to shareholders" },
+  "adjusted-net-income": { statement: "income", name: "Underlying net income as the company itself prints it (adjusted, core or recurring profit)" },
   "eps-basic": { statement: "income", name: "EPS, basic" },
   "eps-diluted": { statement: "income", name: "EPS, diluted" },
   "shares-diluted-avg": { statement: "income", name: "Diluted weighted average shares" },
@@ -69,7 +70,14 @@ export const isLineKey = (k: string): k is LineKey => k in LINES;
 /** Segment revenue rows: `segment:<axis>:<name>` (axis = product, business, region, customer). */
 export const SEGMENT_AXES = ["product", "business", "region", "customer"] as const;
 export const segmentLine = (axis: string, name: string) => `segment:${axis}:${name.trim()}`;
-export const statementOf = (line: string): Statement => (line.startsWith("segment:") ? "segment" : LINES[line as LineKey].statement);
+/**
+ * One-off items (Thierry 2026-11-26: « it should always adjust for normalized earnings year over year »): `one-off:<name>`
+ * = an item of the period the company itself presents as outside its recurring business (impairment, write-off, gain or
+ * loss on a disposal, fair value change, restructuring), as its effect on profit before tax: a charge or loss negative,
+ * a gain positive. Which item is one-off is the extractor's reading of the company's own presentation, never a code list.
+ */
+export const oneOffLine = (name: string) => `one-off:${name.trim()}`;
+export const statementOf = (line: string): Statement => (line.startsWith("segment:") ? "segment" : line.startsWith("one-off:") ? "income" : LINES[line as LineKey].statement);
 
 /** Lines stored positive whatever sign the source uses (outflows). */
 export const POSITIVE_LINES: readonly LineKey[] = ["capex", "dividends-paid", "buybacks"];

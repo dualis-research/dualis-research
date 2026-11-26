@@ -37,8 +37,11 @@ export const KPI_YEARS = HISTORY_YEARS;
 /**
  * v5 (Kevin 2026-11-25, step A): candidates are deduced ONLY from the events whose week was a significant unbiased
  * move, every such move valid (an industry news included, no macro filter); no KPI added from the business model alone.
+ * v6 (Kevin 2026-11-26): whatever the company reports as a figure is a kpi; policy / industry only for what no figure
+ * measures. v5's prompt gave « a dividend cut » as its example of a policy, so Water Oasis's dividend per share was read
+ * as a figure-less policy, its changes looked for in news titles only, and it tested 0-0.
  */
-export const CANDIDATES_QUESTION = "kpi-candidates@v5";
+export const CANDIDATES_QUESTION = "kpi-candidates@v6";
 /** A policy or industry candidate (no figure): which events carry a change of it, and which way. */
 export const CHANGES_QUESTION = "candidate-changes@v1";
 /** When nothing stored measures the KPI: its value read in each report, the quote checked on its page. */
@@ -124,10 +127,10 @@ const releasesText = (rs: Release[]) => rs.map((r) => [`${r.label} ${r.day}: ${r
 export const CANDIDATES_SYSTEM = [
   "You are the equity research associate of a small-cap long/short analyst. You look for the PRICE DRIVER CANDIDATES of one stock: the fundamental KPIs that may drive its price.",
   "You are given every event of 10 years (results release, company news, industry news, filing) whose following week was a significant UNBIASED move of the share price (the market's own move is already taken out), labelled M1, M2... If the unbiased price moved, a price driver moved it: every event listed is valid, an industry news as much as a company one. Never set one aside as macro, market noise or unexplained.",
-  "Read each event and deduce the fundamental KPIs that may have driven the move. A candidate is one of three kinds: kpi = a figure of the company (reported, or computed from what it reports: capacity utilization ~ revenue / PP&E for a manufacturer, same-store sales for a retailer, backlog for a contractor); policy = a decision that can happen again and bears on the business (a dividend cut, a subsidy, a tariff, a licence, a regulation); industry = a qualitative fact of its industry that reaches its figures later (an overhang lifting, a competitor failing, demand shifting). Never the share price or a valuation multiple.",
+  "Read each event and deduce the fundamental KPIs that may have driven the move. A candidate is one of three kinds: kpi = a figure of the company (reported, or computed from what it reports: capacity utilization ~ revenue / PP&E for a manufacturer, same-store sales for a retailer, backlog for a contractor); policy = a decision that can happen again and bears on the business, of a kind no figure the company reports measures (a subsidy, a tariff, a licence, a regulation); industry = a qualitative fact of its industry that reaches its figures later (an overhang lifting, a competitor failing, demand shifting). Whatever the company reports as a figure, in its statements or its text (an amount, a per-share amount, a ratio, a count), is a kpi, even when a decision sets it. Never the share price or a valuation multiple.",
   "Every event listed is named by at least one candidate (found). One candidate per fact, named in a few words that stay true over years (« Hong Kong store revenue », never a dated event); several events often share one candidate.",
   "expected = which way the share price should go when the candidate goes UP (a KPI rises; a policy or industry fact turns more favourable): up, or down (costs, debt, inventory days).",
-  "found = the M labels where you read it, copied exactly. For a kpi: series = the stored series key that holds it, copied exactly from the list (null when none does); formula = when no key holds it, a formula of stored keys copied exactly, operators / * + - between spaces, numbers allowed (« line:inventory / line:cost-of-revenue * 365 »), else null; both null = read in the reports. For a policy or industry candidate: series and formula null.",
+  "found = the M labels where you read it, copied exactly. For a kpi: series = the stored series key that holds it, copied exactly from the list (null when none does; a figure listed both as reported and normalized, one-off items removed, is measured on the normalized one: a one-off is not a change of the business); formula = when no key holds it, a formula of stored keys copied exactly, operators / * + - between spaces, numbers allowed (« line:inventory / line:cost-of-revenue * 365 »), else null; both null = read in the reports. For a policy or industry candidate: series and formula null.",
   "No em dash. JSON only, no prose, no code fence:",
   '{"candidates": [{"name": "Operating margin", "kind": "kpi" | "policy" | "industry", "why": "<at most 15 words: why it moves this business>", "expected": "up" | "down", "found": ["M2"], "series": "metric:operating-margin" | null, "formula": string | null}]}',
 ].join("\n");

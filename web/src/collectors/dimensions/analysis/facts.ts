@@ -130,7 +130,8 @@ export function streamsText(rows: GoldRevenueStream[]): string | null {
 export async function figuresText(db: Db, symbol: string): Promise<string> {
   const catalog = await seriesCatalog(db, symbol);
   const streams = await db.select().from(revenueStreams).where(eq(revenueStreams.symbol, symbol));
-  const keys = (prefix: string) => ["revenue", "operating-income", "net-income"].map((l) => `${prefix}:${l}`).filter((k) => catalog.has(k));
+  // Net income beside its normalized twin (one-off items removed, Thierry 2026-11-26) when one is stored.
+  const keys = (prefix: string) => [...["revenue", "operating-income", "net-income"].map((l) => `${prefix}:${l}`), `${prefix.replace("line", "metric")}:normalized-net-income`].filter((k) => catalog.has(k));
   return [
     "The company's reported figures:",
     keys("line").length ? `Fiscal years:\n${table(catalog, keys("line"), 4)}` : "Fiscal years: none collected.",
