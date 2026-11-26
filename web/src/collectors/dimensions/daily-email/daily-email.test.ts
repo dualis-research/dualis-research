@@ -7,7 +7,7 @@ import { fetches } from "@/db/schema/bronze";
 import { dailyEmailSends, dailyItemTexts, dailyItemVerdicts, goldDailyDigests, urgentAlertSends } from "@/db/schema/daily-email";
 import * as silver from "@/db/schema/silver";
 import { companyProfiles, filings as goldFilings } from "@/db/schema/gold";
-import { goldNewsItems, goldNewsLinks } from "@/db/schema/news";
+import { goldNewsItems, goldNewsLinks, newsItems } from "@/db/schema/news";
 import type { Db } from "@/db/types";
 import type { Complete } from "@/llm/complete";
 import { testDb } from "@/test/db";
@@ -17,7 +17,7 @@ import { watchlist } from "../watchlist";
 import { newsAlertDim } from "../news-alert";
 import { capPerCompany, dailyEmailDim, MAILER_URL, orderDigest, parseVerdicts } from ".";
 import { impactsOf } from "./drivers";
-import { decodeRequestBody, extractArticle, googleArticleId, MAX_TEXT_TRIES, parseDecodedUrl, signatureOf } from "./article";
+import { decodeRequestBody, extractArticle, googleArticleId, linksToTry, MAX_TEXT_TRIES, parseDecodedUrl, signatureOf } from "./article";
 import { parsePoints } from "./key-points";
 import { renderEmail, renderUrgent, SUBJECT_MAX } from "./render";
 
@@ -77,7 +77,17 @@ const web = (async (input: string | URL | Request, init?: RequestInit) => {
       if (!body.includes('"Fbv4je"')) return new Response(")]}'\n[]", { status: 400 });
       return new Response(`)]}'\n\n${JSON.stringify([["wrb.fr", "Fbv4je", JSON.stringify(["garturlres", "https://news.test/decoded", 1]), null, null, null, "generic"]])}\n`, { status: 200 });
     }
+    // The free reader renders a walled page (KEYPOINTS-FALLBACK-1126); a bot challenge stays a challenge.
+    if (url.startsWith("https://r.jina.ai/")) {
+      expect((init!.headers as Record<string, string>)["X-Return-Format"]).toBe("html");
+      const inner = url.slice("https://r.jina.ai/".length);
+      if (/walled|netfail/.test(inner)) return new Response(`<form id="form1">${articlePage("Monro")}</form>`, { status: 200, headers: { "content-type": "text/html" } });
+      return new Response("<html><body><h1>Checking your browser</h1></body></html>", { status: 200, headers: { "content-type": "text/html" } });
+    }
     if (url.startsWith("https://news.test/broken")) return new Response("gone", { status: 404 });
+    if (url.startsWith("https://news.test/walled")) return new Response("Forbidden", { status: 403 });
+    if (url.startsWith("https://news.test/challenge")) return new Response("Forbidden", { status: 403 });
+    if (url.startsWith("https://news.test/netfail")) throw new TypeError("fetch failed", { cause: { code: "UND_ERR_HEADERS_OVERFLOW" } });
     if (url.startsWith("https://news.test/")) return new Response(articlePage("Monro"), { status: 200, headers: { "content-type": "text/html" } });
     if (url.startsWith("https://sec.test/")) return new Response(`<html><body><p>Item 2.02 Results of Operations. ${"Proficient Auto Logistics reported revenue of $102 million for the quarter. ".repeat(8)}</p></body></html>`, { status: 200, headers: { "content-type": "text/html" } });
     return new Response("not found", { status: 404 });
@@ -464,6 +474,57 @@ describe("key points (NEWS-KEY-POINTS-1124)", () => {
     expect([t.status, t.attempts, t.why]).toEqual(["failed", MAX_TEXT_TRIES, "HTTP 404 from https://news.test/broken"]);
     expect(pageFetches.filter((u) => u === "https://news.test/broken")).toHaveLength(MAX_TEXT_TRIES);
     expect(pointCalls).toHaveLength(0);
+  });
+
+  it("a walled page (403) or a refused connection is read through the free reader, in the same run (KEYPOINTS-FALLBACK-1126)", async () => {
+    await addNews("MNRO", "Monro third quarter results beat", ["name"], hoursAgo(5), "https://news.test/walled");
+    await addNews("PAL", "Proficient results beat", ["name"], hoursAgo(5), "https://news.test/netfail");
+    const report = await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx({ DAILY_EMAIL_MODE: "test" }) });
+    expect(report.status).toBe("succeeded");
+    const texts = await db.select().from(dailyItemTexts);
+    expect(texts.map((t) => [t.status, t.method, t.url, t.attempts]).sort()).toEqual([
+      ["ok", "reader", "https://news.test/netfail", 1],
+      ["ok", "reader", "https://news.test/walled", 1],
+    ]);
+    expect(pointCalls.join("\n")).toContain("third quarter sales rose 12% to $340 million");
+    expect(sent[0].html).toContain("KEY POINTS");
+    const tried = (await db.select().from(fetches)).filter((f) => f.source === "article").map((f) => (f.request as { tried: string[] }).tried.join(" | "));
+    expect(tried.sort()).toEqual(["HTTP 403 from https://news.test/walled", "fetch failed (UND_ERR_HEADERS_OVERFLOW) from https://news.test/netfail"]);
+  });
+
+  it("the critical email carries its key points when the text is readable only through the reader: every way is tried before it leaves", async () => {
+    await addNews("MNRO", "Monro issues a profit warning", ["name"], hoursAgo(1), "https://news.test/walled");
+    await runDimension(db, newsAlertDim, { trigger: "test", ctx: ctx() });
+    expect(sent.map((s) => s.subject)).toEqual(["🚨 Critical: Monro, Inc. (MNRO): Summary of Monro issues a profit warning"]);
+    expect(sent[0].html).toContain("KEY POINTS");
+    expect(sent[0].text).toContain("  • Margins improved by 150 basis points.");
+  });
+
+  it("an unreadable link: the item's other links are tried, then the feed's own summary; never the headline", async () => {
+    // Other links of the same article (Yahoo, Finnhub, Google News each carry their own): a readable one wins.
+    const a = await addNews("MNRO", "Monro third quarter results beat", ["name"], hoursAgo(5), "https://news.test/challenge/a");
+    await db.insert(newsItems).values({ id: a, title: "Monro third quarter results beat", titleKey: "monro", url: "https://news.test/challenge/a", urls: ["https://news.test/challenge/a", "https://news.test/copy"], urlKeys: [], sources: ["yahoo", "finnhub"], bronzeIds: [] });
+    // No link readable: a feed summary long enough to hold the story is the text; a short one is not.
+    const b = await addNews("PAL", "Proficient results beat", ["name"], hoursAgo(5), "https://news.test/challenge/b");
+    const summary = "Proficient Auto Logistics said quarterly revenue rose 18% to $102 million as volumes recovered across its car haul network. ".repeat(3);
+    await db.insert(newsItems).values({ id: b, title: "Proficient results beat", titleKey: "pal", url: "https://news.test/challenge/b", urls: ["https://news.test/challenge/b"], urlKeys: [], summary, sources: ["yahoo"], bronzeIds: [] });
+    await addNews("MNRO", "Monro price war results", ["name"], hoursAgo(5), "https://news.test/challenge/c");
+    await db.insert(newsItems).values({ id: (await db.select().from(goldNewsItems)).find((n) => n.title === "Monro price war results")!.id, title: "Monro price war results", titleKey: "mpw", url: "https://news.test/challenge/c", urls: ["https://news.test/challenge/c"], urlKeys: [], summary: "Too short to tell.", sources: ["yahoo"], bronzeIds: [] });
+
+    await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx({ DAILY_EMAIL_MODE: "test" }) });
+    const texts = new Map((await db.select().from(dailyItemTexts)).map((t) => [t.itemId, t]));
+    expect([texts.get(a)!.status, texts.get(a)!.method, texts.get(a)!.url]).toEqual(["ok", "article", "https://news.test/copy"]);
+    expect([texts.get(b)!.status, texts.get(b)!.method, texts.get(b)!.text]).toEqual(["ok", "feed-summary", summary.trim()]);
+    const c = [...texts.values()].find((t) => t.itemId !== a && t.itemId !== b)!;
+    expect(c.status).toBe("failed");
+    expect(c.why).toBe("HTTP 403 from https://news.test/challenge/c; reader: no article text on the page (0 characters: a paywall or a page built by script?) (https://news.test/challenge/c); feed summary too short (18 characters)");
+    expect(pointCalls.join("\n")).toContain("quarterly revenue rose 18% to $102 million");
+    expect(pointCalls.join("\n")).not.toContain("Too short to tell.");
+  });
+
+  it("publisher links are tried before Google News ones (each costs two rate-limited calls)", () => {
+    expect(linksToTry("https://news.google.com/rss/articles/X", ["https://news.google.com/rss/articles/X", "https://a.test/1", "https://finnhub.io/api/news?id=1"])).toEqual(["https://a.test/1", "https://finnhub.io/api/news?id=1", "https://news.google.com/rss/articles/X"]);
+    expect(linksToTry(null, [])).toEqual([]);
   });
 
   it("an answer with 2 bullets stores nothing and fails loud in bronze", async () => {
