@@ -1,7 +1,8 @@
 import { ArrowSquareOutIcon, ArrowsDownUpIcon, BuildingsIcon, CalculatorIcon, ChartBarIcon, DatabaseIcon, FileTextIcon, FilesIcon, MathOperationsIcon, SlidersHorizontalIcon, TableIcon, TextAlignLeftIcon } from "@phosphor-icons/react/ssr";
 import { KTable, KTableBody, KTableCell, KTableHead, KTableHeader, KTableRow } from "@/console/kumo";
 import Link from "@/console/link";
-import { getPriceMove, getValuation } from "./analysis-queries";
+import { getPriceMove, getStoryEpisode, getValuation } from "./analysis-queries";
+import { CAUSE_WORD } from "./story-chart";
 import { ArticleBody } from "./article";
 import { MethodsTable, RangeCards, ValuationField } from "./valuation-ui";
 import { fairValueDetail, kpiDetail, priceDetail } from "./board-queries";
@@ -24,7 +25,7 @@ import { Rich } from "./rich";
  * Level C: the detail of one item of the analysis (`?item=` on the Analysis page): what it says and its chart. Where a
  * figure or quote comes from is one click on it (SOURCES-ONE-CLICK-1123, `sourced.tsx`), never a « Source: » line.
  * Items: `fair-value`, `kdriver:<id>` (a Price Driver Candidate: step B then step D), `kpi:<metric>`, `price`,
- * `valuation:<method>`, `move:<move id>` (a significant unbiased 1-week move and its events),
+ * `valuation:<method>`, `move:<move id>` (a significant unbiased 1-week move and its events), `story:<episode id>` (step F),
  * `doc:<document id>:<page>[:<quote>]` (one page of a company document, the quote highlighted), `src:<payload>` (a data
  * figure's source: series, providers by name, date).
  */
@@ -157,6 +158,54 @@ async function moveItem(symbol: string, id: string): Promise<ItemView | null> {
               </ul>
             ) : (
               <p className="text-base text-kumo-subtle">No event stored that week.</p>
+            )}
+          </Drawer>
+        </Drawers>
+      </>
+    ),
+  };
+}
+
+/** Step F: one episode of the story of the stock, its sentence first, then the moves it covers and the events it rests on. */
+async function storyItem(symbol: string, id: string): Promise<ItemView | null> {
+  const r = await getStoryEpisode(id);
+  if (!r || r.episode.symbol !== symbol) return null;
+  const { episode: e, moves, events } = r;
+  const span = e.startDay === e.endDay ? day(e.startDay) : `${day(e.startDay)} to ${day(e.endDay)}`;
+  return {
+    title: e.title,
+    subtitle: `${span} · ${CAUSE_WORD[e.cause]}`,
+    body: (
+      <>
+        <p className="text-xl leading-snug text-kumo-strong">{e.summary}</p>
+        <Drawers>
+          <Drawer icon={<ArrowsDownUpIcon size={16} aria-hidden />} title={`The price · ${signed(e.returnPct)}`}>
+            <FactList>
+              <Fact label="Stock">{signed(e.returnPct)}</Fact>
+              <Fact label={e.bench}>{signed(e.benchReturn)}</Fact>
+            </FactList>
+            <ul className="flex flex-col">
+              {moves.map((m) => (
+                <li key={m.id} className="border-b border-kumo-hairline py-2 text-sm last:border-b-0">
+                  <Link href={itemHref(symbol, `move:${m.id}`)} scroll={false} className="hover:text-kumo-link">
+                    {`${m.startDay === m.endDay ? day(m.startDay) : `${day(m.startDay)} to ${day(m.endDay)}`}: ${signed(m.abnormal)} beyond the ${m.bench} ›`}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </Drawer>
+          <Drawer icon={<FilesIcon size={16} aria-hidden />} title={`Events behind it · ${events.length}`}>
+            {events.length ? (
+              <ul className="flex flex-col">
+                {events.map((ev) => (
+                  <li key={ev.id} className="border-b border-kumo-hairline py-2 text-sm text-kumo-default last:border-b-0">
+                    {`${day(ev.day)} · `}
+                    <EventTitle symbol={symbol} e={ev} />
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-base text-kumo-subtle">{e.cause === "macro" ? "The market moved it: no event of the company or its industry." : "No event cited."}</p>
             )}
           </Drawer>
         </Drawers>
@@ -475,6 +524,7 @@ export async function itemView(symbol: string, item: string): Promise<ItemView |
   if (kind === "kdriver") return kpiDriverItem(symbol, key);
   if (kind === "valuation") return methodItem(symbol, key);
   if (kind === "move") return moveItem(symbol, key);
+  if (kind === "story") return storyItem(symbol, key);
   if (kind === "doc") return docItem(symbol, key);
   if (kind === "src") {
     const p = parseSourceItem(key);

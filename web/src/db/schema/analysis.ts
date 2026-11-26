@@ -658,6 +658,38 @@ export const driverEvents = gold.table(
 );
 export type GoldDriverEvent = typeof driverEvents.$inferSelect;
 
+export const STORY_CAUSES = ["company", "industry", "macro"] as const;
+export type StoryCause = (typeof STORY_CAUSES)[number];
+/**
+ * Step F · Stock story (Thierry, call 2026-11-26: « when I click on the stock I want to know what the story of the stock
+ * looks like »; Kevin: the last step, after the Signal): the price of 10 years cut into episodes, each a stretch of
+ * significant unbiased moves the AI explains by what happened (company, industry, or macro for his own reading), in a
+ * title of a few words and one sentence. A move the AI cannot explain gets no episode. One stored judgment per ticker
+ * and input (`stock-story`), rebuilt into this table. id = `<symbol>:<start day>`.
+ */
+export const stockStory = gold.table(
+  "stock_story",
+  {
+    id: text("id").primaryKey(),
+    symbol: text("symbol").notNull(),
+    startDay: text("start_day").notNull(),
+    endDay: text("end_day").notNull(),
+    cause: text("cause").$type<StoryCause>().notNull(),
+    title: text("title").notNull(),
+    summary: text("summary").notNull(),
+    /** The stock's return over the episode (close before its first day to close on its last), and its local index's. */
+    returnPct: doublePrecision("return_pct"),
+    benchReturn: doublePrecision("bench_return"),
+    bench: text("bench").notNull(),
+    /** The significant moves (gold.price_moves ids) it covers and the events (gold.driver_events ids) it rests on. */
+    moveIds: jsonb("move_ids").$type<string[]>().notNull(),
+    eventIds: jsonb("event_ids").$type<string[]>().notNull(),
+    rebuiltAt,
+  },
+  (t) => [index("gold_stock_story_symbol").on(t.symbol, t.startDay)],
+);
+export type GoldStoryEpisode = typeof stockStory.$inferSelect;
+
 /** HISTORY (the per-week fundamental / market / unknown verdict, rejected by Kevin 2026-11-25): `price_move_causes` is no longer written or read. */
 export const MOVE_CAUSE_KINDS = ["fundamental", "macro", "technical", "unknown"] as const;
 export type MoveCauseKind = (typeof MOVE_CAUSE_KINDS)[number];

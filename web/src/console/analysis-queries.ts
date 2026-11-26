@@ -1,5 +1,5 @@
 import { cache } from "react";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { getDb } from "@/db/client";
 import {
   fairValues,
@@ -13,6 +13,7 @@ import {
   type ThesisSide,
   driverEvents,
   priceMoves,
+  stockStory,
 } from "@/db/schema/analysis";
 import { goldMethodValuations, valuationMethods, valuationReports } from "@/db/schema/valuation";
 import { financialMetrics, goldFinancialLines, valuations, type GoldFinancialLine, type GoldFinancialMetric, type GoldValuation } from "@/db/schema/financials";
@@ -133,6 +134,18 @@ export async function priceMoveMarkers(symbol: string): Promise<MoveMarker[]> {
 }
 
 /** One significant move and the events whose week it was (the `move:` item panel). */
+/** One episode of the story of the stock (step F), its significant moves and the events it rests on. */
+export async function getStoryEpisode(id: string) {
+  const db = getDb();
+  const [episode] = await db.select().from(stockStory).where(eq(stockStory.id, id));
+  if (!episode) return null;
+  const [moves, events] = await Promise.all([
+    episode.moveIds.length ? db.select().from(priceMoves).where(inArray(priceMoves.id, episode.moveIds)).orderBy(asc(priceMoves.startDay)) : [],
+    episode.eventIds.length ? db.select().from(driverEvents).where(inArray(driverEvents.id, episode.eventIds)).orderBy(asc(driverEvents.day), asc(driverEvents.id)) : [],
+  ]);
+  return { episode, moves, events };
+}
+
 export async function getPriceMove(id: string) {
   const db = getDb();
   const [[move], events] = await Promise.all([db.select().from(priceMoves).where(eq(priceMoves.id, id)), db.select().from(driverEvents).where(eq(driverEvents.moveId, id)).orderBy(asc(driverEvents.day), asc(driverEvents.id))]);

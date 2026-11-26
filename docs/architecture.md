@@ -42,11 +42,20 @@ toutes les pages soient une réflexion de ces étapes. »
 ## E. Signal (per ticker): Narrative Reversal
 - Given C and D: is the narrative turning? Confidence strong | weak | noise.
 
+## F. Stock story (per ticker; Kevin 2026-11-26, the last step, after the Signal)
+- Thierry, call 2026-11-26: « when I click on the stock I want to know what the story of the stock looks like ». Given
+  the significant unbiased moves of 10 years, the events of their weeks and each move's market move: the AI groups the
+  moves one story explains into episodes (a move may start an episode the next ones only carry on), each with a cause
+  company | industry | macro, a title of a few words and one sentence; a move it cannot explain gets no episode.
+- On screen: the price chart with no fair value, a numbered box on each episode always visible, zoom to read; a click
+  opens the episode (its sentence, its moves, its events). The cause « macro » is for Thierry's own reading: no step of
+  the signal reads F.
+
 ## Additions agreed by Kevin (2026-11-25)
 1. **D, leading indicators**: besides the PD's own value, a recent event announcing that the PD will change soon
    (« Lunar New Year bookings full » ahead of Water Oasis's next half) counts in the reversal (Thierry 2026-11-23:
    « a change of a PD or a leading indicator of it »).
-2. **Thierry's inputs in every LLM step (A to E)**, for the tickers they name, as context the LLM weighs, never an
+2. **Thierry's inputs in every LLM step (A to F)**, for the tickers they name, as context the LLM weighs, never an
    override (Kevin 2026-11-24).
 3. **Outputs outside the chain, kept as readers of these objects only**: the WhatsApp alert on a strong signal (E), the
    morning and critical emails (a separate product, Thierry 2026-11-23), the content (Ideas, drafts, pictures, Sandbox).

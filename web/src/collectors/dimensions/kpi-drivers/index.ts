@@ -100,7 +100,7 @@ function bestPages(pages: { page: number; text: string }[]): { page: number; tex
  * One stored LLM answer per (kind, subject, key): asked once, read back after. Stored only once it parses: an answer
  * that skips a release would otherwise be read back and fail every run after (Worldex, 2026-11-19).
  */
-async function once<T>(db: Db, complete: Complete, kind: string, subjectId: string, key: string, question: string, system: string, prompt: string, parse: (text: string) => Promise<T> | T): Promise<T> {
+export async function once<T>(db: Db, complete: Complete, kind: string, subjectId: string, key: string, question: string, system: string, prompt: string, parse: (text: string) => Promise<T> | T): Promise<T> {
   const [hit] = await db.select().from(silver.judgments).where(and(eq(silver.judgments.subjectKind, kind), eq(silver.judgments.subjectId, subjectId), eq(silver.judgments.questionKey, key)));
   if (hit) return parse((hit.raw as { text: string }).text);
   let r = await complete({ system, prompt });
