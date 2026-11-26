@@ -87,11 +87,11 @@ const companyRow = (g: { symbol: string; company: string; logo: string | null },
 export const driversText = (drivers: readonly DriverImpact[]) => drivers.map((d) => `${d.name} (${d.confidence}): ${d.words}`).join(" · ");
 
 /**
- * Under the sentence (NEWS-KEY-POINTS-1124): « Key points », the 3 bullets read from the item's text (none when no text
- * was read), then the Price Drivers it bears on. Inline, never a `<details>` (Gmail strips it); same phone rules.
+ * Under the sentence (NEWS-KEY-POINTS-1124): « Key points », the 3 bullets read from the item's text, on a high or
+ * critical item only (Kevin 2026-11-26; none when no text was read), then the Price Drivers it bears on. Inline, never a `<details>` (Gmail strips it); same phone rules.
  */
 const detailHtml = (i: DigestItem) => {
-  const points = i.keyPoints?.length
+  const points = i.keyPoints?.length && levelTag(i)
     ? `<div style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:${MUTED};margin:6px 0 2px;">KEY POINTS</div>
 <ul style="margin:0;padding:0 0 0 18px;font-size:13px;line-height:1.45;color:${INK};">${i.keyPoints.map((p) => `<li style="margin:0 0 2px;overflow-wrap:anywhere;word-break:break-word;">${esc(plain(p))}</li>`).join("")}</ul>`
     : "";
@@ -102,11 +102,31 @@ const detailHtml = (i: DigestItem) => {
     : "";
   return points + drivers;
 };
-const detailText = (i: DigestItem) => [...(i.keyPoints ?? []).map((p) => `  • ${plain(p)}`), ...(i.drivers?.length ? [`  Price Drivers: ${driversText(i.drivers)}`] : [])];
+const detailText = (i: DigestItem) => [...(levelTag(i) ? (i.keyPoints ?? []) : []).map((p) => `  • ${plain(p)}`), ...(i.drivers?.length ? [`  Price Drivers: ${driversText(i.drivers)}`] : [])];
+
+const RED = "#B42318";
+const RED_TINT = "#FDECEA";
+const INDIGO_TINT = "#ECEAF6";
+/** The judge's top two levels wear a small tag before the sentence (Kevin 2026-11-26); medium and low none. */
+const TAGGED: Partial<Record<NonNullable<DigestItem["level"]>, { word: string; color: string; tint: string }>> = {
+  critical: { word: "CRITICAL", color: RED, tint: RED_TINT },
+  high: { word: "HIGH", color: INDIGO, tint: INDIGO_TINT },
+};
+const levelTag = (i: DigestItem) => (i.level ? TAGGED[i.level] : undefined);
+const tagHtml = (i: DigestItem) => {
+  const t = levelTag(i);
+  return t
+    ? `<span style="display:inline-block;vertical-align:1px;background:${t.tint};color:${t.color};font-size:10px;font-weight:700;letter-spacing:0.08em;line-height:1;padding:4px 6px;border-radius:4px;margin-right:6px;">${t.word}</span>`
+    : "";
+};
+const tagText = (i: DigestItem) => {
+  const t = levelTag(i);
+  return t ? `[${t.word}] ` : "";
+};
 
 /** One item: its kind icon, the bold sentence, then only the arrow linking the source (Kevin 2026-11-23: no outlet name, « on s'en fout »), then its key points and Price Drivers. */
-const itemRow = (assets: string, i: DigestItem) => `<tr><td style="width:26px;vertical-align:top;padding:3px 0 8px;">${icon(assets, i.kind, 17)}</td>
-<td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 10px;overflow-wrap:anywhere;word-break:break-word;">${boldHtml(i.summary)}${
+const itemRow = (assets: string, i: DigestItem, tag = true) => `<tr><td style="width:26px;vertical-align:top;padding:3px 0 8px;">${icon(assets, i.kind, 17)}</td>
+<td style="vertical-align:top;font-size:15px;line-height:1.5;padding:0 0 10px;overflow-wrap:anywhere;word-break:break-word;">${tag ? tagHtml(i) : ""}${boldHtml(i.summary)}${
   i.url ? `&nbsp;<a href="${esc(i.url)}" title="Open the source" style="color:${INDIGO};text-decoration:none;font-weight:600;">&#8599;</a>` : ""
 }${detailHtml(i)}</td></tr>`;
 
@@ -119,7 +139,7 @@ export function renderEmail(day: string, items: readonly DigestItem[], assets: s
   const text = [
     `Dualis Research. Your watchlist, ${shortDay(day)}`,
     "",
-    ...groups.flatMap((g) => [`${g.company} (${g.symbol})`, ...g.items.flatMap((i) => [`${KIND_LABEL[i.kind]}: ${plain(i.summary)}${i.url ? ` ${i.url}` : ""}`, ...detailText(i)]), ""]),
+    ...groups.flatMap((g) => [`${g.company} (${g.symbol})`, ...g.items.flatMap((i) => [`${tagText(i)}${KIND_LABEL[i.kind]}: ${plain(i.summary)}${i.url ? ` ${i.url}` : ""}`, ...detailText(i)]), ""]),
     FOOTER,
   ].join("\n");
 
@@ -145,8 +165,6 @@ export const CRITICAL = "Critical";
 /** A subject line stays readable in an inbox list: cut at a word, never mid-word. */
 export const SUBJECT_MAX = 110;
 const trimSubject = (s: string) => (s.length <= SUBJECT_MAX ? s : `${s.slice(0, SUBJECT_MAX - 1).replace(/\s+\S*$/, "")}…`);
-const RED = "#B42318";
-const RED_TINT = "#FDECEA";
 
 /**
  * The urgent email (URGENT-NEWS-1124): ONE critical item, in the morning email's look (same bands, logo, kind icon,
@@ -172,7 +190,7 @@ export function renderUrgent(day: string, item: DigestItem, assets: string, opts
 <span style="display:inline-block;background:${RED_TINT};color:${RED};font-size:11px;font-weight:700;letter-spacing:0.08em;line-height:1;padding:6px 9px;border-radius:4px;">${CRITICAL.toUpperCase()}</span>
 ${companyRow({ symbol: item.symbol, company: item.company, logo: item.logo ?? null }, "16px 0 12px")}
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-${itemRow(assets, item)}
+${itemRow(assets, item, false)}
 </table>
 ${why ? `<p style="font-size:14px;line-height:1.5;color:${MUTED};margin:2px 0 8px;overflow-wrap:anywhere;word-break:break-word;"><span style="color:${INK};font-weight:600;">Why it matters:</span> ${esc(why)}</p>` : ""}
 </td></tr>`;

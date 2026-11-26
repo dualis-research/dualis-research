@@ -99,7 +99,7 @@ const timed = (ms = TIMEOUT_MS) => AbortSignal.timeout(ms);
 
 /**
  * Google News answers 429 after about ten quick calls (live check 2026-11-24): its calls go one at a time, spaced
- * GOOGLE_SPACING_MS, and a 429 waits GOOGLE_RETRY_MS once before giving up (the item is tried again next run).
+ * GOOGLE_SPACING_MS, and a 429 or 503 (its busy answer: 13 links refused on 2026-11-24) waits GOOGLE_RETRY_MS once before giving up (the item is tried again next run).
  */
 export const GOOGLE_SPACING_MS = 1_500;
 export const GOOGLE_RETRY_MS = 8_000;
@@ -108,7 +108,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 function googleCall(fetchFn: typeof fetch, url: string, init: RequestInit, spacing = GOOGLE_SPACING_MS, retry = GOOGLE_RETRY_MS): Promise<Response> {
   const run = googleQueue.then(async () => {
     let res = await fetchFn(url, { ...init, signal: timed() });
-    if (res.status === 429 && retry > 0) {
+    if ((res.status === 429 || res.status === 503) && retry > 0) {
       await sleep(retry);
       res = await fetchFn(url, { ...init, signal: timed() });
     }

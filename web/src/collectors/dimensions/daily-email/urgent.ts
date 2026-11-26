@@ -48,6 +48,7 @@ export async function sendUrgentAlerts(db: Db, ctx: SourceContext, now = new Dat
     summary: v.summary ?? v.title,
     why: v.why ?? "",
     importance: v.importance,
+    level: v.level as DigestItem["level"],
     keyPoints: v.keyPoints ?? null,
   });
   // Key points come with the verdict; the Price Drivers it bears on are read from step D's readings.

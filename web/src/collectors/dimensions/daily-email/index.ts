@@ -309,7 +309,7 @@ export async function promoteDailyEmail(db: Db, fetches: BronzeFetch[], ctx: Sou
   const material = (await db.select().from(dailyItemVerdicts).where(and(eq(dailyItemVerdicts.material, true), gt(dailyItemVerdicts.createdAt, cutoff)))).filter((v) => rank.has(v.symbol) && fresh(v));
   const items: DigestItem[] = await withDriverImpacts(
     db,
-    orderDigest(capPerCompany(material), rank).map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, itemId: v.itemId, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "", importance: v.importance, keyPoints: v.keyPoints ?? null })),
+    orderDigest(capPerCompany(material), rank).map((v) => ({ symbol: v.symbol, company: company.get(v.symbol)!, logo: logoOf.get(v.symbol) ?? null, kind: v.kind as Kind, itemId: v.itemId, title: v.title, url: v.url, publisher: v.publisher, at: v.at?.toISOString() ?? null, summary: v.summary!, why: v.why ?? "", importance: v.importance, level: v.level as DigestItem["level"], keyPoints: v.keyPoints ?? null })),
   );
   const email = items.length ? renderEmail(day, items, ASSETS_URL) : null;
   await db

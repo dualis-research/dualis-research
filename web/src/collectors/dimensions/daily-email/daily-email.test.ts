@@ -303,6 +303,7 @@ describe("urgent alert (news-alert, every hour)", () => {
     await runDimension(db, dailyEmailDim, { trigger: "test", ctx: ctx() });
     const [digest] = await db.select().from(goldDailyDigests);
     expect(digest.items.map((i) => i.importance)).toEqual([9, 7, 6]);
+    expect(digest.items.map((i) => i.level)).toEqual(["high", "high", "high"]);
     expect(capPerCompany([{ symbol: "A", importance: 1 }, { symbol: "A", importance: 5 }, { symbol: "B", importance: 2 }], 1)).toEqual([{ symbol: "A", importance: 5 }, { symbol: "B", importance: 2 }]);
   });
 
@@ -346,6 +347,28 @@ describe("daily-email parsing and words", () => {
     expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: true, summary: "x", importance: 9 }] }), 1)).toThrow("no level");
     expect(() => parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: false, level: "urgent" }] }), 1)).toThrow("no level");
     expect(parseVerdicts(JSON.stringify({ items: [{ id: "i1", material: true, summary: "x", importance: 9, level: "critical" }, { id: "i2", material: false, level: "medium" }] }), 2).map((v) => v.level)).toEqual(["critical", "low"]);
+  });
+
+  it("a HIGH or CRITICAL tag before each item of that level, none for medium or low (Kevin 2026-11-26)", () => {
+    const item = (level: "low" | "medium" | "high" | "critical", summary: string) => ({ symbol: "X", company: "X Co", kind: "news" as const, title: "t", url: null, publisher: null, at: null, summary, why: "", level });
+    const { html, text } = renderEmail("2026-11-26", [item("critical", "Profit warning."), item("high", "Big order."), item("medium", "New plant."), item("low", "Small hire.")], MARK);
+    expect(text).toContain("[CRITICAL] Company news: Profit warning.");
+    expect(text).toContain("[HIGH] Company news: Big order.");
+    expect(text).toContain("\nCompany news: New plant.");
+    expect(text).toContain("\nCompany news: Small hire.");
+    expect(html.match(/>CRITICAL<\/span>/g)).toHaveLength(1);
+    expect(html.match(/>HIGH<\/span>/g)).toHaveLength(1);
+    expect(html).not.toContain(">MEDIUM<");
+    // Key points on high and critical only (Kevin 2026-11-26): a medium item keeps its sentence alone.
+    const pts = ["p1", "p2", "p3"];
+    const withPoints = renderEmail("2026-11-26", [{ ...item("high", "Big order."), keyPoints: pts }, { ...item("medium", "New plant."), keyPoints: ["m1", "m2", "m3"] }], MARK);
+    expect(withPoints.text).toContain("  • p1");
+    expect(withPoints.text).not.toContain("m1");
+    expect(withPoints.html.match(/KEY POINTS/g)).toHaveLength(1);
+    // The urgent email already carries its big red label: no second tag on its item.
+    const urgent = renderUrgent("2026-11-26", item("critical", "Profit warning."), MARK);
+    expect(urgent.html.match(/>CRITICAL<\/span>/g)).toHaveLength(1);
+    expect(urgent.text).not.toContain("[CRITICAL]");
   });
 
   it("one company, a filing line, the disclaimer last", () => {
@@ -506,7 +529,7 @@ describe("Price Driver impact (NEWS-KEY-POINTS-1124): the emails read step D, th
     // Noise (stance none) shows nothing.
     expect(impactsOf(["X|release:doc-1"], [{ ...k, reversal: { ...k.reversal, stance: "none" as const, strength: "none" as const } }])).toEqual([]);
 
-    const { html, text } = renderUrgent("2026-11-24", { symbol: "X", company: "X Co", kind: "news", title: "t", url: null, publisher: null, at: null, summary: "s", why: "", keyPoints: ["a", "b", "c"], drivers: [{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "Weak SELL" }] }, MARK);
+    const { html, text } = renderUrgent("2026-11-24", { symbol: "X", company: "X Co", kind: "news", title: "t", url: null, publisher: null, at: null, summary: "s", why: "", level: "critical", keyPoints: ["a", "b", "c"], drivers: [{ name: "Backlog", confidence: "weak", effect: "reversal", strength: "weak", words: "Weak SELL" }] }, MARK);
     expect(text).toContain("  Price Drivers: Backlog (weak): Weak SELL");
     expect(text).toContain("  • a");
     expect(html).toContain("Weak SELL");
