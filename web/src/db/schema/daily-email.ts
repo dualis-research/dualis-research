@@ -131,6 +131,8 @@ export type DigestItem = {
   summary: string;
   why: string;
   importance?: number | null;
+  /** The judge's level (`low` / `medium` / `high` / `critical`); `high` and `critical` wear a tag in the email. Absent on digests built before 2026-11-26. */
+  level?: "low" | "medium" | "high" | "critical" | null;
   /** 3 bullets on what the item says, written from its text; absent when no text could be read. */
   keyPoints?: string[] | null;
   /** The ticker's Price Drivers whose step D reading read this item (a change of the driver, or its leading indicator), reversals first; absent = none. */

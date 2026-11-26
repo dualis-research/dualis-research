@@ -10,11 +10,13 @@ import { KEY_POINTS_SOURCE, pointsSubject } from "./key-points";
 export const FOLLOW_WINDOW_MS = 48 * 3_600_000;
 /** A key-points answer that fails this many times is given up (the item shows its sentence only). */
 export const MAX_POINTS_TRIES = 3;
+/** Only these levels get their text read and their 3 key points (Kevin 2026-11-26: « Seulement les critical et high »). */
+export const KEY_POINT_LEVELS = ["high", "critical"];
 /** The dimensions that share these steps (bronze is read across both). */
 export const EMAIL_DIMENSIONS = ["daily-email", "news-alert"];
 
 /**
- * What the email dimensions still owe the recent MATERIAL items, after the judge (NEWS-KEY-POINTS-1124): its text
+ * What the email dimensions still owe the recent MATERIAL items judged high or critical, after the judge (NEWS-KEY-POINTS-1124): its text
  * (`<symbol>|text|...`, fewer than MAX_TEXT_TRIES failures), then its 3 key points once the text is read
  * (`<symbol>|points|...`). Read from silver at every round, so one run chains judge -> text -> points. The « Price
  * Drivers » line asks nothing: it is read from step D (`drivers.ts`).
@@ -23,7 +25,7 @@ export async function followUps(db: Db, now = new Date()): Promise<string[]> {
   const material = await db
     .select({ symbol: dailyItemVerdicts.symbol, kind: dailyItemVerdicts.kind, itemId: dailyItemVerdicts.itemId, keyPoints: dailyItemVerdicts.keyPoints })
     .from(dailyItemVerdicts)
-    .where(and(eq(dailyItemVerdicts.material, true), gte(dailyItemVerdicts.createdAt, new Date(now.getTime() - FOLLOW_WINDOW_MS))));
+    .where(and(eq(dailyItemVerdicts.material, true), inArray(dailyItemVerdicts.level, KEY_POINT_LEVELS), gte(dailyItemVerdicts.createdAt, new Date(now.getTime() - FOLLOW_WINDOW_MS))));
   if (material.length === 0) return [];
   const texts = new Map(
     (await db.select({ kind: dailyItemTexts.kind, itemId: dailyItemTexts.itemId, status: dailyItemTexts.status, attempts: dailyItemTexts.attempts }).from(dailyItemTexts).where(inArray(dailyItemTexts.itemId, [...new Set(material.map((m) => m.itemId))]))).map((t) => [`${t.kind}|${t.itemId}`, t]),
